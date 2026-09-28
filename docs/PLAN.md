@@ -67,7 +67,7 @@ TOP 10,000 전수는 개발 키로 불가 → **조합 단위 수집 + 캐시**�
 ③ 스쿼드 수집: user/match(matchtype=50, limit=K) → match-detail → 해당 ouid의 player[]
 ④ 정합성 검증: 스냅샷 기준 시각 직전 경기인지, 추론 포메이션 = 페이지 포메이션인지
 ⑤ 집계: usage_stats (팀컬러 × 포메이션 × 역할 × 선수)
-⑥ 챗봇: 규칙 기반(기본) 또는 Gemini function calling으로 집계 DB 조회 → 근거 포함 답변
+⑥ 챗봇: Gemini function calling(기본) 또는 규칙 기반으로 집계 DB 조회 → 근거 포함 답변
 ```
 
 ### ① 랭킹 크롤러
@@ -139,8 +139,8 @@ usage_stats(
 
 | 모드 | 방식 | 키 |
 |---|---|---|
-| **규칙 기반 (기본)** `rules.py` | 질문에서 팀컬러(별칭 포함)·포메이션·역할·인원·예산·선수명을 뽑아 도구 1개 호출 → 정해진 형식으로 답변 | 불필요 |
-| **Gemini** `gemini.py` | Gemini function calling 수동 루프 (기본 `gemini-3.5-flash`), 자유 대화·복합 질문 | `GEMINI_API_KEY` |
+| **규칙 기반** `rules.py` (키 없을 때) | 질문에서 팀컬러(별칭 포함)·포메이션·역할·인원·예산·선수명을 뽑아 도구 1개 호출 → 정해진 형식으로 답변 | 불필요 |
+| **Gemini (기본)** `gemini.py` | Gemini function calling 수동 루프 (기본 `gemini-3.5-flash`), 자유 대화·복합 질문 | `GEMINI_API_KEY` (`.env`) |
 
 | 도구 | 설명 |
 |---|---|

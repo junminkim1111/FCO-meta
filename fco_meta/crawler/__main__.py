@@ -15,6 +15,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from ..config import load_env
 from ..storage import Storage
 from .client import DatacenterClient
 from .jobs import crawl_rankings
@@ -26,6 +27,7 @@ DEFAULT_DB = Path("data/fco_meta.sqlite")
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.crawler")
     parser.add_argument("--interval", type=float, default=2.0, help="요청 간 최소 간격(초)")
     parser.add_argument("--raw-dir", type=Path, help="원본 HTML 저장 경로")

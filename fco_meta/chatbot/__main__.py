@@ -1,8 +1,8 @@
 """Command line chatbot.
 
-    python -m fco_meta.chatbot                                         # 대화형 (규칙 기반, 키 불필요)
+    python -m fco_meta.chatbot                                         # 대화형 (Gemini, 키 없으면 규칙 기반)
     python -m fco_meta.chatbot --ask "아스널 4-2-3-1 볼란치 2명 추천해줘"
-    python -m fco_meta.chatbot --backend gemini                        # Gemini (GEMINI_API_KEY 필요)
+    python -m fco_meta.chatbot --backend rules                         # 규칙 기반 (키 불필요)
     python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널", "role": "DM"}'
 """
 
@@ -15,6 +15,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from ..config import load_env
+from .gemini import choose_backend
 from .rules import RuleBot
 from .tools import Toolbox
 
@@ -22,9 +24,13 @@ DEFAULT_DB = Path("data/fco_meta.sqlite")
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.chatbot")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--backend", choices=["rules", "gemini"], default="rules", help="rules: 규칙 기반(기본), gemini: LLM")
+    parser.add_argument(
+        "--backend", choices=["gemini", "rules"], default="gemini",
+        help="gemini: LLM (기본, .env의 GEMINI_API_KEY 필요 — 없으면 규칙 기반), rules: 규칙 기반",
+    )  # fmt: skip
     parser.add_argument("--model", help="Gemini 모델 (기본: gemini-3.5-flash)")
     parser.add_argument("--ask", help="질문 하나만 하고 종료")
     parser.add_argument("--tool", nargs=2, metavar=("NAME", "JSON"), help="도구 하나를 직접 실행해 결과 출력")
@@ -44,7 +50,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(json.loads(content), ensure_ascii=False, indent=2))
         return 1 if is_error else 0
 
-    if args.backend == "gemini":
+    backend, notice = choose_backend(args.backend)
+    if notice:
+        print(notice, file=sys.stderr)
+    if backend == "gemini":
         ask = _gemini(toolbox, args)
     else:
         rules = RuleBot(toolbox)
@@ -54,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.ask:
         print(ask(args.ask))
         return 0
-    print(f"FCO 랭커 메타 챗봇 ({args.backend}). 종료: Ctrl+D 또는 'exit'")
+    print(f"FCO 랭커 메타 챗봇 ({'Gemini' if backend == 'gemini' else '규칙 기반'}). 종료: Ctrl+D 또는 'exit'")
     while True:
         try:
             question = input("\n> ").strip()
@@ -72,7 +81,7 @@ def _gemini(toolbox: Toolbox, args: argparse.Namespace):
         from google import genai
         from google.genai import errors
     except ImportError:
-        print('google-genai가 필요합니다: pip install -e ".[gemini]"', file=sys.stderr)
+        print('google-genai가 필요합니다: pip install -e ".[web]"', file=sys.stderr)
         return None
     from .gemini import DEFAULT_MODEL, GeminiChat
 

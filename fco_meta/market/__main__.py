@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from ..config import load_env
 from ..crawler.client import DatacenterClient
 from ..crawler.teamcolors import TeamColorCatalog
 from .collector import fetch_price_history, search_all
@@ -26,6 +27,7 @@ KST = timezone(timedelta(hours=9))
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.market")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--interval", type=float, default=2.0, help="요청 간 최소 간격(초)")

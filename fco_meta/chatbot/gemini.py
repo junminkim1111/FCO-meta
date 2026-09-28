@@ -1,6 +1,6 @@
 """Gemini backend: the model picks tools, the Toolbox runs them against SQLite.
 
-Requires `pip install -e ".[gemini]"` and GEMINI_API_KEY (or GOOGLE_API_KEY).
+Default chatbot backend. Needs GEMINI_API_KEY (or GOOGLE_API_KEY), e.g. in `.env`.
 """
 
 from __future__ import annotations
@@ -25,6 +25,26 @@ class GeminiTurn:
     text: str
     tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     finish_reason: str | None = None
+
+
+def unavailable_reason() -> str | None:
+    """Why the Gemini backend can't run here (None = ready). Checked before choosing a backend."""
+    import os
+
+    try:
+        import google.genai  # noqa: F401
+    except ImportError:
+        return 'google-genai가 설치되지 않았습니다 (pip install -e ".[web]")'
+    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+        return "GEMINI_API_KEY가 없습니다 (.env에 GEMINI_API_KEY=... 추가)"
+    return None
+
+
+def choose_backend(requested: str) -> tuple[str, str | None]:
+    """(실제 백엔드, 안내 문구). Gemini를 쓸 수 없으면 규칙 기반으로 바꾸고 이유를 돌려준다."""
+    if requested == "gemini" and (reason := unavailable_reason()):
+        return "rules", f"Gemini를 쓸 수 없어 규칙 기반으로 실행합니다: {reason}"
+    return requested, None
 
 
 def _types():

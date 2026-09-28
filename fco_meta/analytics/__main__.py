@@ -11,6 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from ..config import load_env
 from ..crawler.teamcolors import TeamColorCatalog
 from ..market.roles import ROLES, resolve_role
 from ..storage import Storage
@@ -20,6 +21,7 @@ DEFAULT_DB = Path("data/fco_meta.sqlite")
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.analytics")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     sub = parser.add_subparsers(dest="command", required=True)

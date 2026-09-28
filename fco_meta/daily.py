@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .config import load_env
 from .analytics import UsageStore
 from .crawler import DatacenterClient, RankQuery, crawl_rankings
 from .crawler.membership import record_displayed_membership
@@ -156,6 +157,7 @@ def next_run(at: str, current: datetime) -> datetime:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--db", type=Path, default=DEFAULT_DB)
     common.add_argument("--top", type=int, default=330, help="랭킹 상위 몇 명 (개발 키 하루 약 330명)")

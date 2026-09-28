@@ -7,7 +7,7 @@ FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프�
 
 ```bash
 pip install -e ".[dev]"
-cp .env.example .env   # NEXON_API_KEY (Open API 수집), GEMINI_API_KEY (선택: Gemini 챗봇)
+cp .env.example .env   # .env에 NEXON_API_KEY, GEMINI_API_KEY를 적어 두면 모든 명령이 자동으로 읽음
 ```
 
 ## 랭킹 크롤러
@@ -166,30 +166,29 @@ python -m fco_meta.market history --spid 100001419 --grade 5
 
 ## 챗봇
 
-집계(`usage_stats`)와 시세를 근거로 답합니다. 기본은 **규칙 기반**(API 키 불필요), 자유 대화는 **Gemini**를 선택할 수 있습니다.
+집계(`usage_stats`)와 시세를 근거로 답합니다. 기본은 **Gemini**이고, `GEMINI_API_KEY`가 없으면 안내 후 **규칙 기반**으로 동작합니다.
 
 ```bash
-python -m fco_meta.chatbot                                        # 대화형 (규칙 기반)
-python -m fco_meta.chatbot --ask "아스날 4-2-3-1 볼란치 2명 추천해줘"
-
-# Gemini: pip install -e ".[gemini]" 후 GEMINI_API_KEY 설정
-python -m fco_meta.chatbot --backend gemini [--model gemini-3.5-flash]
+python -m fco_meta.chatbot                                        # 대화형 (Gemini, 키 없으면 규칙 기반)
+python -m fco_meta.chatbot --ask "4-2-3-1 볼란치 2명 추천해줘"
+python -m fco_meta.chatbot --backend rules                        # 규칙 기반 (키 불필요)
+python -m fco_meta.chatbot --model gemini-2.5-flash               # 다른 Gemini 모델
 
 # 모델 없이 도구만 실행 (디버깅)
 python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널", "role": "DM", "max_price_bp": 500000000}'
 ```
 
-규칙 기반 모드가 이해하는 질문:
+- Gemini는 도구(`recommend_players` 등)로 DB를 조회해 답하므로, 수치는 규칙 기반과 같은 데이터에서 나옵니다.
+- 규칙 기반 모드가 이해하는 질문:
 
 | 예 | 동작 |
 |---|---|
-| 아스날 4-2-3-1 볼란치 2명 추천해줘 | 사용률 TOP 2 + 다음 후보, 시즌 카드·주 강화·시세 |
+| 4-2-3-1 볼란치 2명 추천해줘 | 상위 랭커 전체 기준 사용률 TOP 2 + 다음 후보 |
+| 아스날 4-2-3-1 볼란치 2명 추천해줘 | 팀컬러 지정 (별칭: 아스날·맨유·맨시티·레알·바르사·PSG …) |
 | 아스널 볼란치 5억 이하로 3명 | 예산 필터 (랭커들이 주로 쓴 강화 단계 시세 기준) |
 | 아스널 4-2-3-1 ST 엄격하게 | 실제 경기 배치가 포메이션과 일치한 스쿼드만 |
-| 라이스 사용률 | 선수별 팀컬러·역할·시즌 사용 현황 |
-| 아스널 포메이션 / 어떤 데이터 있어? | 포메이션 분포, 집계된 조합 |
+| 라이스 사용률 / 랭커 포메이션 / 어떤 데이터 있어? | 선수별 현황, 포메이션 분포, 수집 범위 |
 
-- 팀컬러 별칭(아스날, 맨유, 맨시티, 레알, 바르사, PSG …)과 역할 별칭(볼란치·수미 → DM, 공미 → CAM …)을 인식합니다.
 - 포메이션 표본이 10명 미만이면 같은 팀컬러의 전체 포메이션으로 집계하고 그렇다고 표시합니다.
 - 시세는 `python -m fco_meta.market cards --team-color 아스널 --role 볼란치`로 수집한 값만 씁니다.
 
@@ -199,14 +198,14 @@ python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널",
 
 ```bash
 pip install -e ".[web]"
-python -m fco_meta.web                        # http://127.0.0.1:8000
-python -m fco_meta.web --backend gemini       # 챗봇을 Gemini로 (".[gemini]" + GEMINI_API_KEY)
+python -m fco_meta.web                        # http://127.0.0.1:8000 (챗봇: Gemini, 키 없으면 규칙 기반)
+python -m fco_meta.web --backend rules        # 챗봇을 규칙 기반으로
 python -m fco_meta.web --host 0.0.0.0 --port 8080
 ```
 
 - **선수 추천**: 팀컬러(집계된 조합 자동 완성)·포메이션·역할·인원·예산(예: `5억`)·배치 일치 여부 → 사용률 막대, 시즌 카드별 사용 수·주 강화·시세.
   선수 이름을 누르면 역할·시즌별 사용 현황 표. 표본 부족 폴백, 예산 기준을 안내 문구로 표시
-- **챗봇**: 규칙 기반(기본) 또는 Gemini. 예시 질문 버튼 제공
+- **챗봇**: Gemini(기본) 또는 규칙 기반. 예시 질문 버튼 제공
 - 라이트/다크 모드, 모바일 폭 대응
 - JSON API: `/api/meta`, `/api/recommend`, `/api/formations`, `/api/player`, `POST /api/chat` (문서: `/api/docs`)
 

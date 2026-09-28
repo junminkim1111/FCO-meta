@@ -109,7 +109,7 @@ def test_rule_bot_other_intents(toolbox):
 
 def test_cli_rules_and_tool(db, tmp_path, capsys):  # noqa: F811
     path = str(tmp_path / "db.sqlite")
-    assert main(["--db", path, "--ask", "아스널 4-2-3-1 볼란치 1명 추천"]) == 0
+    assert main(["--db", path, "--backend", "rules", "--ask", "아스널 4-2-3-1 볼란치 1명 추천"]) == 0
     assert "볼란치R" in capsys.readouterr().out
     assert main(["--db", path, "--tool", "resolve_terms", '{"role": "공미"}']) == 0
     assert json.loads(capsys.readouterr().out)["role"]["code"] == "CAM"

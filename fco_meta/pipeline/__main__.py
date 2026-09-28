@@ -14,6 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
+from ..config import load_env
 from ..crawler.teamcolors import TeamColorCatalog
 from ..openapi import CallBudget, NexonOpenApiClient
 from ..storage import Storage
@@ -25,6 +26,7 @@ DEFAULT_DB = Path("data/fco_meta.sqlite")
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.pipeline")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--daily-limit", type=int, default=1000, help="일일 호출 한도 (개발 키 1,000)")
