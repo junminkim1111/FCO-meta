@@ -91,3 +91,49 @@ Disallow: /news/*
 - 랭커·팀컬러·포메이션: **`rank_inner` 크롤링** (필터 파라미터로 조합별 조회 가능)
 - 선수 구성: 닉네임 → `id` → `user/match` → `match-detail`
 - 개발 키 1,000건/일 제약 때문에 전수 수집보다 **조합 단위(팀컬러×포메이션) 수집 + 캐시**가 현실적
+
+---
+
+# 시세 데이터 조사 (2026-09-28)
+
+## 결론
+- **NEXON Open API에는 시세 데이터가 없음** (`user/trade`는 본인 거래 기록만 조회 가능)
+- **공식 데이터센터 선수 검색/상세 페이지가 시세를 제공**하며, AJAX로 받아오는 HTML 조각을 그대로 수집할 수 있음 (robots.txt상 `/datacenter/*` 제한 없음)
+
+## 1. 선수 목록 + 강화별 현재가: `POST /datacenter/PlayerList`
+- 선수 검색 폼(`#form1`)을 그대로 POST. 응답은 카드 단위 HTML (`<div id="area_playerunit_{spid}">`)
+- 카드마다: spid, 이름, 시즌 아이콘(`/season/26TOTY.png`), 대표 포지션, 급여(`.pay`), 평점(`.td_ar_score`, 예: `8.2 (49)`),
+  **1~13강 현재가** (`.span_bp{n}[title]`, 예: `span_bp8 title="229,000,000"`)
+- 주요 필터
+  | 파라미터 | 의미 | 예 |
+  |---|---|---|
+  | `teamcolorid` | 팀컬러 id (`data/teamcolors.json`과 같은 체계) | `1004` (아스널) |
+  | `strPosition` | 포지션 코드 목록(spposition), 쉼표로 감쌈 | `,9,10,11,` (RDM/CDM/LDM) |
+  | `strPlayerName` | 선수명 | `사카` |
+  | `n8PlayerGrade1Min/Max` | 가격 범위로 추정 (미검증) | |
+  | `strSeason`, `n4LeagueId`, `n4TeamId`, `n4NationId`, `n4OvrMin/Max`, `n4SalaryMin/Max` 등 | 기타 검색 조건 | |
+- 검증: `teamcolorid=1004&strPosition=,9,10,11,` → 아스널 팀컬러 해당 + 볼란치 가능 카드 (라이스, 비에이라, 기마랑이스 …)와 강화별 시세
+- **요청당 최대 200장, 응답 약 1.8MB** → 200장에 걸리면 시즌·가격 등 조건을 쪼개서 조회해야 함 (페이지 파라미터 `n4PageNo`는 UI에서 항상 1로만 호출됨)
+- 부가 효과: **"선수 → 해당 팀컬러" 매핑도 여기서 얻을 수 있음** (랭커가 안 쓰는 선수도 팀컬러 적격 여부 판단 가능)
+
+## 2. 일별 시세 이력: `POST /datacenter/PlayerPriceGraph`
+- 파라미터: `spid`, `n1strong`(강화 1~13)
+- 응답 HTML 안의 `var json1 = { "time": [...], "value": [...] }` → **최근 365일 일별 시세** (JSON 끝에 trailing comma가 있어 정규식 파싱 필요)
+- 현재가는 `title="3,170,000"` 속성
+- 예: spid 100005471, 1강 → 365개 포인트, 현재가 3,170,000 BP
+
+## 3. FC-RANK는 어디서 가져오나 (추정)
+FC-RANK(fc-rank.com)는 Next.js(Vercel) + Supabase로 만든 사이트이고, 브라우저는 자체 API만 호출함:
+- `/api/player-price-history?spid=&grade=` ↔ 공식 `PlayerPriceGraph(spid, n1strong)`와 파라미터 구조가 동일
+- `/api/player-db/price-cache?spId=&spGrade=` → 응답에 `priceCache.price`, `fetched_at` → **서버가 시세를 받아 DB에 캐시**
+- `/api/power-ranking/team-pack/prices?...&priceFormat=snapshot` → 팀 단위 시세 스냅샷
+- 사이트 문구: "FC Online 데이터센터의 팀컬러·구단가치별 랭커 명단을 기준으로 수집", "NEXON Open API 및 공개 데이터를 기반으로 제공"
+
+→ Open API에 시세가 없으므로, **서버에서 공식 데이터센터(PlayerList/PlayerPriceGraph)를 수집해 Supabase에 `fetched_at`과 함께 캐시**하는 구조로 보는 것이 가장 자연스러움.
+서버 코드는 볼 수 없으므로 추정이며, 다른 공개 시세 출처는 확인되지 않음.
+
+## 4. 우리 설계에 반영할 점
+- 시세 수집 = 데이터센터 `PlayerList` (팀컬러 × 포지션 단위로 조회하면 추천 후보 + 시세를 한 번에 확보)
+- 이력 그래프가 필요할 때만 `PlayerPriceGraph` 개별 호출 (카드 × 강화 단위라 호출 수가 많음 → 온디맨드 + 캐시)
+- 응답이 크므로(1.8MB) 캐시 기간을 두고, 요청 간격을 랭킹 크롤러와 같게(2초 이상) 유지
+- 약관: 랭킹 페이지와 마찬가지로 넥슨 웹 이용약관 확인 필요 (FC-RANK도 같은 방식으로 운영 중인 것으로 보이나, 그것이 허용을 의미하지는 않음)
