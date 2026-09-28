@@ -2,7 +2,6 @@
 
     python -m fco_meta.pipeline meta                                   # spid/seasonid/spposition 메타데이터 저장
     python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
-    python -m fco_meta.pipeline usage --team-color 아스널 --formation 4-2-3-1 --role 볼란치
     python -m fco_meta.pipeline formations --save                     # 포지션 조합 → 포메이션 표 갱신
     python -m fco_meta.pipeline budget                                 # 오늘 호출 수
 """
@@ -17,8 +16,7 @@ from pathlib import Path
 from ..crawler.teamcolors import TeamColorCatalog
 from ..openapi import CallBudget, NexonOpenApiClient
 from ..storage import Storage
-from .formation import DEFAULT_TABLE_PATH, ROLE_POSITIONS, FormationTable, signature_key
-from .report import role_usage
+from .formation import DEFAULT_TABLE_PATH, FormationTable, signature_key
 from .squads import SquadCollector, select_targets
 from .store import PipelineStore
 
@@ -44,13 +42,6 @@ def main(argv: list[str] | None = None) -> int:
     p_sq.add_argument("--max-details", type=int, default=5, help="랭커당 새로 받을 match-detail 최대 수")
     p_sq.add_argument("--retry-failed", action="store_true", help="닉네임 조회 실패 등도 다시 시도")
 
-    p_use = sub.add_parser("usage", help="역할별 선수 사용률")
-    _combo_args(p_use)
-    p_use.add_argument("--role", default="볼란치", choices=sorted(ROLE_POSITIONS))
-    p_use.add_argument("--by", default="sp_id", choices=["sp_id", "pid"], help="sp_id=시즌별, pid=선수별")
-    p_use.add_argument("--top", type=int, default=5)
-    p_use.add_argument("--strict", action="store_true", help="추론 포메이션이 스냅샷 포메이션과 같은 스쿼드만")
-
     p_form = sub.add_parser("formations", help="수집된 기본 스쿼드로 포지션 조합→포메이션 표 학습")
     p_form.add_argument("--save", action="store_true", help=f"{DEFAULT_TABLE_PATH.name}에 저장")
 
@@ -68,8 +59,6 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "formations":
             return _learn_formations(store, args.save)
-        if args.command == "usage":
-            return _usage(storage, args)
         return _collect(storage, store, args)
     finally:
         storage.close()
@@ -137,27 +126,6 @@ def _collect(storage: Storage, store: PipelineStore, args: argparse.Namespace) -
         if result.stopped:
             print(f"  중단: {result.stopped} — 같은 명령으로 이어서 수집할 수 있습니다")
         return 0
-
-
-def _usage(storage: Storage, args: argparse.Namespace) -> int:
-    tc_id = _team_color_id(args.team_color)
-    if tc_id is None:
-        return 2
-    rows = role_usage(
-        storage.conn, tc_id, args.formation, ROLE_POSITIONS[args.role],
-        data_as_of=args.as_of, mode=args.mode, by=args.by, top=args.top, strict=args.strict,
-    )  # fmt: skip
-    if not rows:
-        print("수집된 스쿼드가 없습니다", file=sys.stderr)
-        return 1
-    print(f"{args.team_color} {args.formation} {args.role} 사용 선수 TOP {args.top} (표본 {rows[0].sample}명)")
-    for i, r in enumerate(rows, 1):
-        label = f"{r.name or r.key}" + (f" [{r.season}]" if r.season and args.by == "sp_id" else "")
-        print(
-            f"  {i}. {label}: {r.rankers}명 ({r.usage_rate:.1%}), 평균 강화 {r.avg_grade}, "
-            f"평균 평점 {r.avg_rating}, 해당 경기 승률 {r.win_rate:.0%}"
-        )
-    return 0
 
 
 def _learn_formations(store: PipelineStore, save: bool) -> int:

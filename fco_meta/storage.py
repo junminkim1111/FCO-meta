@@ -5,8 +5,10 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .crawler.models import RankerRow
+if TYPE_CHECKING:  # 런타임 import 시 crawler → jobs → storage 순환 방지
+    from .crawler.models import RankerRow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS crawl_run (

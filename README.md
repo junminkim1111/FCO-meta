@@ -66,10 +66,6 @@ python -m fco_meta.pipeline meta
 # 3) 스쿼드 수집: 이번 실행 최대 300회 호출 (중단돼도 같은 명령으로 이어서 수집)
 python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
 
-# 4) 볼란치(RDM/CDM/LDM) 사용 선수 TOP 5
-#    --by pid: 시즌 무관 선수 단위, --strict: 추론 포메이션이 스냅샷과 같은 스쿼드만
-python -m fco_meta.pipeline usage --team-color 아스널 --formation 4-2-3-1 --role 볼란치 --by pid
-
 python -m fco_meta.pipeline budget            # 오늘(KST) 호출 수
 python -m fco_meta.pipeline formations --save # 포지션 조합 → 포메이션 표(data/formations.json) 갱신
 ```
@@ -94,24 +90,29 @@ python -m fco_meta.pipeline formations --save # 포지션 조합 → 포메이�
 | `ranker_squad_status` | 랭커별 수집 상태 (ok / provisional / nickname_not_found / no_match_before_snapshot / data_not_ready / error) |
 | `meta_spid`, `meta_season`, `meta_position` | 메타데이터 |
 
-```sql
--- 아스널 4-2-3-1 랭커의 기본 스쿼드에서 볼란치(9/10/11) 사용률
-WITH base AS (
-  SELECT q.rank, q.ouid, q.match_id
-  FROM ranker_squad q
-  JOIN ranker_snapshot s USING (data_as_of, mode, rank)
-  JOIN ranker_team_color m USING (data_as_of, mode, rank)
-  WHERE q.match_order = 0 AND m.team_color_id = 1004 AND s.formation = '4-2-3-1'
-    AND q.data_as_of = (SELECT MAX(data_as_of) FROM ranker_squad)
-)
-SELECT p.sp_id, sp.name, COUNT(DISTINCT b.rank) AS rankers,
-       ROUND(100.0 * COUNT(DISTINCT b.rank) / (SELECT COUNT(*) FROM base), 1) AS usage_pct
-FROM base b
-JOIN match_player p ON p.match_id = b.match_id AND p.ouid = b.ouid
-LEFT JOIN meta_spid sp ON sp.sp_id = p.sp_id
-WHERE p.sp_position IN (9, 10, 11)
-GROUP BY p.sp_id ORDER BY rankers DESC LIMIT 5;
+## 집계 (usage_stats)
+
+수집된 기본 스쿼드로 **팀컬러 × 포메이션 × 역할 × 카드**별 사용 현황을 계산합니다.
+역할은 `fco_meta/market/roles.py`(시세 크롤러와 같은 정의: `DM`=RDM/CDM/LDM, `CAM`=RAM/CAM/LAM …)를 쓰고, 별칭(볼란치·공미 등)도 받습니다.
+
+```bash
+# 스쿼드 수집 후 재계산 (여러 번 실행해도 결과 동일)
+python -m fco_meta.analytics build
+
+# 볼란치 사용 선수 TOP 5 (시즌 합산 + 시즌별 내역)
+python -m fco_meta.analytics top --team-color 아스널 --formation 4-2-3-1 --role 볼란치
+#   --by sp_id  카드(시즌)별        --strict  추론 포메이션이 스냅샷과 같은 스쿼드만
+#   --min-sample N  표본이 N명 미만이면 팀컬러 전체 포메이션으로 폴백 (기본 10)
 ```
+
+| 테이블 | 내용 |
+|---|---|
+| `usage_sample` | 스냅샷 × 팀컬러 × 포메이션(`*` = 전체) × strict별 조합 랭커 수, 수집된 스쿼드 수(= 사용률 분모) |
+| `usage_stats` | 위 단위 × 역할 × 카드(sp_id): 사용 랭커 수, 사용률, 강화 평균·분포, 평점 평균, 해당 경기 승률, 사용 랭커 평균 ELO·시즌 승률 |
+
+- 선발(`spPosition != 28`)만 셉니다. 같은 선수의 다른 시즌 카드는 한 스쿼드에 함께 있을 수 없으므로 선수(pid) 단위 합산에 중복이 없습니다.
+- 승률은 랭커당 기본 스쿼드 1경기 결과라 참고용입니다.
+- 코드에서는 `fco_meta.analytics.top_players(conn, team_color_id, formation, role, ...)` → `UsageResult`
 
 ## 시세 크롤러
 

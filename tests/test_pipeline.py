@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from fco_meta.openapi import CallBudget, NexonOpenApiClient
-from fco_meta.pipeline import FormationTable, PipelineStore, SquadCollector, role_usage, select_targets
+from fco_meta.pipeline import FormationTable, PipelineStore, SquadCollector, select_targets
 from fco_meta.storage import Storage
 
 AS_OF = "2026-09-28T20:00:00+09:00"  # = 11:00 UTC
@@ -189,22 +189,6 @@ def test_no_match_before_snapshot(tmp_path):
     assert result.statuses == {"no_match_before_snapshot": 1}
 
 
-def test_role_usage(tmp_path, fake):
-    storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1"), ("랭커B", "4-2-3-1")])
-    collector(api, store, extra_matches=1).run(select_targets(storage.conn, 1004, "4-2-3-1"))
-    storage.conn.execute("INSERT INTO meta_spid VALUES (101000011, '볼란치 L'), (250000009, '볼란치 R')")
-    storage.conn.execute("INSERT INTO meta_season VALUES (101, 'ICON', NULL), (250, 'SEASON250', NULL)")
-
-    rows = role_usage(storage.conn, 1004, "4-2-3-1", (9, 10, 11))
-    assert [(r.key, r.name, r.season, r.rankers, r.sample, r.usage_rate) for r in rows] == [
-        (101000011, "볼란치 L", "ICON", 2, 2, 1.0),
-        (250000009, "볼란치 R", "SEASON250", 1, 2, 0.5),
-        (300000009, None, None, 1, 2, 0.5),
-    ]
-    by_pid = role_usage(storage.conn, 1004, "4-2-3-1", (9, 10, 11), by="pid", top=1)
-    assert [(r.key, r.rankers) for r in by_pid] == [(9, 2)]  # 250·300 시즌 같은 선수(pid 9) 합산
-
-
 def test_squads_collected_within_api_lag_are_provisional(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
     targets = select_targets(storage.conn, 1004, "4-2-3-1")
@@ -216,13 +200,3 @@ def test_squads_collected_within_api_lag_are_provisional(tmp_path, fake):
     assert collector(api, store).run(targets).statuses == {"ok": 1}
     assert fake.calls[n:] == ["/fconline/v1/user/match"]
 
-
-def test_role_usage_strict_excludes_mismatched_base_squads(tmp_path, fake):
-    fake.details["b1"] = detail("b1", "2026-09-28T08:00:00", "ouid-b", F442)
-    storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1"), ("랭커B", "4-2-3-1")])
-    collector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
-
-    assert {r.sample for r in role_usage(storage.conn, 1004, "4-2-3-1", (13, 15))} == {2}
-    assert role_usage(storage.conn, 1004, "4-2-3-1", (13, 15), strict=True) == []
-    strict = role_usage(storage.conn, 1004, "4-2-3-1", (9, 10, 11), strict=True)
-    assert {r.sample for r in strict} == {1}

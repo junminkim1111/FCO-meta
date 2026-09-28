@@ -87,20 +87,35 @@ TOP 10,000 전수는 개발 키로 불가 → **조합 단위 수집 + 캐시**�
 #### 검증 결과 (2026-09-28 21:00 KST 스냅샷, 아스널 × 4-2-3-1 = 94명)
 - 94명 전원 스쿼드 수집, API 호출 285회 (id 94 + user/match 94 + match-detail 97 — 기준 시각 이후 경기 3건 포함), 랭커당 약 3회
 - 기본 스쿼드 추론 포메이션 = 4-2-3-1: **77명(82%)**. 나머지 17명은 4-2-2-2·4-2-2-1-1·4-4-2·4-1-4-1 등 실제로 다른 배치
-  → 랭커가 스쿼드를 여러 개 쓰거나, 페이지 기준 경기가 API에 아직 없는 경우. `usage --strict`로 일치 스쿼드만 집계 가능
+  → 랭커가 스쿼드를 여러 개 쓰거나, 페이지 기준 경기가 API에 아직 없는 경우. `analytics top --strict`로 일치 스쿼드만 집계 가능
 - 기본 스쿼드 경기는 기준 시각 평균 33시간 전(최소 1분, 최대 10일)
 
-### ⑤ 집계
+### ⑤ 집계 (`fco_meta/analytics`)
 ```
+usage_sample(data_as_of, mode, team_color_id, formation, strict, combo_rankers, squads)
 usage_stats(
-  snapshot_date, team_color_id, formation, role,   -- role: '볼란치' = RDM/CDM/LDM(9,10,11)
-  spid, pid, season_id,
-  ranker_count, usage_rate, win_rate, avg_rating, avg_grade
+  data_as_of, mode, team_color_id, formation, strict, role,   -- role: market.roles (DM = RDM/CDM/LDM …)
+  sp_id, pid, season_id,
+  ranker_count, sample_size, usage_rate, win_rate, avg_rating, avg_grade, grade_dist,
+  avg_elo, avg_ranker_win_rate
 )
 ```
-- 사용률 분모 = 해당 조합 랭커 수 (예: 아스널 4-2-3-1 = 94명)
-- 현재 구현: `fco_meta/pipeline/report.py`의 `role_usage` (시즌별 `sp_id` / 선수별 `pid`, `strict` 옵션) → 4단계에서 `usage_stats` 테이블로 확장
-- 표본 부족(예: 10명 미만) → 챗봇이 표본 수를 명시하고 조건 완화 폴백
+- 사용률 분모 = 해당 조합에서 기본 스쿼드가 수집된 랭커 수 (`usage_sample.squads`, 예: 아스널 4-2-3-1 = 94명)
+- `formation = '*'`: 팀컬러 전체 포메이션 집계. 표본이 `MIN_SAMPLE`(10명) 미만이면 `top_players`가 여기로 폴백하고 `fallback`으로 표시
+- `strict = 1`: 추론 포메이션 = 스냅샷 포메이션인 스쿼드만 (아스널 4-2-3-1: 94명 → 77명)
+- 선수 단위(pid)는 카드 행을 합산하고 시즌별 내역을 함께 반환 → 챗봇이 "라이스 (25 UCL 23명, 26 TOTS 17명 …)"처럼 설명
+- `grade_dist`(강화별 사용 랭커 수)는 시세(`market.card_price_latest`)와 결합해 예산별 추천에 사용 예정
+
+#### 검증 결과 (아스널 × 4-2-3-1, 볼란치 = DM, 표본 94명)
+| 순위 | 선수 | 사용 랭커 | 사용률 | 주요 시즌 |
+|---|---|---|---|---|
+| 1 | 데클런 라이스 | 53 | 56.4% | 25 UCL 23, 26 TOTS 17, PTG 9 |
+| 2 | 수비멘디 | 33 | 35.1% | 25 UCL 18, PTG 13 |
+| 3 | 파트리크 비에이라 | 26 | 27.7% | 26FSL 11, WS 4, SPT 4 |
+| 4 | 브루누 기마랑이스 | 14 | 14.9% | PTG 5, SPT 5, 26 TOTS 4 |
+| 5 | 미켈 메리노 | 13 | 13.8% | PTG 10 |
+
+`--strict`(77명)에서도 순위 동일 (라이스 58.4%).
 
 ### ⑥ 챗봇 (Claude tool use)
 | 도구 | 설명 |
@@ -150,8 +165,8 @@ tests/fixtures/ # 랭킹 페이지 샘플
 | **1-1. 시세 크롤러** | 데이터센터 선수 검색·시세 이력 수집 (팀컬러·포지션 필터, 강화별 현재가) | ✅ 완료 (`fco_meta/market`) |
 | **2. Open API 클라이언트** | rate limiter·일일 예산, id/user/match/match-detail | ✅ 완료 (`fco_meta/openapi`) |
 | **3. 파이프라인** | ouid 매핑, 스쿼드 수집, 정합성 검증 | ✅ 완료 (`fco_meta/pipeline`) |
-| **4. 집계** | usage_stats, 아스널 4-2-3-1 볼란치로 end-to-end 검증 | 다음 (역할별 사용률 SQL·`usage` 명령은 준비됨) |
-| **5. 챗봇** | 도구·프롬프트·별칭 사전, CLI 챗봇 | |
+| **4. 집계** | usage_stats, 아스널 4-2-3-1 볼란치로 end-to-end 검증 | ✅ 완료 (`fco_meta/analytics`) |
+| **5. 챗봇** | 도구·프롬프트·별칭 사전, CLI 챗봇 | 다음 |
 | **6. UI/운영** | 웹 UI, 스케줄 수집, 알림 | |
 
 ---
