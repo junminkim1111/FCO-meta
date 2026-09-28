@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import httpx
 import pytest
 
@@ -6,6 +8,7 @@ from fco_meta.pipeline import FormationTable, PipelineStore, SquadCollector, rol
 from fco_meta.storage import Storage
 
 AS_OF = "2026-09-28T20:00:00+09:00"  # = 11:00 UTC
+LATER = datetime(2026, 9, 28, 14, 0, tzinfo=timezone.utc)  # 반영 지연(2시간) 이후
 
 GK = [(0, 101000001)]
 BACK4 = [(3, 101000003), (4, 101000004), (6, 101000006), (7, 101000007)]
@@ -57,6 +60,10 @@ class FakeApi:
         raise AssertionError(path)
 
 
+def collector(api, store, now=LATER, **kw):
+    return SquadCollector(api, store, now=now, **kw)
+
+
 def make_env(tmp_path, fake, *, rankers, run_limit=None):
     storage = Storage(tmp_path / "db.sqlite")
     storage.conn.execute("INSERT INTO crawl_run (id, started_at, mode, query_json) VALUES (1, 'x', '1vs1', '{}')")
@@ -100,7 +107,7 @@ def test_select_targets_uses_team_color_membership(tmp_path, fake):
 
 def test_base_squad_is_latest_match_before_snapshot(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
-    result = SquadCollector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+    result = collector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
 
     assert result.statuses == {"ok": 1}
     assert fake.calls == ["/fconline/v1/id", "/fconline/v1/user/match", "/fconline/v1/match-detail", "/fconline/v1/match-detail"]
@@ -120,21 +127,21 @@ def test_base_squad_is_latest_match_before_snapshot(tmp_path, fake):
 def test_rerun_uses_caches(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
     targets = select_targets(storage.conn, 1004, "4-2-3-1")
-    SquadCollector(api, store).run(targets)
+    collector(api, store).run(targets)
     n = len(fake.calls)
 
-    again = SquadCollector(api, store).run(targets)
+    again = collector(api, store).run(targets)
     assert len(fake.calls) == n and again.cached == 1
 
     # 완료 상태를 지워도 ouid·경기 목록·match-detail은 캐시에서 읽는다
     storage.conn.execute("DELETE FROM ranker_squad_status")
-    SquadCollector(api, store).run(targets)
+    collector(api, store).run(targets)
     assert len(fake.calls) == n
 
 
 def test_extra_matches_only_accepted_when_formation_matches(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
-    SquadCollector(api, store, extra_matches=2).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+    collector(api, store, extra_matches=2).run(select_targets(storage.conn, 1004, "4-2-3-1"))
 
     squad = storage.conn.execute("SELECT match_order, match_id, inferred_formation, formation_match, accepted FROM ranker_squad").fetchall()
     assert [tuple(r) for r in squad] == [(0, "a2", "4-2-3-1", 1, 1), (1, "a1", "4-2-3-1", 1, 1), (2, "a0", "4-4-2", 0, 0)]
@@ -144,7 +151,7 @@ def test_learned_table_is_used_for_consistency(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
     # 학습된 표에 있는 조합이면 라인 기준 추론보다 표의 이름을 우선한다
     table = FormationTable({tuple(sorted(p for p, _ in F4231 if p not in (0, 28))): "4-2-3-1(x)"})
-    SquadCollector(api, store, table=table).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+    collector(api, store, table=table).run(select_targets(storage.conn, 1004, "4-2-3-1"))
     row = storage.conn.execute("SELECT inferred_formation, formation_match, accepted FROM ranker_squad").fetchone()
     assert tuple(row) == ("4-2-3-1(x)", 0, 1)  # 기본 스쿼드는 불일치여도 반영, 불일치 여부만 기록
 
@@ -152,39 +159,39 @@ def test_learned_table_is_used_for_consistency(tmp_path, fake):
 def test_unknown_nickname_is_recorded_and_not_retried(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("탈퇴한닉", "4-2-3-1")])
     targets = select_targets(storage.conn, 1004, "4-2-3-1")
-    assert SquadCollector(api, store).run(targets).statuses == {"nickname_not_found": 1}
+    assert collector(api, store).run(targets).statuses == {"nickname_not_found": 1}
     lookup = storage.conn.execute("SELECT status, error_code FROM nickname_lookup").fetchone()
     assert tuple(lookup) == ("not_found", "OPENAPI00004")
 
-    SquadCollector(api, store).run(targets)
+    collector(api, store).run(targets)
     assert fake.calls == ["/fconline/v1/id"]
-    SquadCollector(api, store, retry_failed=True).run(targets)
+    collector(api, store, retry_failed=True).run(targets)
     assert fake.calls == ["/fconline/v1/id"] * 2
 
 
 def test_budget_stops_run_and_next_run_resumes(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1"), ("랭커B", "4-2-3-1")], run_limit=5)
     targets = select_targets(storage.conn, 1004, "4-2-3-1")
-    first = SquadCollector(api, store).run(targets)
+    first = collector(api, store).run(targets)
     assert first.stopped == "budget" and first.statuses == {"ok": 1} and first.api_calls == 5
     run = storage.conn.execute("SELECT status, api_calls FROM pipeline_run").fetchone()
     assert tuple(run) == ("stopped_budget", 5)
 
     api.budget.run_limit = None
-    second = SquadCollector(api, store).run(targets)
+    second = collector(api, store).run(targets)
     assert second.stopped is None and second.cached == 1 and second.statuses == {"ok": 2}
 
 
 def test_no_match_before_snapshot(tmp_path):
     fake = FakeApi({"랭커A": "ouid-a"}, {"ouid-a": ["late"]}, {"late": detail("late", "2026-09-28T12:00:00", "ouid-a", F4231)})
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
-    result = SquadCollector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+    result = collector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
     assert result.statuses == {"no_match_before_snapshot": 1}
 
 
 def test_role_usage(tmp_path, fake):
     storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1"), ("랭커B", "4-2-3-1")])
-    SquadCollector(api, store, extra_matches=1).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+    collector(api, store, extra_matches=1).run(select_targets(storage.conn, 1004, "4-2-3-1"))
     storage.conn.execute("INSERT INTO meta_spid VALUES (101000011, '볼란치 L'), (250000009, '볼란치 R')")
     storage.conn.execute("INSERT INTO meta_season VALUES (101, 'ICON', NULL), (250, 'SEASON250', NULL)")
 
@@ -196,3 +203,26 @@ def test_role_usage(tmp_path, fake):
     ]
     by_pid = role_usage(storage.conn, 1004, "4-2-3-1", (9, 10, 11), by="pid", top=1)
     assert [(r.key, r.rankers) for r in by_pid] == [(9, 2)]  # 250·300 시즌 같은 선수(pid 9) 합산
+
+
+def test_squads_collected_within_api_lag_are_provisional(tmp_path, fake):
+    storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
+    targets = select_targets(storage.conn, 1004, "4-2-3-1")
+    early = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+
+    assert collector(api, store, now=early).run(targets).statuses == {"provisional": 1}
+    n = len(fake.calls)
+    # 다음 실행: 경기 목록만 다시 받고 match-detail은 캐시 사용, 지연 이후면 ok
+    assert collector(api, store).run(targets).statuses == {"ok": 1}
+    assert fake.calls[n:] == ["/fconline/v1/user/match"]
+
+
+def test_role_usage_strict_excludes_mismatched_base_squads(tmp_path, fake):
+    fake.details["b1"] = detail("b1", "2026-09-28T08:00:00", "ouid-b", F442)
+    storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1"), ("랭커B", "4-2-3-1")])
+    collector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+
+    assert {r.sample for r in role_usage(storage.conn, 1004, "4-2-3-1", (13, 15))} == {2}
+    assert role_usage(storage.conn, 1004, "4-2-3-1", (13, 15), strict=True) == []
+    strict = role_usage(storage.conn, 1004, "4-2-3-1", (9, 10, 11), strict=True)
+    assert {r.sample for r in strict} == {1}

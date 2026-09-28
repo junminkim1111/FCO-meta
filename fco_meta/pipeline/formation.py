@@ -40,6 +40,15 @@ LINES: tuple[frozenset[int], ...] = (
     frozenset(range(23, 28)),
 )
 
+# 랭킹 필터의 포메이션 목록 (rank 페이지 select_formation, 2026-09-28)
+FORMATIONS: tuple[str, ...] = (
+    "3-4-3", "3-4-3(2)", "3-4-1-2", "3-2-3-2", "3-2-2-1-2", "3-1-2-1-3", "3-1-4-2",
+    "4-5-1", "4-4-2", "4-4-2(2)", "4-4-1-1", "4-3-3", "4-3-3(2)", "4-3-2-1", "4-3-1-2",
+    "4-2-4", "4-2-3-1", "4-2-2-2", "4-2-2-2(2)", "4-2-2-1-1", "4-2-1-3", "4-2-1-3(2)",
+    "4-1-4-1", "4-1-3-2", "4-1-2-3", "4-1-2-3(2)", "4-1-2-1-2", "4-1-2-1-2(2)",
+    "5-4-1", "5-3-2", "5-2-3", "5-2-1-2", "5-1-2-1-1",
+)  # fmt: skip
+
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parents[2] / "data" / "formations.json"
 
 Signature = tuple[int, ...]
@@ -105,8 +114,18 @@ class FormationTable:
         positions = list(positions)
         return self.known.get(signature(positions)) or line_shape(positions)
 
-    def learn(self, observations: Iterable[tuple[Iterable[int], str]], min_share: float = 0.8) -> dict[Signature, Counter[str]]:
-        """Add signatures whose observed formation is unambiguous (majority ≥ `min_share`).
+    def learn(
+        self,
+        observations: Iterable[tuple[Iterable[int], str]],
+        min_share: float = 0.8,
+        min_count: int = 3,
+    ) -> dict[Signature, Counter[str]]:
+        """Add signatures whose observed formation is unambiguous (≥ `min_count`, majority ≥ `min_share`).
+
+        The observed formation comes from the ranking page, which may reflect a newer match than
+        the one we matched it with. So a signature whose line shape is already a real formation
+        name different from the observation (e.g. a 4-4-2 layout seen on a "4-2-3-1" ranker) is
+        never learned; only variants such as "4-4-2" → "4-4-2(2)" or unnamed shapes are.
 
         Returns the raw counts for every signature so callers can report conflicts.
         """
@@ -117,6 +136,9 @@ class FormationTable:
                 counts[sig][formation] += 1
         for sig, c in counts.items():
             name, n = c.most_common(1)[0]
-            if n / sum(c.values()) >= min_share:
+            shape = line_shape(sig)
+            if shape in FORMATIONS and shape != name and not name.startswith(f"{shape}("):
+                continue
+            if n >= min_count and n / sum(c.values()) >= min_share:
                 self.known[sig] = name
         return counts

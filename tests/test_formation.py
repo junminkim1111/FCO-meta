@@ -25,17 +25,25 @@ def test_signature_ignores_goalkeeper_subs_and_order():
     assert parse_signature_key(signature_key(signature(a))) == signature(a)
 
 
-def test_table_learns_unambiguous_signatures(tmp_path):
+def test_table_learns_only_safe_signatures(tmp_path):
     wide = GK + BACK4 + [9, 11, 12, 16, 18, 25]  # LM/RM + CAM: 라인 기준으로는 4-2-2-1-1
     other = GK + BACK4 + [9, 11, 13, 15, 24, 26]
     table = FormationTable()
     assert table.infer(wide) == "4-2-2-1-1"
 
-    counts = table.learn([(wide, "4-2-3-1")] * 9 + [(wide, "4-2-2-1-1")] + [(other, "4-2-2-2")] * 2 + [(other, "4-2-2-2(2)")] * 2)
-    assert table.infer(wide) == "4-2-3-1"  # 90% 일치 → 표에 등록
-    assert table.infer(other) == "4-2-2-2"  # 50:50 → 등록하지 않고 라인 기준 추론
-    assert signature(other) not in table.known
+    odd = GK + [4, 6] + [12, 14, 16, 21, 23, 24, 26, 27]  # 라인 기준 "2-3-1-4": 실제 포메이션 이름이 아님
+    counts = table.learn(
+        [(wide, "4-2-3-1")] * 9 + [(wide, "4-2-2-1-1")]  # 라인 기준이 실제 이름(4-2-2-1-1)인데 다른 관측 → 학습 안 함
+        + [(other, "4-2-2-2")] * 2 + [(other, "4-2-2-2(2)")] * 6  # 변형 이름 75% → min_share 미달
+        + [(odd, "4-2-3-1")] * 2  # min_count 미달
+    )
+    assert table.known == {}
+    assert table.infer(wide) == "4-2-2-1-1"
     assert sum(counts[signature(wide)].values()) == 10
+
+    counts = table.learn([(other, "4-2-2-2(2)")] * 4 + [(odd, "3-4-3")] * 3)
+    assert table.infer(other) == "4-2-2-2(2)"  # 같은 라인 모양의 변형 이름은 학습
+    assert table.infer(odd) == "3-4-3"  # 이름 없는 라인 모양은 학습
 
     path = tmp_path / "formations.json"
     table.save(path)

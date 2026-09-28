@@ -176,15 +176,19 @@ class SquadCollector:
             return "nickname_not_found", None, None
 
         as_of = t.as_of_utc
-        match_ids = self.store.cached_match_list(ouid, OFFICIAL_MATCH, fetched_after=as_of)
+        # 반영 지연 이후에 받은 목록만 스냅샷 이전 경기를 모두 담고 있다고 본다
+        complete_after = as_of + API_DATA_LAG
+        match_ids = self.store.cached_match_list(ouid, OFFICIAL_MATCH, fetched_after=complete_after)
+        provisional = False
         if match_ids is None:
+            provisional = self._now() < complete_after
             try:
                 match_ids = self.api.user_matches(ouid, OFFICIAL_MATCH, limit=self.list_limit)
             except NotFoundError:
                 # ouid가 바뀌었을 수 있음 → 다음 실행에서 닉네임부터 다시 조회
                 self.store.forget_lookup(t.nickname)
                 raise
-            self.store.save_match_list(ouid, OFFICIAL_MATCH, match_ids)
+            self.store.save_match_list(ouid, OFFICIAL_MATCH, match_ids, fetched_at=self._now())
 
         chosen: list[tuple[int, str, str, str | None, bool, bool]] = []
         base_sig = None
@@ -220,16 +224,21 @@ class SquadCollector:
             return "no_match_before_snapshot", ouid, detail
         self.store.save_squad(t.data_as_of, t.mode, t.rank, chosen, run_id)
         base = chosen[0]
-        return "ok", ouid, f"base {base[2]} ({base[3]})"
+        # provisional: 스냅샷 직전 경기가 아직 API에 없을 수 있음 → 다음 실행에서 경기 목록부터 다시 확인
+        return ("provisional" if provisional else "ok"), ouid, f"base {base[2]} ({base[3]})"
+
+    def _now(self) -> datetime:
+        return self.now or datetime.now(timezone.utc)
 
     def _warn_if_too_fresh(self, targets: list[SquadTarget]) -> None:
         if not targets:
             return
-        now = self.now or datetime.now(timezone.utc)
+        now = self._now()
         as_of = targets[0].as_of_utc
         if now - as_of < API_DATA_LAG:
             log.warning(
-                "snapshot %s is less than %s old: Open API may not have the rankers' latest matches yet",
+                "snapshot %s is less than %s old: Open API may not have the rankers' latest matches yet"
+                " (squads are saved as provisional and re-checked on the next run)",
                 targets[0].data_as_of,
                 API_DATA_LAG,
             )

@@ -49,12 +49,14 @@ def main(argv: list[str] | None = None) -> int:
     p_use.add_argument("--role", default="볼란치", choices=sorted(ROLE_POSITIONS))
     p_use.add_argument("--by", default="sp_id", choices=["sp_id", "pid"], help="sp_id=시즌별, pid=선수별")
     p_use.add_argument("--top", type=int, default=5)
+    p_use.add_argument("--strict", action="store_true", help="추론 포메이션이 스냅샷 포메이션과 같은 스쿼드만")
 
     p_form = sub.add_parser("formations", help="수집된 기본 스쿼드로 포지션 조합→포메이션 표 학습")
     p_form.add_argument("--save", action="store_true", help=f"{DEFAULT_TABLE_PATH.name}에 저장")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # 요청 URL에 닉네임·ouid가 들어가므로 출력하지 않음
 
     args.db.parent.mkdir(parents=True, exist_ok=True)
     storage = Storage(args.db)
@@ -143,7 +145,7 @@ def _usage(storage: Storage, args: argparse.Namespace) -> int:
         return 2
     rows = role_usage(
         storage.conn, tc_id, args.formation, ROLE_POSITIONS[args.role],
-        data_as_of=args.as_of, mode=args.mode, by=args.by, top=args.top,
+        data_as_of=args.as_of, mode=args.mode, by=args.by, top=args.top, strict=args.strict,
     )  # fmt: skip
     if not rows:
         print("수집된 스쿼드가 없습니다", file=sys.stderr)

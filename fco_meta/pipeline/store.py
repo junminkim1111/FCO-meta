@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS ranker_squad_status (
     mode       TEXT NOT NULL,
     rank       INTEGER NOT NULL,
     ouid       TEXT,
-    status     TEXT NOT NULL,               -- ok | nickname_not_found | no_match_before_snapshot | data_not_ready | error
+    status     TEXT NOT NULL,               -- ok | provisional | nickname_not_found | no_match_before_snapshot | data_not_ready | error
     detail     TEXT,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (data_as_of, mode, rank)
@@ -196,10 +196,11 @@ class PipelineStore:
             return None
         return list(json.loads(row["match_ids"]))
 
-    def save_match_list(self, ouid: str, matchtype: int, match_ids: list[str]) -> None:
+    def save_match_list(self, ouid: str, matchtype: int, match_ids: list[str], fetched_at: datetime | None = None) -> None:
+        fetched = fetched_at.isoformat(timespec="seconds") if fetched_at else now_utc()
         self.conn.execute(
             "INSERT OR REPLACE INTO user_match_list (ouid, matchtype, fetched_at, match_ids) VALUES (?, ?, ?, ?)",
-            (ouid, matchtype, now_utc(), json.dumps(match_ids)),
+            (ouid, matchtype, fetched, json.dumps(match_ids)),
         )
         self.conn.commit()
 

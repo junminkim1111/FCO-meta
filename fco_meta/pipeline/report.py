@@ -15,6 +15,7 @@ JOIN ranker_team_color m USING (data_as_of, mode, rank)
 WHERE q.match_order = 0 AND q.accepted = 1
   AND m.team_color_id = :team_color_id AND s.formation = :formation
   AND q.data_as_of = :data_as_of AND q.mode = :mode
+  AND (:strict = 0 OR q.formation_match = 1)
 """
 
 # {key}: sp_id(시즌 구분) 또는 pid(시즌 무관 같은 선수)
@@ -76,12 +77,14 @@ def role_usage(
     mode: str = "1vs1",
     by: str = "sp_id",
     top: int = 5,
+    strict: bool = False,
 ) -> list[UsageRow]:
+    """`strict`: only base squads whose inferred formation equals the snapshot formation."""
     if by not in ("sp_id", "pid"):
         raise ValueError("by must be 'sp_id' or 'pid'")
     data_as_of = data_as_of or latest_squad_snapshot(conn, team_color_id, formation, mode)
     if data_as_of is None:
         return []
     sql = ROLE_USAGE_SQL.format(base=BASE_SQUADS_SQL, key=by, positions=",".join(str(int(p)) for p in positions))
-    params = {"team_color_id": team_color_id, "formation": formation, "data_as_of": data_as_of, "mode": mode, "top": top}
+    params = {"team_color_id": team_color_id, "formation": formation, "data_as_of": data_as_of, "mode": mode, "top": top, "strict": int(strict)}
     return [UsageRow(*r) for r in conn.execute(sql, params).fetchall()]

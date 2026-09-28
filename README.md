@@ -66,8 +66,9 @@ python -m fco_meta.pipeline meta
 # 3) 스쿼드 수집: 이번 실행 최대 300회 호출 (중단돼도 같은 명령으로 이어서 수집)
 python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
 
-# 4) 볼란치(RDM/CDM/LDM) 사용 선수 TOP 5  (--by pid: 시즌 무관 선수 단위)
-python -m fco_meta.pipeline usage --team-color 아스널 --formation 4-2-3-1 --role 볼란치
+# 4) 볼란치(RDM/CDM/LDM) 사용 선수 TOP 5
+#    --by pid: 시즌 무관 선수 단위, --strict: 추론 포메이션이 스냅샷과 같은 스쿼드만
+python -m fco_meta.pipeline usage --team-color 아스널 --formation 4-2-3-1 --role 볼란치 --by pid
 
 python -m fco_meta.pipeline budget            # 오늘(KST) 호출 수
 python -m fco_meta.pipeline formations --save # 포지션 조합 → 포메이션 표(data/formations.json) 갱신
@@ -78,7 +79,9 @@ python -m fco_meta.pipeline formations --save # 포지션 조합 → 포메이�
 - **캐시**: 닉네임→ouid(실패 포함), 스냅샷 이후에 받은 경기 목록, matchId별 상세는 다시 호출하지 않습니다. 완료한 랭커도 건너뜁니다.
 - **정합성**: 랭킹 페이지의 팀컬러·포메이션은 가장 최근 공식경기 스쿼드 기준 → `data_as_of`(KST) 이전의 가장 최근 경기(UTC `matchDate` 변환 후 비교)를 기본 스쿼드(`match_order` 0)로 씁니다.
   `--extra-matches N`으로 더 이전 경기를 보면, 추론 포메이션이 스냅샷 포메이션과 같거나 선발 포지션 조합이 기본 스쿼드와 같을 때만 `accepted=1`입니다.
-- Open API는 매시 정각에 **2시간 전까지**의 경기를 반영합니다. 스냅샷 직후에 수집하면 마지막 경기가 빠질 수 있으니, 스냅샷 기준 시각 2시간 뒤에 돌리는 것이 정확합니다(더 이르면 경고).
+- Open API는 매시 정각에 **2시간 전까지**의 경기를 반영합니다. 기준 시각 + 2시간 전에 수집한 스쿼드는 `provisional`로 저장되고,
+  다음 실행에서 경기 목록만 다시 받아 확인합니다(match-detail은 캐시).
+- 요청 URL에 닉네임·ouid가 들어가므로 httpx 요청 로그는 출력하지 않습니다.
 
 | 테이블 | 내용 |
 |---|---|
@@ -88,7 +91,7 @@ python -m fco_meta.pipeline formations --save # 포지션 조합 → 포메이�
 | `user_match_list` | ouid별 최신 공식경기 matchId 목록과 조회 시각 |
 | `match`, `match_team`, `match_player` | 경기(UTC 일시), 참가자별 결과, 선수(spId, 시즌ID, pid, spPosition, 강화, 평점, 선발 여부) |
 | `ranker_squad` | 스냅샷 랭커 ↔ 스쿼드 경기 (`match_order`, 추론 포메이션, 일치 여부, 반영 여부) |
-| `ranker_squad_status` | 랭커별 수집 상태 (ok / nickname_not_found / no_match_before_snapshot / data_not_ready / error) |
+| `ranker_squad_status` | 랭커별 수집 상태 (ok / provisional / nickname_not_found / no_match_before_snapshot / data_not_ready / error) |
 | `meta_spid`, `meta_season`, `meta_position` | 메타데이터 |
 
 ```sql
