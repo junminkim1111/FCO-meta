@@ -17,9 +17,11 @@ from .tools import TOOLS, Toolbox
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.5-flash"
-# 기본 모델이 과부하(503)·한도(429)로 계속 실패하면 차례로 시도할 모델
-DEFAULT_FALLBACK_MODELS = ("gemini-2.5-flash",)
+# 2026-09 기준: gemini-2.5-flash는 신규 사용자에게 404, API가 gemini-3.8-flash를 권장
+DEFAULT_MODEL = "gemini-3.8-flash"
+# 기본 모델이 과부하(503)·한도(429)로 계속 실패하거나 사용 불가(404)면 차례로 시도할 모델
+DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash",)
+UNAVAILABLE = (404,)  # 이 모델을 쓸 수 없음 → 재시도 없이 다음 모델
 RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
 MAX_TOOL_ROUNDS = 8
@@ -52,21 +54,43 @@ def choose_backend(requested: str) -> tuple[str, str | None]:
     return requested, None
 
 
+class GeminiUnavailable(Exception):
+    """Every configured model failed with a retryable or 'model unavailable' error."""
+
+    def __init__(self, failures: list[tuple[str, Exception]]):
+        self.failures = failures
+        super().__init__("; ".join(f"{m}: {e}" for m, e in failures))
+
+
+_HINTS = {
+    400: "요청 형식 또는 API 키 문제",
+    401: "API 키 인증 실패",
+    403: "API 키 권한 없음 (키 제한·결제 설정 확인)",
+    404: "이 키로 쓸 수 없는 모델 (.env의 GEMINI_MODEL로 다른 모델 지정)",
+    429: "사용량 한도 초과 (잠시 후 다시 시도)",
+    503: "구글 서버 혼잡 (잠시 후 다시 시도)",
+}
+
+
+def _api_error_text(exc: Any) -> str:
+    hint = _HINTS.get(exc.code, "Gemini 서버 오류" if (exc.code or 0) >= 500 else "")
+    message = (exc.message or "").split(". ")[0]  # 긴 안내문은 첫 문장만
+    return f"{exc.code} {exc.status or ''}: {message}" + (f" — {hint}" if hint else "")
+
+
 def describe_error(exc: Exception) -> str:
     """Short Korean description of a Gemini failure for the user (no key values)."""
     try:
         from google.genai import errors
     except ImportError:  # pragma: no cover
         errors = None
+    if isinstance(exc, GeminiUnavailable):
+        per_model = " / ".join(
+            f"{m}: {_api_error_text(e) if errors and isinstance(e, errors.APIError) else e}" for m, e in exc.failures
+        )
+        return f"Gemini 모델을 모두 쓸 수 없습니다 — {per_model}"
     if errors is not None and isinstance(exc, errors.APIError):
-        hint = {
-            400: "요청 형식 또는 API 키 문제",
-            401: "API 키 인증 실패",
-            403: "API 키 권한 없음 (키 제한·결제 설정 확인)",
-            404: "모델을 찾을 수 없음 (--model 로 다른 모델 지정)",
-            429: "사용량 한도 초과 (잠시 후 다시 시도)",
-        }.get(exc.code, "Gemini 서버 오류" if (exc.code or 0) >= 500 else "")
-        return f"Gemini API 오류 {exc.code} {exc.status or ''}: {exc.message or ''}" + (f" — {hint}" if hint else "")
+        return f"Gemini API 오류 {_api_error_text(exc)}"
     return f"Gemini 처리 중 오류 ({type(exc).__name__}): {exc}"
 
 
@@ -133,16 +157,21 @@ class GeminiChat:
         """generate_content with retries on overload/quota, then the fallback models in order."""
         from google.genai import errors
 
-        last_error: Exception | None = None
+        failures: list[tuple[str, Exception]] = []
         for model in [self.model, *self.fallback_models]:
             for attempt in range(len(RETRY_DELAYS) + 1):
                 try:
                     response = self.client.models.generate_content(model=model, contents=self.contents, config=self.config)
                 except errors.APIError as exc:
+                    if exc.code in UNAVAILABLE:
+                        failures.append((model, exc))
+                        log.warning("%s: %s %s, trying next model", model, exc.code, exc.status)
+                        break
                     if exc.code not in RETRYABLE:
                         raise
-                    last_error = exc
-                    if attempt < len(RETRY_DELAYS):
+                    if attempt == len(RETRY_DELAYS):
+                        failures.append((model, exc))
+                    else:
                         log.warning("%s: %s %s, retrying in %.0fs", model, exc.code, exc.status, RETRY_DELAYS[attempt])
                         self.sleep(RETRY_DELAYS[attempt])
                     continue
@@ -150,9 +179,7 @@ class GeminiChat:
                     log.warning("answered by fallback model %s", model)
                 self.last_model = model
                 return response
-            log.warning("%s unavailable, trying next model", model)
-        assert last_error is not None
-        raise last_error
+        raise GeminiUnavailable(failures)
 
     def ask(self, question: str) -> GeminiTurn:
         """One user turn. On any error the history is rolled back so the next question starts clean."""

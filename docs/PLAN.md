@@ -140,7 +140,7 @@ usage_stats(
 | 모드 | 방식 | 키 |
 |---|---|---|
 | **규칙 기반** `rules.py` (키 없을 때) | 질문에서 팀컬러(별칭 포함)·포메이션·역할·인원·예산·선수명을 뽑아 도구 1개 호출 → 정해진 형식으로 답변 | 불필요 |
-| **Gemini (기본)** `gemini.py` | Gemini function calling 수동 루프 (기본 `gemini-3.5-flash`), 자유 대화·복합 질문 | `GEMINI_API_KEY` (`.env`) |
+| **Gemini (기본)** `gemini.py` | Gemini function calling 수동 루프 (기본 `gemini-3.8-flash`, 대체 `gemini-3.5-flash`), 자유 대화·복합 질문 | `GEMINI_API_KEY` (`.env`) |
 
 | 도구 | 설명 |
 |---|---|

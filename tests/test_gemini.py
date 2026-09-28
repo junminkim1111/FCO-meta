@@ -9,7 +9,7 @@ pytest.importorskip("google.genai")
 from google.genai import types  # noqa: E402
 
 from fco_meta.chatbot import Toolbox  # noqa: E402
-from fco_meta.chatbot.gemini import GeminiChat, function_declarations  # noqa: E402
+from fco_meta.chatbot.gemini import GeminiChat, GeminiUnavailable, describe_error, function_declarations  # noqa: E402
 
 
 def response(parts, finish="STOP"):
@@ -125,7 +125,7 @@ def test_failed_turn_is_rolled_back(toolbox):
     client.models = Flaky([response([{"text": "첫 답"}])])
     chat = GeminiChat(client, toolbox, sleep=lambda s: None)
     assert chat.ask("첫 질문").text == "첫 답"
-    with pytest.raises(errors.ServerError):
+    with pytest.raises(GeminiUnavailable):
         chat.ask("두 번째")
     assert len(chat.contents) == 2  # 실패한 질문은 기록에서 빠짐 (user, model만 남음)
 
@@ -201,8 +201,9 @@ def test_all_models_unavailable_raises_last_error(toolbox):
     client = FakeClient([])
     client.models = ByModel({"primary": [_unavailable()] * 3, "backup": [_unavailable()] * 3})
     chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=lambda s: None)
-    with pytest.raises(errors.ServerError):
+    with pytest.raises(GeminiUnavailable) as info:
         chat.ask("질문")
+    assert [m for m, _ in info.value.failures] == ["primary", "backup"]
     assert chat.contents == []  # 기록도 되돌림
 
 
@@ -211,10 +212,39 @@ def test_models_from_env(monkeypatch):
 
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GEMINI_FALLBACK_MODELS", raising=False)
-    assert models_from_env() == (DEFAULT_MODEL, ["gemini-2.5-flash"])
+    assert models_from_env() == (DEFAULT_MODEL, ["gemini-3.5-flash"])
     monkeypatch.setenv("GEMINI_MODEL", "m1")
     monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "m2, m3")
     assert models_from_env() == ("m1", ["m2", "m3"])
     assert models_from_env("cli") == ("cli", ["m2", "m3"])
     monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "")
     assert models_from_env()[1] == []  # 빈 값 = 대체 모델 없음
+
+
+def _not_found(model):
+    from google.genai import errors
+
+    return errors.ClientError(404, {"error": {"code": 404, "status": "NOT_FOUND",
+        "message": f"This model models/{model} is no longer available to new users. Please update your code."}})  # fmt: skip
+
+
+def test_overloaded_primary_then_unavailable_fallback_reports_both(toolbox):
+    """실제 사례: 기본 모델 503 연속 → 대체 모델 404. 두 원인을 모두 보여 준다."""
+    client = FakeClient([])
+    client.models = ByModel({"gemini-3.5-flash": [_unavailable()] * 3, "gemini-2.5-flash": [_not_found("gemini-2.5-flash")]})
+    chat = GeminiChat(client, toolbox, model="gemini-3.5-flash", fallback_models=["gemini-2.5-flash"], sleep=lambda s: None)
+    with pytest.raises(GeminiUnavailable) as info:
+        chat.ask("질문")
+    assert len(client.models.requests) == 4  # 503 x3 + 404 x1 (404는 재시도 안 함)
+    text = describe_error(info.value)
+    assert text.startswith("Gemini 모델을 모두 쓸 수 없습니다")
+    assert "gemini-3.5-flash: 503 UNAVAILABLE: high demand — 구글 서버 혼잡" in text
+    assert "gemini-2.5-flash: 404 NOT_FOUND: This model models/gemini-2.5-flash is no longer available to new users" in text
+
+
+def test_unavailable_primary_moves_on_without_retry(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"old": [_not_found("old")], "new": [response([{"text": "새 모델 답"}])]})
+    slept = []
+    chat = GeminiChat(client, toolbox, model="old", fallback_models=["new"], sleep=slept.append)
+    assert chat.ask("질문").text == "새 모델 답" and chat.last_model == "new" and slept == []

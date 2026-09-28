@@ -91,6 +91,6 @@ def test_gemini_errors_are_shown_and_answered_by_rules(db, tmp_path, monkeypatch
     r = client.post("/api/chat", json={"message": "아스날 볼란치 1명 추천"})
     assert r.status_code == 200
     body = r.json()
-    assert "Gemini API 오류 404" in body["answer"] and "모델을 찾을 수 없음" in body["answer"]
+    assert "Gemini API 오류 404" in body["answer"] and "이 키로 쓸 수 없는 모델" in body["answer"]
     assert "볼란치R" in body["answer"]  # 규칙 기반 답변이 이어서 나옴
     assert body["error"].startswith("Gemini API 오류 404")

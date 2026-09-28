@@ -172,15 +172,16 @@ python -m fco_meta.market history --spid 100001419 --grade 5
 python -m fco_meta.chatbot                                        # 대화형 (Gemini, 키 없으면 규칙 기반)
 python -m fco_meta.chatbot --ask "4-2-3-1 볼란치 2명 추천해줘"
 python -m fco_meta.chatbot --backend rules                        # 규칙 기반 (키 불필요)
-python -m fco_meta.chatbot --model gemini-2.5-flash               # 다른 Gemini 모델
+python -m fco_meta.chatbot --model gemini-3.5-flash               # 다른 Gemini 모델
 
 # 모델 없이 도구만 실행 (디버깅)
 python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널", "role": "DM", "max_price_bp": 500000000}'
 ```
 
 - Gemini는 도구(`recommend_players` 등)로 DB를 조회해 답하므로, 수치는 규칙 기반과 같은 데이터에서 나옵니다.
-- 모델이 혼잡(503)하거나 한도(429)에 걸리면 1초·3초 뒤 다시 시도하고, 그래도 안 되면 대체 모델(기본 `gemini-2.5-flash`)로
-  답합니다(답 끝에 표시). `.env`의 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.
+- 모델이 혼잡(503)하거나 한도(429)에 걸리면 1초·3초 뒤 다시 시도하고, 그래도 안 되면 대체 모델(기본 `gemini-3.5-flash`)로
+  답합니다(답 끝에 표시). 이 키로 쓸 수 없는 모델(404)은 바로 다음 모델로 넘어갑니다.
+  기본 모델은 `gemini-3.8-flash`이고, `.env`의 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.
 - 그 밖의 Gemini 오류는 원인(키·권한·모델·한도)을 보여 주고, 웹에서는 그 질문을 규칙 기반으로 대신 답합니다.
 - 규칙 기반 모드가 이해하는 질문:
 
