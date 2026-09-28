@@ -110,6 +110,33 @@ WHERE p.sp_position IN (9, 10, 11)
 GROUP BY p.sp_id ORDER BY rankers DESC LIMIT 5;
 ```
 
+## 시세 크롤러
+
+데이터센터 선수 검색(`/datacenter/PlayerList`)에서 카드 정보와 **1~13강 현재가**를,
+`/datacenter/PlayerPriceGraph`에서 **365일 시세 이력**을 수집합니다. 랭킹 크롤러와 같은 DB 파일을 씁니다.
+
+```bash
+# 아스널 팀컬러 + 볼란치 가능 카드와 강화별 시세 수집
+python -m fco_meta.market cards --team-color 아스널 --role 볼란치
+
+# 저장된 시세에서 조건 검색 (5강 1억 이하, OVR 높은 순)
+python -m fco_meta.market find --team-color 아스널 --role DM --grade 5 --max-price 1억 --sort ovr
+
+# 카드·강화별 365일 시세 이력
+python -m fco_meta.market history --spid 100001419 --grade 5
+```
+
+- 역할(`--role`): `GK CB RB LB RWB LWB DM CM CAM RM LM RW LW CF ST`, 별칭(`볼란치`, `수미`, `센터백` 등) 지원
+- 검색 결과는 요청당 최대 200장이라, 넘치면 급여 구간을 나눠 다시 조회합니다(최대 60회). 그래도 넘치면 "일부 누락 가능"으로 표시합니다.
+
+| 테이블 | 내용 |
+|---|---|
+| `card` | 카드 정보 (spid, 이름, 시즌, 대표 포지션, OVR, 급여, 유저 평점) |
+| `card_price` / `card_price_latest` | 수집 시각별 강화 단계 현재가 / 카드·강화별 최신가 |
+| `card_team_color` | 팀컬러 필터에 걸린 카드 = 팀컬러 적격 카드 |
+| `card_role` | 포지션 필터에 걸린 카드 = 해당 역할 기용 가능 카드 |
+| `price_history` | 카드·강화별 일별 시세 |
+
 ## 테스트
 
 ```bash

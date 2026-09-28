@@ -18,6 +18,7 @@
 | 선수 구성 | Open API: 닉네임 → `id` → `user/match` → `match-detail` | 랭킹 페이지에는 스쿼드 없음 |
 | 선수 평균 스탯 | Open API `ranker-stats` | 추천 근거 보강 |
 | 선수명·시즌·포지션 | `/static/fconline/meta/*.json` | |
+| **선수 시세** | 데이터센터 `PlayerList`(강화별 현재가), `PlayerPriceGraph`(365일 이력) | Open API에는 없음. `fco_meta/market` |
 
 기준 문구: "팀컬러 및 포메이션 정보는 가장 최근에 각 모드 공식경기에 사용한 스쿼드 정보 기준으로 수집됩니다."
 
@@ -137,6 +138,7 @@ tests/fixtures/ # 랭킹 페이지 샘플
 |---|---|---|
 | **0. 조사** | 랭킹 페이지 구조·필터·robots, Open API 스펙·한도 | ✅ 완료 |
 | **1. 크롤러** | `rank_inner` 파서 + 조합 조회 + 스냅샷 저장 | ✅ 완료 (`fco_meta/crawler`) |
+| **1-1. 시세 크롤러** | 데이터센터 선수 검색·시세 이력 수집 (팀컬러·포지션 필터, 강화별 현재가) | ✅ 완료 (`fco_meta/market`) |
 | **2. Open API 클라이언트** | rate limiter·일일 예산, id/user/match/match-detail | ✅ 완료 (`fco_meta/openapi`) |
 | **3. 파이프라인** | ouid 매핑, 스쿼드 수집, 정합성 검증 | ✅ 완료 (`fco_meta/pipeline`) |
 | **4. 집계** | usage_stats, 아스널 4-2-3-1 볼란치로 end-to-end 검증 | 다음 (역할별 사용률 SQL·`usage` 명령은 준비됨) |

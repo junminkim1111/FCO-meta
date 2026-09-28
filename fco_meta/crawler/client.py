@@ -19,7 +19,7 @@ USER_AGENT = "Mozilla/5.0 (compatible; fco-meta-crawler/0.1; +https://github.com
 
 
 class DatacenterClient:
-    """Polite client for the FC Online datacenter ranking pages.
+    """Polite client for the FC Online datacenter pages.
 
     - one request at a time, at least `min_interval` seconds apart
     - retries transport errors and 5xx with exponential backoff
@@ -62,10 +62,10 @@ class DatacenterClient:
 
     def fetch_shell(self, mode: str = "1vs1") -> str:
         """`/datacenter/rank` page: team color catalog, formation list, top-10 pick rates."""
-        return self._get("/datacenter/rank", {"rt": mode})
+        return self.get("/datacenter/rank", {"rt": mode})
 
     def fetch_rank_page(self, query: RankQuery, page: int) -> RankPage:
-        return parse_rank_inner(self._get("/datacenter/rank_inner", query.to_params(page)))
+        return parse_rank_inner(self.get("/datacenter/rank_inner", query.to_params(page)))
 
     def iter_rank_pages(self, query: RankQuery, max_pages: int | None = None) -> Iterator[RankPage]:
         page = 1
@@ -78,14 +78,25 @@ class DatacenterClient:
                 return
             page += 1
 
-    def _get(self, path: str, params: dict[str, str]) -> str:
+    def get(self, path: str, params: dict[str, str], *, referer: str | None = None) -> str:
+        return self._request("GET", path, params, referer)
+
+    def post(self, path: str, data: dict[str, str], *, referer: str | None = None) -> str:
+        """Form POST, used by the player search / price endpoints."""
+        return self._request("POST", path, data, referer)
+
+    def _request(self, method: str, path: str, fields: dict[str, str], referer: str | None) -> str:
+        headers = {"Referer": f"{BASE_URL}{referer}"} if referer else None
         for attempt in range(self._max_retries + 1):
             self._throttle()
             try:
-                resp = self._http.get(path, params=params)
+                if method == "GET":
+                    resp = self._http.get(path, params=fields, headers=headers)
+                else:
+                    resp = self._http.post(path, data=fields, headers=headers)
                 if resp.status_code < 500:
                     resp.raise_for_status()
-                    self._save_raw(path, params, resp.text)
+                    self._save_raw(path, fields, resp.text)
                     return resp.text
                 error: Exception = httpx.HTTPStatusError(
                     f"server error {resp.status_code}", request=resp.request, response=resp
