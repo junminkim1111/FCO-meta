@@ -76,7 +76,7 @@
   <section aria-labelledby="rec-title">
     <h2 id="rec-title">선수 추천</h2>
     <form class="filters" id="filters">
-      <label>팀컬러 <input id="tc" list="tc-list" required placeholder="예: 아스널" autocomplete="off"></label>
+      <label>팀컬러 <input id="tc" list="tc-list" placeholder="비우면 전체 랭커" autocomplete="off"></label>
       <datalist id="tc-list"></datalist>
       <label>포메이션 <select id="formation"><option value="">전체</option></select></label>
       <label>역할 <select id="role"></select></label>
@@ -129,19 +129,20 @@ let META = null;
 
 async function loadMeta() {
   META = await api("/api/meta");
-  const teams = [...new Set(META.combos.map((c) => c.team_color))];
+  const teams = [...new Set(META.combos.map((c) => c.team_color))].filter((t) => t !== "전체 랭커");
   $("tc-list").replaceChildren(...teams.map((t) => el("option", { value: t })));
   $("role").replaceChildren(...META.roles.map((r) => el("option", { value: r.code, text: r.label, selected: r.code === "DM" })));
-  if (teams.length) { $("tc").value = teams[0]; fillFormations(); }
+  fillFormations();
   const latest = META.combos.map((c) => c.data_as_of).sort().pop();
-  $("asof").textContent = META.combos.length
-    ? `랭킹 스냅샷 ${asOf(latest)} · 집계된 조합 ${new Set(META.combos.map((c) => c.team_color + c.formation)).size}개`
-    : "아직 집계된 데이터가 없습니다";
+  const scope = META.daily_scope;
+  $("asof").textContent = scope
+    ? `랭킹 상위 ${scope.top_rankers}명 · ${asOf(scope.data_as_of)} 스냅샷`
+    : META.combos.length ? `랭킹 스냅샷 ${asOf(latest)}` : "아직 집계된 데이터가 없습니다";
   $("backend").textContent = META.backend === "gemini" ? "· Gemini" : "· 규칙 기반";
 }
 
 function fillFormations() {
-  const tc = $("tc").value.trim();
+  const tc = $("tc").value.trim() || "전체 랭커";
   const forms = META.combos.filter((c) => c.team_color === tc && c.formation !== "전체");
   const keep = $("formation").value;
   $("formation").replaceChildren(
@@ -224,7 +225,8 @@ async function togglePlayer(name, box) {
 $("tc").addEventListener("change", fillFormations);
 $("filters").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const params = new URLSearchParams({ team_color: $("tc").value.trim(), role: $("role").value, top_n: $("topn").value || "5" });
+  const params = new URLSearchParams({ role: $("role").value, top_n: $("topn").value || "5" });
+  if ($("tc").value.trim()) params.set("team_color", $("tc").value.trim());
   if ($("formation").value) params.set("formation", $("formation").value);
   if ($("budget").value.trim()) params.set("max_price", $("budget").value.trim());
   if ($("strict").checked) params.set("strict", "true");
@@ -265,7 +267,7 @@ $("chat-form").addEventListener("submit", (ev) => {
   $("msg").value = "";
   send(text);
 });
-for (const q of ["아스날 4-2-3-1 볼란치 2명 추천해줘", "아스널 볼란치 5억 이하로 3명", "라이스 사용률", "어떤 데이터 있어?"]) {
+for (const q of ["4-2-3-1 볼란치 2명 추천해줘", "랭커 포메이션 알려줘", "아스날 볼란치 5억 이하로 3명", "어떤 데이터 있어?"]) {
   const b = el("button", { type: "button", text: q });
   b.addEventListener("click", () => send(q));
   $("examples").append(b);

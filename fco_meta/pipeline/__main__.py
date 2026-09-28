@@ -2,6 +2,7 @@
 
     python -m fco_meta.pipeline meta                                   # spid/seasonid/spposition 메타데이터 저장
     python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
+    python -m fco_meta.pipeline squads --top 330                       # 필터 없는 랭킹 상위 330명
     python -m fco_meta.pipeline formations --save                     # 포지션 조합 → 포메이션 표 갱신
     python -m fco_meta.pipeline budget                                 # 오늘 호출 수
 """
@@ -17,7 +18,7 @@ from ..crawler.teamcolors import TeamColorCatalog
 from ..openapi import CallBudget, NexonOpenApiClient
 from ..storage import Storage
 from .formation import DEFAULT_TABLE_PATH, FormationTable, signature_key
-from .squads import SquadCollector, select_targets
+from .squads import SquadCollector, select_targets, select_top_targets
 from .store import PipelineStore
 
 DEFAULT_DB = Path("data/fco_meta.sqlite")
@@ -34,8 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("meta", help="메타데이터(spid, seasonid, spposition) 저장")
     sub.add_parser("budget", help="오늘(KST) 호출 수")
 
-    p_sq = sub.add_parser("squads", help="팀컬러×포메이션 랭커 스쿼드 수집")
-    _combo_args(p_sq)
+    p_sq = sub.add_parser("squads", help="팀컬러×포메이션 또는 상위 N명 랭커 스쿼드 수집")
+    p_sq.add_argument("--top", type=int, help="필터 없이 수집한 랭킹의 상위 N명 (팀컬러·포메이션 대신)")
+    _combo_args(p_sq, required=False)
     p_sq.add_argument("--budget", type=int, help="이번 실행에서 쓸 최대 호출 수")
     p_sq.add_argument("--limit", type=int, help="상위 N명만")
     p_sq.add_argument("--extra-matches", type=int, default=0, help="기본 스쿼드 외에 추가로 볼 경기 수")
@@ -64,9 +66,9 @@ def main(argv: list[str] | None = None) -> int:
         storage.close()
 
 
-def _combo_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--team-color", required=True, help="팀컬러 이름 또는 id (예: 아스널, 1004)")
-    p.add_argument("--formation", required=True, help="포메이션 (예: 4-2-3-1)")
+def _combo_args(p: argparse.ArgumentParser, required: bool = True) -> None:
+    p.add_argument("--team-color", required=required, help="팀컬러 이름 또는 id (예: 아스널, 1004)")
+    p.add_argument("--formation", required=required, help="포메이션 (예: 4-2-3-1)")
     p.add_argument("--mode", default="1vs1")
     p.add_argument("--as-of", help="스냅샷 기준 시각 (기본: 가장 최근)")
 
@@ -92,12 +94,21 @@ def _collect(storage: Storage, store: PipelineStore, args: argparse.Namespace) -
                 print(f"{name}: {store.save_metadata(name, api.metadata(name))}")
             return 0
 
-        tc_id = _team_color_id(args.team_color)
-        if tc_id is None:
+        if args.top:
+            tc_id = None
+            targets = select_top_targets(storage.conn, args.top, args.mode, args.as_of)
+            hint = f"python -m fco_meta.crawler rank --max-pages {-(-args.top // 20)}"
+        elif args.team_color and args.formation:
+            tc_id = _team_color_id(args.team_color)
+            if tc_id is None:
+                return 2
+            targets = select_targets(storage.conn, tc_id, args.formation, args.mode, args.as_of)
+            hint = "python -m fco_meta.crawler rank --team-color ... --formation ..."
+        else:
+            print("--top N 또는 --team-color와 --formation을 지정하세요", file=sys.stderr)
             return 2
-        targets = select_targets(storage.conn, tc_id, args.formation, args.mode, args.as_of)
         if not targets:
-            print("대상 랭커가 없습니다. 먼저 `python -m fco_meta.crawler rank ...`로 수집하세요", file=sys.stderr)
+            print(f"대상 랭커가 없습니다. 먼저 `{hint}`로 랭킹을 수집하세요", file=sys.stderr)
             return 1
         if args.limit:
             targets = targets[: args.limit]
@@ -111,6 +122,7 @@ def _collect(storage: Storage, store: PipelineStore, args: argparse.Namespace) -
         )
         params = {
             "team_color_id": tc_id,
+            "top": args.top,
             "formation": args.formation,
             "mode": args.mode,
             "data_as_of": targets[0].data_as_of,

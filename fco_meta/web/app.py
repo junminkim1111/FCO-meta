@@ -63,17 +63,18 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
     @app.get("/api/meta")
     def meta() -> dict[str, Any]:
         """집계된 조합과 역할 목록 (화면 선택지)."""
-        combos = tool("list_available_data", {})["combos"]
+        data = tool("list_available_data", {})
         return {
             "backend": backend,
-            "combos": combos,
+            "combos": data["combos"],
+            "daily_scope": data.get("daily_scope"),
             "roles": [{"code": code, "label": ROLE_LABELS.get(code, code), "positions": list(pos)} for code, pos in ROLES.items()],
         }
 
     @app.get("/api/recommend")
     def recommend(
-        team_color: str = Query(min_length=1, max_length=40),
         role: str = Query(min_length=1, max_length=20),
+        team_color: str | None = Query(default=None, max_length=40, description="비우면 상위 랭커 전체"),
         formation: str | None = Query(default=None, max_length=20),
         top_n: int = Query(default=5, ge=1, le=20),
         strict: bool = False,
@@ -86,13 +87,13 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"예산 형식을 알 수 없습니다: {max_price}") from None
         return tool("recommend_players", {
-            "team_color": team_color, "role": role, "formation": formation or None,
+            "team_color": team_color or None, "role": role, "formation": formation or None,
             "top_n": top_n, "strict": strict, "max_price_bp": budget,
         })  # fmt: skip
 
     @app.get("/api/formations")
-    def formations(team_color: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:
-        return tool("list_formations", {"team_color": team_color})
+    def formations(team_color: str | None = Query(default=None, max_length=40)) -> dict[str, Any]:
+        return tool("list_formations", {"team_color": team_color or None})
 
     @app.get("/api/player")
     def player(name: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:

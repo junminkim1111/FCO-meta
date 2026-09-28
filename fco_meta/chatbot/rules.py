@@ -100,8 +100,7 @@ class RuleBot:
         q = self.parse(text)
         norm = _norm(text)
         if q.role:
-            if not q.team_color:
-                return Answer("어느 팀컬러 기준으로 볼까요? 예: \"아스널 4-2-3-1 볼란치 2명 추천\"\n\n" + self._available_text())
+            # 팀컬러를 말하지 않으면 매일 수집하는 상위 랭커 전체 기준
             wanted = q.top_n or 5
             tool_input = {
                 "team_color": q.team_color, "formation": q.formation, "role": q.role,
@@ -111,8 +110,8 @@ class RuleBot:
         if q.player:
             tool_input = {"name": q.player}
             return Answer(self._format_detail(self._call("get_player_detail", tool_input)), "get_player_detail", tool_input)
-        if q.team_color and not any(w in norm for w in _DATA_WORDS):
-            tool_input = {"team_color": q.team_color}
+        if (q.team_color or "포메이션" in norm) and not any(w in norm for w in _DATA_WORDS):
+            tool_input = {"team_color": q.team_color} if q.team_color else {}
             return Answer(self._format_formations(self._call("list_formations", tool_input)), "list_formations", tool_input)
         if any(w in norm for w in _DATA_WORDS) or q.team_color:
             return Answer(self._available_text(), "list_available_data", {})
@@ -134,8 +133,9 @@ class RuleBot:
             combo = f"{r['team_color']} {r.get('formation') or ''}".strip()
             return f"{combo} 데이터가 없습니다.\n\n" + self._available_text()
         formation = r["formation_used"] if r["formation_used"] != "전체" else "전체 포메이션"
+        scope = f"랭킹 상위 {r['ranking_scope']}명 중 " if r.get("ranking_scope") else ""
         lines = [
-            f"{r['team_color']} {formation} {role} 추천 — 랭커 {r['sample_size']}명 스쿼드 기준 ({_as_of(r['data_as_of'])})"
+            f"{r['team_color']} {formation} {role} 추천 — {scope}랭커 {r['sample_size']}명 스쿼드 기준 ({_as_of(r['data_as_of'])})"
         ]
         if r["fallback_to_all_formations"]:
             lines.append(f"※ {r['requested_formation']} 표본이 적어 {r['team_color']} 전체 포메이션으로 집계했습니다.")
@@ -187,7 +187,8 @@ class RuleBot:
             return r["error"]
         if not r["formations"]:
             return f"{r['team_color']}: {r['note']}"
-        lines = [f"{r['team_color']} 랭커 포메이션 ({_as_of(r['data_as_of'])})"]
+        who = r["team_color"] if r["team_color"] == "전체 랭커" else f"{r['team_color']} 랭커"
+        lines = [f"{who} 포메이션 ({_as_of(r['data_as_of'])})"]
         for f in r["formations"]:
             done = f", 스쿼드 {f['squads_collected']}명 수집" if f["squads_collected"] else ", 스쿼드 미수집"
             lines.append(f"· {f['formation']}: {f['rankers']}명 ({f['share']:.1%}{done})")
@@ -195,11 +196,18 @@ class RuleBot:
         return "\n".join(lines)
 
     def _available_text(self) -> str:
-        combos = [c for c in self._call("list_available_data", {})["combos"] if c["formation"] != "전체"]
+        data = self._call("list_available_data", {})
+        combos = [c for c in data["combos"] if c["formation"] != "전체"][:12]
         if not combos:
             return "아직 집계된 데이터가 없습니다. README의 수집 순서를 참고하세요."
-        rows = [f"· {c['team_color']} {c['formation']}: 랭커 {c['squads_collected']}명 ({_as_of(c['data_as_of'])})" for c in combos]
-        return "추천 가능한 조합:\n" + "\n".join(rows)
+        lines = []
+        if scope := data.get("daily_scope"):
+            lines.append(
+                f"매일 수집: 랭킹 상위 {scope['top_rankers']}명, 그중 스쿼드 {scope['squads_collected']}명 ({_as_of(scope['data_as_of'])})"
+            )
+        lines.append("표본이 많은 조합:")
+        lines += [f"· {c['team_color']} {c['formation']}: 랭커 {c['squads_collected']}명" for c in combos]
+        return "\n".join(lines)
 
 
 def _season(class_name: str | None) -> str:

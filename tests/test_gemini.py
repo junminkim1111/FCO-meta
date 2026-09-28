@@ -41,7 +41,7 @@ def toolbox(db):  # noqa: F811
 def test_function_declarations_accepted_by_sdk():
     decls = {d.name: d for d in function_declarations()}
     assert set(decls) == {"resolve_terms", "list_available_data", "list_formations", "recommend_players", "get_player_detail"}
-    assert decls["recommend_players"].parameters_json_schema["required"] == ["team_color", "role"]
+    assert decls["recommend_players"].parameters_json_schema["required"] == ["role"]  # 팀컬러 생략 = 전체 랭커
 
 
 def test_tool_round_trip(toolbox):

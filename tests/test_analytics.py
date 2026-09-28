@@ -31,7 +31,7 @@ def db(tmp_path):
             " VALUES (?, '1vs1', ?, 1, ?, ?, ?, 0.6)",
             (AS_OF, rank, nick, formation, elo),
         )
-        conn.execute("INSERT INTO ranker_team_color VALUES (?, '1vs1', ?, 1004, 1)", (AS_OF, rank))
+        conn.execute("INSERT INTO ranker_team_color (data_as_of, mode, rank, team_color_id, run_id) VALUES (?, '1vs1', ?, 1004, 1)", (AS_OF, rank))
         fake.users[nick] = ouid
         fake.matches[ouid] = [f"m-{nick}"]
         fake.details[f"m-{nick}"] = detail(f"m-{nick}", "2026-09-28T10:00:00", ouid, squad, result=result)

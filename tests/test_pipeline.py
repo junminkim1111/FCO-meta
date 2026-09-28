@@ -200,3 +200,22 @@ def test_squads_collected_within_api_lag_are_provisional(tmp_path, fake):
     assert collector(api, store).run(targets).statuses == {"ok": 1}
     assert fake.calls[n:] == ["/fconline/v1/user/match"]
 
+
+
+def _oid(iso: str, suffix: str = "0" * 16) -> str:
+    return f"{int(datetime.fromisoformat(iso).timestamp()):08x}{suffix}"
+
+
+def test_match_ids_started_after_snapshot_are_skipped_without_detail(tmp_path):
+    late = _oid("2026-09-28T11:05:00+00:00")  # 스냅샷(11:00 UTC) 이후 시작 → 상세 호출 없이 제외
+    early = _oid("2026-09-28T10:30:00+00:00", "1" * 16)
+    fake = FakeApi(
+        {"랭커A": "ouid-a"},
+        {"ouid-a": [late, early]},
+        {early: detail(early, "2026-09-28T10:45:00", "ouid-a", F4231)},
+    )
+    storage, store, api = make_env(tmp_path, fake, rankers=[("랭커A", "4-2-3-1")])
+    result = collector(api, store).run(select_targets(storage.conn, 1004, "4-2-3-1"))
+    assert result.statuses == {"ok": 1}
+    assert fake.calls.count("/fconline/v1/match-detail") == 1  # late는 요청하지 않음
+    assert storage.conn.execute("SELECT match_id FROM ranker_squad").fetchone()[0] == early

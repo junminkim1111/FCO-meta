@@ -97,11 +97,12 @@ def test_rule_bot_budget_and_fallback(toolbox):
 def test_rule_bot_other_intents(toolbox):
     bot = RuleBot(toolbox)
     detail = bot.ask("볼란치L 사용률 알려줘")
-    # "볼란치"가 역할로도 잡히므로 역할 추천이 우선 — 팀컬러가 없으면 되묻는다
-    assert detail.tool is None and "어느 팀컬러" in detail.text
+    # "볼란치"가 역할로도 잡히므로 역할 추천이 우선 — 팀컬러가 없으면 전체 랭커 기준 (여기선 필터 없는 수집이 없어 데이터 없음)
+    assert detail.tool == "recommend_players" and detail.tool_input["team_color"] is None
+    assert "전체 랭커 데이터가 없습니다" in detail.text
 
     assert bot.ask("아스널 포메이션 보여줘").tool == "list_formations"
-    assert "추천 가능한 조합" in bot.ask("어떤 데이터 있어?").text
+    assert "표본이 많은 조합" in bot.ask("어떤 데이터 있어?").text
     assert "이렇게 물어보세요" in bot.ask("안녕").text
     assert "데이터가 없습니다" in bot.ask("맨유 공미 추천").text
 

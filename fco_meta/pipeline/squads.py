@@ -18,6 +18,7 @@ from ..openapi import (
     OpenApiError,
     RateLimitError,
 )
+from ..storage import latest_unfiltered_snapshot, unfiltered_coverage
 from .formation import FormationTable, signature
 from .store import PipelineStore
 
@@ -25,6 +26,18 @@ log = logging.getLogger(__name__)
 
 # Open API는 매시 정각에 2시간 전까지의 경기를 반영한다 → 스냅샷 직후에는 마지막 경기가 아직 없을 수 있음
 API_DATA_LAG = timedelta(hours=2)
+
+
+def match_id_time(match_id: str) -> datetime | None:
+    """Creation time embedded in a matchId (ObjectId-style: first 4 bytes = Unix seconds).
+
+    Observed to be 1–21 minutes *before* `matchDate` (it is created when the match starts), so it
+    is only used one way: an id time at/after the snapshot means the match ended after it too.
+    """
+    try:
+        return datetime.fromtimestamp(int(match_id[:8], 16), timezone.utc) if len(match_id) == 24 else None
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,24 @@ def select_targets(
         f" FROM ranker_snapshot s JOIN ranker_team_color m USING (data_as_of, mode, rank)"
         f" WHERE {where} AND s.data_as_of = ? ORDER BY s.rank",
         [*args, data_as_of],
+    ).fetchall()
+    return [SquadTarget(*r) for r in rows]
+
+
+def select_top_targets(
+    conn: sqlite3.Connection, top: int, mode: str = "1vs1", data_as_of: str | None = None
+) -> list[SquadTarget]:
+    """Rankers 1..`top` of the latest (or given) snapshot that an unfiltered crawl covered."""
+    if data_as_of is None:
+        latest = latest_unfiltered_snapshot(conn, mode)
+        if latest is None:
+            return []
+        data_as_of = latest[0]
+    limit = min(top, unfiltered_coverage(conn, data_as_of, mode))
+    rows = conn.execute(
+        "SELECT data_as_of, mode, rank, nickname, formation FROM ranker_snapshot"
+        " WHERE data_as_of = ? AND mode = ? AND rank <= ? ORDER BY rank",
+        (data_as_of, mode, limit),
     ).fetchall()
     return [SquadTarget(*r) for r in rows]
 
@@ -197,6 +228,11 @@ class SquadCollector:
         for match_id in match_ids:
             if len(chosen) > self.extra_matches:
                 break
+            started = match_id_time(match_id)
+            if started is not None and started >= as_of:
+                # 매치 id의 시각(경기 시작 무렵)이 이미 스냅샷 이후 → 상세를 받지 않고 건너뜀
+                skipped_after += 1
+                continue
             if not self.store.has_match(match_id):
                 if new_details >= self.max_details:
                     break

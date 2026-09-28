@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 
 from ..market.roles import ROLES
 from ..pipeline.store import PipelineStore
+from ..storage import unfiltered_coverage
 
 ALL_FORMATIONS = "*"  # 팀컬러 전체 (표본이 적을 때 폴백)
+ALL_RANKERS = 0  # team_color_id 0 = 팀컬러 무관 전체 랭커 (필터 없이 수집한 상위 N위 범위만)
 MIN_SAMPLE = 10
 
 SCHEMA = """
@@ -55,13 +57,19 @@ CREATE INDEX IF NOT EXISTS idx_usage_lookup
     ON usage_stats (team_color_id, formation, role, strict, data_as_of);
 """
 
-_BASE_SQUADS = """
+# 팀컬러 조건: 0이면 필터 없는 수집이 덮은 순위(1..:covered) 전체, 아니면 소속(ranker_team_color)
+_TEAM_COLOR_FILTER = """
+  AND CASE WHEN :team_color_id = 0 THEN s.rank <= :covered
+      ELSE EXISTS (SELECT 1 FROM ranker_team_color m WHERE m.data_as_of = s.data_as_of AND m.mode = s.mode
+                   AND m.rank = s.rank AND m.team_color_id = :team_color_id) END
+"""
+
+_BASE_SQUADS = f"""
 SELECT q.rank, q.ouid, q.match_id, s.elo, s.win_rate
 FROM ranker_squad q
 JOIN ranker_snapshot s USING (data_as_of, mode, rank)
-JOIN ranker_team_color m USING (data_as_of, mode, rank)
 WHERE q.match_order = 0 AND q.accepted = 1
-  AND q.data_as_of = :data_as_of AND q.mode = :mode AND m.team_color_id = :team_color_id
+  AND q.data_as_of = :data_as_of AND q.mode = :mode {_TEAM_COLOR_FILTER}
   AND (:formation = '*' OR s.formation = :formation)
   AND (:strict = 0 OR q.formation_match = 1)
 """
@@ -75,10 +83,9 @@ JOIN match_player p ON p.match_id = b.match_id AND p.ouid = b.ouid AND p.starter
 LEFT JOIN match_team t ON t.match_id = b.match_id AND t.ouid = b.ouid
 """
 
-_COMBO_RANKERS = """
+_COMBO_RANKERS = f"""
 SELECT COUNT(*) FROM ranker_snapshot s
-JOIN ranker_team_color m USING (data_as_of, mode, rank)
-WHERE s.data_as_of = :data_as_of AND s.mode = :mode AND m.team_color_id = :team_color_id
+WHERE s.data_as_of = :data_as_of AND s.mode = :mode {_TEAM_COLOR_FILTER}
   AND (:formation = '*' OR s.formation = :formation)
 """
 
@@ -100,21 +107,43 @@ class UsageStore:
         PipelineStore(conn)  # 입력 테이블(ranker_squad, match_player …)이 없을 때도 쿼리가 돌도록
         self.conn.executescript(SCHEMA)
 
-    def combos(self) -> list[tuple[str, str, int, str]]:
-        """(data_as_of, mode, team_color_id, formation) that have at least one collected squad."""
-        rows = self.conn.execute(
-            "SELECT DISTINCT q.data_as_of, q.mode, m.team_color_id, s.formation FROM ranker_squad q"
-            " JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
-            " JOIN ranker_team_color m USING (data_as_of, mode, rank)"
-            " WHERE q.match_order = 0 AND s.formation IS NOT NULL ORDER BY 1, 2, 3, 4"
-        ).fetchall()
-        return [tuple(r) for r in rows]
+    def combos(self, data_as_of: str | None = None) -> list[tuple[str, str, int, str]]:
+        """(data_as_of, mode, team_color_id, formation) that have at least one collected squad.
+
+        Includes team_color_id 0 (all rankers) for snapshots an unfiltered crawl covered.
+        """
+        where = " AND q.data_as_of = ?" if data_as_of else ""
+        args = [data_as_of] if data_as_of else []
+        rows = {
+            tuple(r)
+            for r in self.conn.execute(
+                "SELECT DISTINCT q.data_as_of, q.mode, m.team_color_id, s.formation FROM ranker_squad q"
+                " JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
+                " JOIN ranker_team_color m USING (data_as_of, mode, rank)"
+                f" WHERE q.match_order = 0 AND s.formation IS NOT NULL{where}",
+                args,
+            )
+        }
+        for as_of, mode in self.conn.execute(
+            f"SELECT DISTINCT q.data_as_of, q.mode FROM ranker_squad q WHERE q.match_order = 0{where}", args
+        ).fetchall():
+            covered = unfiltered_coverage(self.conn, as_of, mode)
+            if not covered:
+                continue
+            for (formation,) in self.conn.execute(
+                "SELECT DISTINCT s.formation FROM ranker_squad q JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
+                " WHERE q.match_order = 0 AND q.data_as_of = ? AND q.mode = ? AND q.rank <= ? AND s.formation IS NOT NULL",
+                (as_of, mode, covered),
+            ):
+                rows.add((as_of, mode, ALL_RANKERS, formation))
+        return sorted(rows)
 
     def build(self, data_as_of: str, mode: str, team_color_id: int, formation: str, strict: bool) -> int:
         """(Re)compute usage for one combo. Returns the number of usage_stats rows written."""
         params = {
             "data_as_of": data_as_of, "mode": mode, "team_color_id": team_color_id,
             "formation": formation, "strict": int(strict),
+            "covered": unfiltered_coverage(self.conn, data_as_of, mode) if team_color_id == ALL_RANKERS else 0,
         }  # fmt: skip
         key = (data_as_of, mode, team_color_id, formation, int(strict))
         squads = self.conn.execute(f"SELECT COUNT(*) FROM ({_BASE_SQUADS})", params).fetchone()[0]
@@ -158,13 +187,13 @@ class UsageStore:
         self.conn.commit()
         return len(rows)
 
-    def build_all(self) -> list[tuple[tuple[str, str, int, str, bool], int]]:
-        """Every combo with squads, plus the all-formation fallback per team color; strict and not."""
-        keys: list[tuple[str, str, int, str]] = []
-        for as_of, mode, tc, formation in self.combos():
-            keys.append((as_of, mode, tc, formation))
-            if (as_of, mode, tc, ALL_FORMATIONS) not in keys:
-                keys.append((as_of, mode, tc, ALL_FORMATIONS))
+    def build_all(self, data_as_of: str | None = None) -> list[tuple[tuple[str, str, int, str, bool], int]]:
+        """Every combo with squads (optionally one snapshot), plus the all-formation fallback per
+        team color; strict and not."""
+        keys: dict[tuple[str, str, int, str], None] = {}  # 순서 유지 + 중복 제거
+        for as_of, mode, tc, formation in self.combos(data_as_of):
+            keys[(as_of, mode, tc, formation)] = None
+            keys[(as_of, mode, tc, ALL_FORMATIONS)] = None
         done = []
         for as_of, mode, tc, formation in keys:
             for strict in (False, True):

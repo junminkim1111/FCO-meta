@@ -8,11 +8,12 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
-from ..analytics import ALL_FORMATIONS, MIN_SAMPLE, UsageStore, top_players
+from ..analytics import ALL_FORMATIONS, ALL_RANKERS, MIN_SAMPLE, UsageStore, top_players
 from ..crawler.teamcolors import TeamColorCatalog
 from ..market.money import format_bp
 from ..market.roles import ROLES, resolve_role
 from ..market.storage import SCHEMA as MARKET_SCHEMA
+from ..storage import latest_unfiltered_snapshot, unfiltered_coverage
 
 # 흔한 줄임말·다른 표기 → 팀컬러 목록의 이름
 TEAM_COLOR_ALIASES = {
@@ -33,6 +34,8 @@ TEAM_COLOR_ALIASES = {
     "뉴캐슬": "뉴캐슬 유나이티드",
     "나폴리": "SSC 나폴리",
 }
+
+MAX_LISTED_COMBOS = 40
 
 ROLE_HELP = "DM(볼란치: RDM/CDM/LDM), CAM(공미), CM, RM, LM, RW, LW, ST, CF, CB, RB, LB, RWB, LWB, GK"
 
@@ -67,8 +70,12 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "list_formations",
-        "description": "팀컬러를 쓰는 랭커들의 포메이션 분포(최신 스냅샷)와 각 포메이션의 스쿼드 수집 여부.",
-        "input_schema": _schema({"team_color": {"type": "string", "description": "팀컬러 이름 또는 id"}}, ["team_color"]),
+        "description": (
+            "랭커들의 포메이션 분포(최신 스냅샷)와 스쿼드 수집 여부. team_color를 생략하면 매일 수집하는 상위 랭커 전체."
+        ),
+        "input_schema": _schema(
+            {"team_color": {"type": "string", "description": "팀컬러 이름 또는 id. 생략하면 전체 랭커"}}, []
+        ),
     },
     {
         "name": "recommend_players",
@@ -79,7 +86,10 @@ TOOLS: list[dict[str, Any]] = [
         ),
         "input_schema": _schema(
             {
-                "team_color": {"type": "string", "description": "팀컬러 이름 또는 id (예: 아스널)"},
+                "team_color": {
+                    "type": "string",
+                    "description": "팀컬러 이름 또는 id (예: 아스널). 사용자가 팀컬러를 말하지 않았으면 생략 → 상위 랭커 전체",
+                },
                 "formation": {"type": "string", "description": "포메이션 (예: 4-2-3-1). 생략하면 팀컬러 전체"},
                 "role": {"type": "string", "description": "역할 (DM, CAM, ST … 또는 볼란치 같은 별칭)"},
                 "top_n": {"type": "integer", "description": "몇 명까지 (기본 5, 최대 20)"},
@@ -92,7 +102,7 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "카드 1장 최대 가격(BP). 랭커들이 가장 많이 쓴 강화 단계의 시세로 비교",
                 },
             },
-            ["team_color", "role"],
+            ["role"],
         ),
     },
     {
@@ -161,6 +171,19 @@ class Toolbox:
             raise ToolError(f"알 수 없는 팀컬러: {value}" + (f". 후보: {', '.join(hint)}" if hint else ""))
         return tc
 
+    def _scope(self, value: str | int | None) -> tuple[int, str]:
+        """(team_color_id, 표시 이름). 비어 있거나 '전체'면 상위 랭커 전체(0)."""
+        if value is None or str(value).strip() in ("", "0", "전체", "전체랭커", "all"):
+            return ALL_RANKERS, "전체 랭커"
+        tc = self._team_color(value)
+        return tc.id, tc.name
+
+    def _scope_name(self, team_color_id: int) -> str:
+        if team_color_id == ALL_RANKERS:
+            return "전체 랭커"
+        tc = self.catalog.resolve(team_color_id)
+        return tc.name if tc else str(team_color_id)
+
     def _role(self, value: str) -> str:
         role = resolve_role(value)
         if role is None:
@@ -191,48 +214,78 @@ class Toolbox:
         return out
 
     def list_available_data(self) -> dict[str, Any]:
+        # 팀컬러별 가장 최근 스냅샷만, 표본 많은 순
         rows = self.conn.execute(
-            "SELECT data_as_of, mode, team_color_id, formation, combo_rankers, squads FROM usage_sample"
-            " WHERE strict = 0 ORDER BY data_as_of DESC, team_color_id, squads DESC"
+            "SELECT u.data_as_of, u.mode, u.team_color_id, u.formation, u.combo_rankers, u.squads FROM usage_sample u"
+            " WHERE u.strict = 0 AND u.data_as_of = (SELECT MAX(data_as_of) FROM usage_sample x"
+            "  WHERE x.team_color_id = u.team_color_id AND x.mode = u.mode)"
+            " ORDER BY (u.team_color_id = 0) DESC, u.squads DESC LIMIT ?",
+            (MAX_LISTED_COMBOS,),
         ).fetchall()
-        combos = []
-        for r in rows:
-            tc = self.catalog.resolve(r["team_color_id"])
-            combos.append({
-                "team_color": tc.name if tc else r["team_color_id"],
+        combos = [
+            {
+                "team_color": self._scope_name(r["team_color_id"]),
                 "formation": "전체" if r["formation"] == ALL_FORMATIONS else r["formation"],
                 "rankers": r["combo_rankers"],
                 "squads_collected": r["squads"],
                 "data_as_of": r["data_as_of"],
                 "mode": r["mode"],
-            })  # fmt: skip
-        return {"combos": combos, "note": "여기에 없는 조합은 아직 수집·집계되지 않음"}
+            }
+            for r in rows
+        ]
+        out: dict[str, Any] = {"combos": combos, "note": f"표본 많은 순 최대 {MAX_LISTED_COMBOS}개. 없는 조합은 아직 수집되지 않음"}
+        latest = latest_unfiltered_snapshot(self.conn)
+        if latest:
+            squads = self.conn.execute(
+                "SELECT COUNT(*) FROM ranker_squad_status WHERE data_as_of = ? AND rank <= ? AND status IN ('ok', 'provisional')",
+                latest,
+            ).fetchone()[0]
+            out["daily_scope"] = {"data_as_of": latest[0], "top_rankers": latest[1], "squads_collected": squads}
+        return out
 
-    def list_formations(self, team_color: str) -> dict[str, Any]:
-        tc = self._team_color(team_color)
-        latest = self.conn.execute(
-            "SELECT MAX(data_as_of) FROM ranker_team_color WHERE team_color_id = ?", (tc.id,)
-        ).fetchone()[0]
-        if latest is None:
-            return {"team_color": tc.name, "formations": [], "note": "이 팀컬러의 랭킹 스냅샷이 없음"}
-        rows = self.conn.execute(
-            "SELECT s.formation, COUNT(*) AS rankers FROM ranker_snapshot s"
-            " JOIN ranker_team_color m USING (data_as_of, mode, rank)"
-            " WHERE m.team_color_id = ? AND s.data_as_of = ? GROUP BY s.formation ORDER BY rankers DESC",
-            (tc.id, latest),
-        ).fetchall()
+    def list_formations(self, team_color: str | None = None) -> dict[str, Any]:
+        tc_id, name = self._scope(team_color)
+        if tc_id == ALL_RANKERS:
+            latest = latest_unfiltered_snapshot(self.conn)
+            if latest is None:
+                return {"team_color": name, "formations": [], "note": "필터 없이 수집한 랭킹 스냅샷이 없음"}
+            as_of, covered = latest
+            rows = self.conn.execute(
+                "SELECT formation, COUNT(*) AS rankers FROM ranker_snapshot WHERE data_as_of = ? AND rank <= ?"
+                " GROUP BY formation ORDER BY rankers DESC",
+                (as_of, covered),
+            ).fetchall()
+            note = f"랭킹 상위 {covered}명 기준"
+        else:
+            as_of = self.conn.execute(
+                "SELECT MAX(data_as_of) FROM ranker_team_color WHERE team_color_id = ?", (tc_id,)
+            ).fetchone()[0]
+            if as_of is None:
+                return {"team_color": name, "formations": [], "note": "이 팀컬러의 랭킹 스냅샷이 없음"}
+            rows = self.conn.execute(
+                "SELECT s.formation, COUNT(*) AS rankers FROM ranker_snapshot s"
+                " JOIN ranker_team_color m USING (data_as_of, mode, rank)"
+                " WHERE m.team_color_id = ? AND s.data_as_of = ? GROUP BY s.formation ORDER BY rankers DESC",
+                (tc_id, as_of),
+            ).fetchall()
+            covered = unfiltered_coverage(self.conn, as_of)
+            note = (
+                f"랭킹 상위 {covered}명 중 이 팀컬러를 쓰는 랭커"
+                if covered
+                else "팀컬러×포메이션 조건으로 수집한 랭커만 포함할 수 있음 (전체 분포가 아닐 수 있음)"
+            )
         collected = {
             r[0]: r[1]
             for r in self.conn.execute(
                 "SELECT formation, squads FROM usage_sample WHERE team_color_id = ? AND data_as_of = ? AND strict = 0",
-                (tc.id, latest),
+                (tc_id, as_of),
             )
         }
-        total = sum(r["rankers"] for r in rows)
+        total = sum(r["rankers"] for r in rows) or 1
         return {
-            "team_color": tc.name,
-            "data_as_of": latest,
-            "note": "스냅샷은 팀컬러×포메이션 조건으로 수집한 랭커만 포함할 수 있음 (전체 분포가 아닐 수 있음)",
+            "team_color": name,
+            "data_as_of": as_of,
+            "note": note,
             "formations": [
                 {
                     "formation": r["formation"],
@@ -246,26 +299,26 @@ class Toolbox:
 
     def recommend_players(
         self,
-        team_color: str,
         role: str,
+        team_color: str | None = None,
         formation: str | None = None,
         top_n: int = 5,
         strict: bool = False,
         max_price_bp: int | None = None,
     ) -> dict[str, Any]:
-        tc = self._team_color(team_color)
+        tc_id, tc_name = self._scope(team_color)
         role_code = self._role(role)
         top_n = max(1, min(int(top_n or 5), 20))
         # LLM이 숫자를 실수(5.0)로 넘기는 경우가 있어 정수로 맞춘다
         max_price_bp = int(max_price_bp) if max_price_bp is not None else None
         # 예산 필터는 후보를 넉넉히 받아 거른다
         res = top_players(
-            self.conn, tc.id, formation or ALL_FORMATIONS, role_code,
+            self.conn, tc_id, formation or ALL_FORMATIONS, role_code,
             top=100 if max_price_bp else top_n, by="pid", strict=bool(strict), min_sample=self.min_sample,
         )  # fmt: skip
         if not res.players:
             return {
-                "team_color": tc.name, "formation": formation, "role": role_code, "players": [],
+                "team_color": tc_name, "formation": formation, "role": role_code, "players": [],
                 "note": "수집·집계된 데이터가 없음. list_available_data로 가능한 조합을 확인",
             }  # fmt: skip
 
@@ -306,7 +359,7 @@ class Toolbox:
                 break
 
         out: dict[str, Any] = {
-            "team_color": tc.name,
+            "team_color": tc_name,
             "requested_formation": formation or "전체",
             "formation_used": "전체" if res.formation == ALL_FORMATIONS else res.formation,
             "fallback_to_all_formations": res.fallback,
@@ -323,6 +376,8 @@ class Toolbox:
                 "price_at_most_used_grade": "랭커들이 가장 많이 쓴 강화 단계의 최근 수집 시세 (없으면 미수집)",
             },
         }
+        if tc_id == ALL_RANKERS and res.data_as_of:
+            out["ranking_scope"] = unfiltered_coverage(self.conn, res.data_as_of)  # 랭킹 상위 몇 명 범위인지
         if max_price_bp is not None:
             out["budget"] = {"max_price_bp": max_price_bp, "max_price": format_bp(max_price_bp)}
             if not self._has_prices(res):
@@ -363,10 +418,9 @@ class Toolbox:
         names = sorted({r["name"] for r in rows})
         usage = []
         for r in rows:
-            tc = self.catalog.resolve(r["team_color_id"])
             usage.append({
                 "player": r["name"],
-                "team_color": tc.name if tc else r["team_color_id"],
+                "team_color": self._scope_name(r["team_color_id"]),
                 "formation": r["formation"],
                 "role": r["role"],
                 "season": r["class_name"],

@@ -1,5 +1,5 @@
 from .formation import POSITION_NAMES, SUB, FormationTable, line_shape, signature
-from .squads import SquadCollector, SquadRunResult, SquadTarget, select_targets
+from .squads import SquadCollector, SquadRunResult, SquadTarget, select_targets, select_top_targets
 from .store import PipelineStore
 
 __all__ = [
@@ -12,5 +12,6 @@ __all__ = [
     "SquadTarget",
     "line_shape",
     "select_targets",
+    "select_top_targets",
     "signature",
 ]

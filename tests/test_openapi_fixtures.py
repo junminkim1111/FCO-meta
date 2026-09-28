@@ -56,7 +56,7 @@ def test_pipeline_stores_real_match(tmp_path):
         " VALUES ('2026-09-28T21:00:00+09:00', '1vs1', 1, 1, '랭커1', '4-2-3-1')"
     )
     storage.conn.execute(
-        "INSERT INTO ranker_team_color VALUES ('2026-09-28T21:00:00+09:00', '1vs1', 1, 1004, 1)"
+        "INSERT INTO ranker_team_color (data_as_of, mode, rank, team_color_id, run_id) VALUES ('2026-09-28T21:00:00+09:00', '1vs1', 1, 1004, 1)"
     )
     store = PipelineStore(storage.conn)
     api = client(CallBudget(storage.conn))
