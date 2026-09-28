@@ -150,7 +150,7 @@ usage_stats(
 ---
 
 ## 5. 기술 스택
-Python 3.12 · httpx · selectolax · tenacity · SQLite(MVP) → PostgreSQL · 규칙 기반 + Gemini API(function calling, 선택) · FastAPI + Streamlit(MVP)
+Python 3.12 · httpx · selectolax · tenacity · SQLite(MVP) → PostgreSQL · 규칙 기반 + Gemini API(function calling, 선택) · FastAPI + 정적 HTML/JS 웹 UI
 
 ```
 fco_meta/
@@ -177,7 +177,7 @@ tests/fixtures/ # 랭킹 페이지 샘플
 | **3. 파이프라인** | ouid 매핑, 스쿼드 수집, 정합성 검증 | ✅ 완료 (`fco_meta/pipeline`) |
 | **4. 집계** | usage_stats, 아스널 4-2-3-1 볼란치로 end-to-end 검증 | ✅ 완료 (`fco_meta/analytics`) |
 | **5. 챗봇** | 도구·프롬프트·별칭 사전, CLI 챗봇 | ✅ 완료 (`fco_meta/chatbot`, 규칙 기반 + Gemini) |
-| **6. UI/운영** | 웹 UI, 스케줄 수집, 알림 | 다음 |
+| **6. UI/운영** | 웹 UI, 스케줄 수집, 알림 | 웹 UI ✅ (`fco_meta/web`, FastAPI + 정적 페이지) · 스케줄 수집·알림 다음 |
 
 ---
 

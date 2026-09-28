@@ -15,9 +15,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 gemini = ["google-genai>=2.25"]
+web = ["fastapi>=0.115", "uvicorn>=0.30"]
 
 [tool.setuptools.packages.find]
 include = ["fco_meta*"]
+
+[tool.setuptools.package-data]
+"fco_meta.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

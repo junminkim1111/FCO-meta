@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FCO 랭커 메타</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%231f6feb'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e2e6eb;
+    --accent: #1f6feb; --accent-soft: #e7f0fd; --bar: #1f6feb; --warn-bg: #fff6e0; --warn: #7a5200;
+    --chip: #f0f2f5; --bubble-me: #1f6feb; --bubble-me-text: #fff; --bubble-bot: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --text: #e6e9ee; --muted: #9aa4b1; --line: #2a3038;
+      --accent: #58a6ff; --accent-soft: #16263b; --bar: #58a6ff; --warn-bg: #3a2e12; --warn: #f2cc60;
+      --chip: #222831; --bubble-me: #2f6fd1; --bubble-me-text: #fff; --bubble-bot: #222831;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  header { padding: 20px 16px 8px; max-width: 1200px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px;
+         max-width: 1200px; margin: 0 auto; padding: 8px 16px 32px; }
+  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+  section h2 { margin: 0 0 12px; font-size: 16px; }
+  form.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--text); grid-column: span 2; }
+  input, select, button { font: inherit; color: var(--text); background: var(--panel);
+                          border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .summary { margin: 16px 0 8px; font-size: 13px; color: var(--muted); }
+  .notice { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
+  .error { color: #d1242f; font-size: 14px; margin-top: 12px; }
+  ol.players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .player { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .player .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .player .rank { font-weight: 700; color: var(--accent); min-width: 1.5em; }
+  .player .name { font-weight: 700; font-size: 16px; background: none; color: var(--text); padding: 0; border: 0; cursor: pointer;
+                  text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+  .player .stat { color: var(--muted); font-size: 13px; }
+  .bar { height: 6px; background: var(--chip); border-radius: 3px; margin: 8px 0; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--bar); }
+  .cards { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+  .chip b { font-weight: 600; }
+  .detail { margin-top: 10px; font-size: 13px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
+  #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; max-height: 60vh; }
+  .msg { max-width: 92%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
+  .msg.me { align-self: flex-end; background: var(--bubble-me); color: var(--bubble-me-text); }
+  .msg.bot { align-self: flex-start; background: var(--bubble-bot); }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .examples button { background: var(--accent-soft); color: var(--accent); font-weight: 500; font-size: 12px; padding: 4px 10px; }
+  #chat form { display: flex; gap: 8px; }
+  #chat form input { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FCO 랭커 메타</h1>
+  <p id="asof">데이터 불러오는 중…</p>
+</header>
+<main>
+  <section aria-labelledby="rec-title">
+    <h2 id="rec-title">선수 추천</h2>
+    <form class="filters" id="filters">
+      <label>팀컬러 <input id="tc" list="tc-list" required placeholder="예: 아스널" autocomplete="off"></label>
+      <datalist id="tc-list"></datalist>
+      <label>포메이션 <select id="formation"><option value="">전체</option></select></label>
+      <label>역할 <select id="role"></select></label>
+      <label>인원 <input id="topn" type="number" min="1" max="20" value="5"></label>
+      <label>예산 (카드 1장) <input id="budget" placeholder="예: 5억"></label>
+      <label class="check"><input id="strict" type="checkbox"> 배치 일치 스쿼드만</label>
+      <button id="go" type="submit">추천 보기</button>
+    </form>
+    <div id="result" aria-live="polite"></div>
+  </section>
+
+  <section id="chat" aria-labelledby="chat-title">
+    <h2 id="chat-title">챗봇 <span id="backend" class="stat"></span></h2>
+    <div id="log" aria-live="polite"></div>
+    <div class="examples" id="examples"></div>
+    <form id="chat-form">
+      <input id="msg" maxlength="500" placeholder="예: 아스날 4-2-3-1 볼란치 2명 추천해줘" autocomplete="off">
+      <button type="submit">보내기</button>
+    </form>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v; else if (k === "text") node.textContent = v; else node[k] = v;
+  }
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+};
+const pct = (x) => (x * 100).toFixed(1) + "%";
+const season = (s) => (s || "?").split(" (")[0];
+const roleLabel = (code) => (META && META.roles.find((r) => r.code === code) || { label: code }).label;
+const asOf = (v) => v ? v.slice(0, 16).replace("T", " ") + " 기준" : "";
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const d = body.detail;
+    throw new Error(typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join(", ") : `오류 (${res.status})`);
+  }
+  return body;
+}
+
+let META = null;
+
+async function loadMeta() {
+  META = await api("/api/meta");
+  const teams = [...new Set(META.combos.map((c) => c.team_color))];
+  $("tc-list").replaceChildren(...teams.map((t) => el("option", { value: t })));
+  $("role").replaceChildren(...META.roles.map((r) => el("option", { value: r.code, text: r.label, selected: r.code === "DM" })));
+  if (teams.length) { $("tc").value = teams[0]; fillFormations(); }
+  const latest = META.combos.map((c) => c.data_as_of).sort().pop();
+  $("asof").textContent = META.combos.length
+    ? `랭킹 스냅샷 ${asOf(latest)} · 집계된 조합 ${new Set(META.combos.map((c) => c.team_color + c.formation)).size}개`
+    : "아직 집계된 데이터가 없습니다";
+  $("backend").textContent = META.backend === "gemini" ? "· Gemini" : "· 규칙 기반";
+}
+
+function fillFormations() {
+  const tc = $("tc").value.trim();
+  const forms = META.combos.filter((c) => c.team_color === tc && c.formation !== "전체");
+  const keep = $("formation").value;
+  $("formation").replaceChildren(
+    el("option", { value: "", text: "전체" }),
+    ...forms.map((c) => el("option", { value: c.formation, text: `${c.formation} (${c.squads_collected}명)` })),
+  );
+  if (forms.some((c) => c.formation === keep)) $("formation").value = keep;
+  else if (forms.length) $("formation").value = forms[0].formation;
+}
+
+function cardChip(c) {
+  const parts = [`${c.rankers}명`];
+  if (c.most_used_grade) parts.push(`주로 ${c.most_used_grade}강`);
+  if (c.price_at_most_used_grade) parts.push(c.price_at_most_used_grade.price);
+  return el("span", { class: "chip" }, el("b", { text: season(c.season) }), " " + parts.join(" · "));
+}
+
+function renderRecommend(r) {
+  const out = [];
+  const formation = r.formation_used === "전체" ? "전체 포메이션" : r.formation_used;
+  out.push(el("p", { class: "summary", text:
+    `${r.team_color} ${formation} · ${roleLabel(r.role)} · 랭커 ${r.sample_size}명 스쿼드 기준 · ${asOf(r.data_as_of)}` }));
+  if (r.fallback_to_all_formations)
+    out.push(el("div", { class: "notice", text: `${r.requested_formation} 표본이 적어 ${r.team_color} 전체 포메이션으로 집계했습니다.` }));
+  if (r.sample_size < 30)
+    out.push(el("div", { class: "notice", text: `표본이 ${r.sample_size}명으로 적어 참고용입니다.` }));
+  if (r.budget)
+    out.push(el("div", { class: "notice", text: `예산 ${r.budget.max_price} 이하 카드만 (랭커들이 가장 많이 쓴 강화 단계 시세 기준)` }));
+  if (r.note) out.push(el("div", { class: "notice", text: r.note }));
+  if (!r.players.length) {
+    out.push(el("p", { text: "조건에 맞는 선수가 없습니다." }));
+    return out;
+  }
+  const list = el("ol", { class: "players" });
+  r.players.forEach((p, i) => {
+    const detail = el("div", { class: "detail", hidden: true });
+    const name = el("button", { class: "name", type: "button", text: p.name, title: "사용 현황 보기" });
+    name.addEventListener("click", () => togglePlayer(p.name, detail));
+    const stats = [`${p.rankers}명 사용 (${pct(p.usage_rate)})`];
+    if (r.budget) stats.push(`예산 내 카드 ${p.cards.reduce((s, c) => s + c.rankers, 0)}명`);
+    if (p.avg_grade != null) stats.push(`평균 ${p.avg_grade.toFixed(1)}강`);
+    if (p.avg_elo_of_users != null) stats.push(`사용 랭커 ELO ${Math.round(p.avg_elo_of_users)}`);
+    list.append(el("li", { class: "player" },
+      el("div", { class: "top" }, el("span", { class: "rank", text: String(i + 1) }), name,
+         el("span", { class: "stat", text: stats.join(" · ") })),
+      el("div", { class: "bar", role: "img", ariaLabel: `사용률 ${pct(p.usage_rate)}` },
+         el("span", { style: `width:${Math.min(100, p.usage_rate * 100)}%` })),
+      el("div", { class: "cards" }, ...p.cards.slice(0, 6).map(cardChip)),
+      detail));
+  });
+  out.push(list);
+  if (r.players.some((p) => p.cards.some((c) => c.price_at_most_used_grade)))
+    out.push(el("p", { class: "foot", text: "시세는 수집 시각 기준이며 변동될 수 있습니다. 이름을 누르면 역할·시즌별 사용 현황을 봅니다." }));
+  return out;
+}
+
+async function togglePlayer(name, box) {
+  if (!box.hidden) { box.hidden = true; return; }
+  box.hidden = false;
+  box.replaceChildren(el("span", { class: "stat", text: "불러오는 중…" }));
+  try {
+    const d = await api("/api/player?" + new URLSearchParams({ name }));
+    const usage = d.usage.slice(0, 12);
+    // 모든 행이 같은 팀컬러·포메이션이면 그 열은 생략 (모바일 폭 확보)
+    const combos = new Set(usage.map((u) => u.team_color + "|" + u.formation));
+    const cols = [
+      ...(combos.size > 1 ? [["팀컬러", (u) => u.team_color], ["포메이션", (u) => u.formation]] : []),
+      ["역할", (u) => u.role], ["시즌", (u) => season(u.season)], ["사용", (u) => `${u.rankers}/${u.sample_size}`],
+      ["사용률", (u) => pct(u.usage_rate)], ["평균 강화", (u) => (u.avg_grade != null ? u.avg_grade.toFixed(1) : "-")],
+    ];
+    const caption = combos.size === 1 ? el("p", { class: "stat", text: `${usage[0].team_color} ${usage[0].formation} 랭커 기준` }) : null;
+    box.replaceChildren(...[caption, el("table", {},
+      el("thead", {}, el("tr", {}, ...cols.map(([h]) => el("th", { text: h })))),
+      el("tbody", {}, ...usage.map((u) => el("tr", {}, ...cols.map(([, f]) => el("td", { text: f(u) }))))))].filter(Boolean));
+  } catch (e) {
+    box.replaceChildren(el("span", { class: "error", text: e.message }));
+  }
+}
+
+$("tc").addEventListener("change", fillFormations);
+$("filters").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const params = new URLSearchParams({ team_color: $("tc").value.trim(), role: $("role").value, top_n: $("topn").value || "5" });
+  if ($("formation").value) params.set("formation", $("formation").value);
+  if ($("budget").value.trim()) params.set("max_price", $("budget").value.trim());
+  if ($("strict").checked) params.set("strict", "true");
+  $("go").disabled = true;
+  try {
+    $("result").replaceChildren(...renderRecommend(await api("/api/recommend?" + params)));
+  } catch (e) {
+    $("result").replaceChildren(el("p", { class: "error", text: e.message }));
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+// --- chat ---
+let sessionId = null;
+const say = (who, text) => {
+  const node = el("div", { class: "msg " + who, text });
+  $("log").append(node);
+  $("log").scrollTop = $("log").scrollHeight;
+  return node;
+};
+async function send(text) {
+  say("me", text);
+  const pending = say("bot", "…");
+  try {
+    const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ message: text, session_id: sessionId }) });
+    sessionId = r.session_id;
+    pending.textContent = r.answer;
+  } catch (e) {
+    pending.textContent = "오류: " + e.message;
+  }
+}
+$("chat-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const text = $("msg").value.trim();
+  if (!text) return;
+  $("msg").value = "";
+  send(text);
+});
+for (const q of ["아스날 4-2-3-1 볼란치 2명 추천해줘", "아스널 볼란치 5억 이하로 3명", "라이스 사용률", "어떤 데이터 있어?"]) {
+  const b = el("button", { type: "button", text: q });
+  b.addEventListener("click", () => send(q));
+  $("examples").append(b);
+}
+say("bot", "팀컬러·포메이션·역할로 물어보세요. 수치는 공식 랭킹과 랭커 경기 기록에서 나옵니다.");
+
+loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
+</script>
+</body>
+</html>

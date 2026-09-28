@@ -170,6 +170,23 @@ python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널",
 - 포메이션 표본이 10명 미만이면 같은 팀컬러의 전체 포메이션으로 집계하고 그렇다고 표시합니다.
 - 시세는 `python -m fco_meta.market cards --team-color 아스널 --role 볼란치`로 수집한 값만 씁니다.
 
+## 웹 UI
+
+추천 화면과 챗봇을 브라우저에서 씁니다. DB는 읽기 전용으로 엽니다.
+
+```bash
+pip install -e ".[web]"
+python -m fco_meta.web                        # http://127.0.0.1:8000
+python -m fco_meta.web --backend gemini       # 챗봇을 Gemini로 (".[gemini]" + GEMINI_API_KEY)
+python -m fco_meta.web --host 0.0.0.0 --port 8080
+```
+
+- **선수 추천**: 팀컬러(집계된 조합 자동 완성)·포메이션·역할·인원·예산(예: `5억`)·배치 일치 여부 → 사용률 막대, 시즌 카드별 사용 수·주 강화·시세.
+  선수 이름을 누르면 역할·시즌별 사용 현황 표. 표본 부족 폴백, 예산 기준을 안내 문구로 표시
+- **챗봇**: 규칙 기반(기본) 또는 Gemini. 예시 질문 버튼 제공
+- 라이트/다크 모드, 모바일 폭 대응
+- JSON API: `/api/meta`, `/api/recommend`, `/api/formations`, `/api/player`, `POST /api/chat` (문서: `/api/docs`)
+
 ## 테스트
 
 ```bash
