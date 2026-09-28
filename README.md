@@ -51,6 +51,65 @@ WHERE m.team_color_id = 1004 AND s.formation = '4-2-3-1'
 ORDER BY s.rank;
 ```
 
+## Open API 스쿼드 수집
+
+랭킹 스냅샷의 랭커를 넥슨 Open API로 조회해 **스냅샷 기준 시각 직전 공식경기(matchtype 50)의 스쿼드**를 저장합니다.
+`NEXON_API_KEY` 환경 변수(또는 `.env`를 셸에 로드)가 필요합니다.
+
+```bash
+# 1) 랭커 스냅샷 (위 크롤러)
+python -m fco_meta.crawler rank --team-color 아스널 --formation 4-2-3-1
+
+# 2) 메타데이터 (선수명·시즌·포지션) — 3회 호출
+python -m fco_meta.pipeline meta
+
+# 3) 스쿼드 수집: 이번 실행 최대 300회 호출 (중단돼도 같은 명령으로 이어서 수집)
+python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
+
+# 4) 볼란치(RDM/CDM/LDM) 사용 선수 TOP 5  (--by pid: 시즌 무관 선수 단위)
+python -m fco_meta.pipeline usage --team-color 아스널 --formation 4-2-3-1 --role 볼란치
+
+python -m fco_meta.pipeline budget            # 오늘(KST) 호출 수
+python -m fco_meta.pipeline formations --save # 포지션 조합 → 포메이션 표(data/formations.json) 갱신
+```
+
+- **호출 한도**: 초당 5회(1초 슬라이딩 윈도), 일일 1,000회(`api_usage` 테이블에 KST 날짜별 기록, 한도 도달 시 요청을 보내지 않고 중단).
+  429(OPENAPI00007)·5xx는 지수 백오프 재시도, 400 OPENAPI00009(데이터 준비 중)는 해당 랭커만 건너뛰고, 점검(00010/00011)이면 중단합니다.
+- **캐시**: 닉네임→ouid(실패 포함), 스냅샷 이후에 받은 경기 목록, matchId별 상세는 다시 호출하지 않습니다. 완료한 랭커도 건너뜁니다.
+- **정합성**: 랭킹 페이지의 팀컬러·포메이션은 가장 최근 공식경기 스쿼드 기준 → `data_as_of`(KST) 이전의 가장 최근 경기(UTC `matchDate` 변환 후 비교)를 기본 스쿼드(`match_order` 0)로 씁니다.
+  `--extra-matches N`으로 더 이전 경기를 보면, 추론 포메이션이 스냅샷 포메이션과 같거나 선발 포지션 조합이 기본 스쿼드와 같을 때만 `accepted=1`입니다.
+- Open API는 매시 정각에 **2시간 전까지**의 경기를 반영합니다. 스냅샷 직후에 수집하면 마지막 경기가 빠질 수 있으니, 스냅샷 기준 시각 2시간 뒤에 돌리는 것이 정확합니다(더 이르면 경고).
+
+| 테이블 | 내용 |
+|---|---|
+| `api_usage` | KST 날짜·엔드포인트별 호출 수 |
+| `nickname_lookup` | 닉네임 → ouid 조회 결과 (ok / not_found) |
+| `account`, `account_nickname` | ouid 기준 계정, 닉네임 이력 |
+| `user_match_list` | ouid별 최신 공식경기 matchId 목록과 조회 시각 |
+| `match`, `match_team`, `match_player` | 경기(UTC 일시), 참가자별 결과, 선수(spId, 시즌ID, pid, spPosition, 강화, 평점, 선발 여부) |
+| `ranker_squad` | 스냅샷 랭커 ↔ 스쿼드 경기 (`match_order`, 추론 포메이션, 일치 여부, 반영 여부) |
+| `ranker_squad_status` | 랭커별 수집 상태 (ok / nickname_not_found / no_match_before_snapshot / data_not_ready / error) |
+| `meta_spid`, `meta_season`, `meta_position` | 메타데이터 |
+
+```sql
+-- 아스널 4-2-3-1 랭커의 기본 스쿼드에서 볼란치(9/10/11) 사용률
+WITH base AS (
+  SELECT q.rank, q.ouid, q.match_id
+  FROM ranker_squad q
+  JOIN ranker_snapshot s USING (data_as_of, mode, rank)
+  JOIN ranker_team_color m USING (data_as_of, mode, rank)
+  WHERE q.match_order = 0 AND m.team_color_id = 1004 AND s.formation = '4-2-3-1'
+    AND q.data_as_of = (SELECT MAX(data_as_of) FROM ranker_squad)
+)
+SELECT p.sp_id, sp.name, COUNT(DISTINCT b.rank) AS rankers,
+       ROUND(100.0 * COUNT(DISTINCT b.rank) / (SELECT COUNT(*) FROM base), 1) AS usage_pct
+FROM base b
+JOIN match_player p ON p.match_id = b.match_id AND p.ouid = b.ouid
+LEFT JOIN meta_spid sp ON sp.sp_id = p.sp_id
+WHERE p.sp_position IN (9, 10, 11)
+GROUP BY p.sp_id ORDER BY rankers DESC LIMIT 5;
+```
+
 ## 테스트
 
 ```bash
