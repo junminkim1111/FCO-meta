@@ -5,6 +5,7 @@
 
 > ⚠️ 작성 환경에서 fconline.nexon.com / openapi.nexon.com 접근이 막혀 있어, 페이지 구조·API 스펙은 직접 확인하지 못했습니다.
 > **0단계(구조 조사)** 에서 확정한 뒤 이 문서를 갱신합니다. `[확인 필요]` 표시가 그 항목입니다.
+> 0단계 진행 상황과 조사 스크립트 사용법은 [6.1](#61-0단계-구조-조사-진행-상황)을 참고하세요.
 
 ---
 
@@ -161,6 +162,45 @@ tests/fixtures/ # 저장된 랭킹 페이지 샘플
 | **3. 검증·집계** | 포메이션 정합성 검증, usage_stats 생성 | SQL로 예시 질문에 답 가능 |
 | **4. 챗봇** | 도구·프롬프트·용어 사전, CLI 챗봇 | 예시 질문 10개에 근거 있는 답변 |
 | **5. UI/운영** | 웹 UI, 일일 배치 자동화, 구조 변경 알림 | 외부에서 사용 가능 |
+
+### 6.1 0단계 구조 조사 진행 상황
+
+**상태: 미완료 — 조사 스크립트만 준비됨 (2026-09-28)**
+
+클라우드 세션의 네트워크 정책이 `fconline.nexon.com`(및 `nexon.com` 계열) 접속을 차단(프록시 403)해서
+robots.txt·약관·페이지 구조를 직접 확인하지 못했습니다. 접속 가능한 환경(로컬 PC 또는 해당 도메인을 허용한 환경)에서
+아래 스크립트를 실행하면 조사 결과가 `tests/fixtures/datacenter/`에 저장됩니다.
+
+```bash
+pip install playwright && playwright install chromium   # 이미 설치돼 있으면 생략
+python scripts/survey_datacenter.py                      # 결과: tests/fixtures/datacenter/
+python scripts/survey_datacenter.py --headed             # 셀렉터가 안 맞을 때 화면 보면서 확인
+```
+
+스크립트가 수행하는 단계 (단계 사이 2초 대기, 동시 요청 1개):
+
+| 단계 | 동작 | 기록 |
+|---|---|---|
+| 01_rank_initial | `/datacenter/rank` 접속 | 최초 로딩 시 요청, DOM, 스크린샷 |
+| 02_official_1v1 | "1vs1 공식경기" 선택 | 모드 선택 요청 |
+| 03_page_2 | 페이지 2 클릭 | 페이지 넘김 요청 (URL·메서드·파라미터) |
+| 04_mode_switch / 05_back_to_1v1 | 다른 모드 전환 후 복귀 | 모드 파라미터 |
+| 06_ranker_click | 1위 랭커 클릭 (팝업 포함) | 랭커 상세 요청, 스쿼드 제공 여부 |
+| 07_teamcolor | `/datacenter/teamcolor` 접속 | 팀컬러 페이지 구조 |
+
+각 단계 폴더에 `requests.jsonl`(URL, 메서드, 쿼리/POST 파라미터, 상태, content-type), XHR/Fetch/문서 응답 본문(`bodies/`),
+`page.html`, `screenshot.png`, 랭킹 영역 텍스트(`text.txt`)가 남고, `summary.json`에 셀렉터 탐색 성공/실패가 기록됩니다.
+셀렉터는 구조 미확인 상태의 후보값이므로, 실패한 단계는 `--headed`로 확인해 스크립트 상단 후보 목록에 추가합니다.
+
+조사 후 채울 항목 (현재 모두 `[확인 필요]`):
+
+- [ ] robots.txt에서 `/datacenter/` 경로 허용 여부 (`tests/fixtures/datacenter/robots.txt`)
+- [ ] 이용약관·운영정책의 자동 수집(크롤링·매크로) 관련 조항 — 스크립트로 확인 불가, 넥슨 약관 페이지를 사람이 직접 확인
+- [ ] 랭킹 데이터 전달 방식: XHR(JSON/HTML 조각) / 서버 렌더링 / JS 렌더링 → ① 수집 경로 1·2·3 중 결정
+- [ ] 페이지 넘김·모드 전환 요청의 URL·메서드·파라미터, 페이지당 인원, 최대 페이지
+- [ ] 랭커 1명당 표시 항목: 팀컬러 표기 형식·레벨·복수 여부, 포메이션, 승률·랭킹포인트 등
+- [ ] 랭커 클릭 시 스쿼드 선수 목록 제공 여부 → ③ 경로 A/B 결정
+- [ ] `/datacenter/teamcolor` 구조 (팀컬러 목록, 소속 선수 제공 방식)
 
 ---
 
