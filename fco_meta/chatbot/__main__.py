@@ -34,12 +34,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", help="Gemini 모델 (기본: .env의 GEMINI_MODEL 또는 gemini-3.8-flash)")
     parser.add_argument("--ask", help="질문 하나만 하고 종료")
     parser.add_argument("--tool", nargs=2, metavar=("NAME", "JSON"), help="도구 하나를 직접 실행해 결과 출력")
+    parser.add_argument("--list-models", action="store_true", help="이 Gemini 키로 쓸 수 있는 채팅 모델 목록")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
     for noisy in ("httpx", "google_genai"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
+    if args.list_models:
+        return _list_models()
     if not args.db.exists():
         print(f"DB가 없습니다: {args.db}", file=sys.stderr)
         return 2
@@ -74,6 +77,28 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if question:
             print("\n" + ask(question))
+
+
+def _list_models() -> int:
+    from .gemini import available_models, describe_error, models_from_env, unavailable_reason
+
+    if reason := unavailable_reason():
+        print(reason, file=sys.stderr)
+        return 2
+    from google import genai
+
+    try:
+        names = available_models(genai.Client())
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠ {describe_error(exc)}", file=sys.stderr)
+        return 1
+    primary, fallbacks = models_from_env()
+    print(f"설정: 기본 {primary}, 대체 {', '.join(fallbacks) or '없음'}")
+    print("이 키로 쓸 수 있는 채팅 모델 (추천 순):")
+    for name in names:
+        print(f"  {name}")
+    print("\n.env에 GEMINI_MODEL=<이름>으로 지정할 수 있습니다.")
+    return 0
 
 
 def _gemini(toolbox: Toolbox, args: argparse.Namespace):

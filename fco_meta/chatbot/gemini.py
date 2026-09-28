@@ -22,6 +22,9 @@ DEFAULT_MODEL = "gemini-3.8-flash"
 # 기본 모델이 과부하(503)·한도(429)로 계속 실패하거나 사용 불가(404)면 차례로 시도할 모델
 DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash",)
 UNAVAILABLE = (404,)  # 이 모델을 쓸 수 없음 → 재시도 없이 다음 모델
+MAX_DISCOVERED = 3  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 추가로 시도할 수
+# 채팅·도구 호출에 맞지 않는 모델 (이미지·음성·임베딩 등)
+_NOT_CHAT = ("image", "tts", "audio", "live", "embedding", "embed", "veo", "imagen", "robotics", "computer-use", "aqa", "gemma", "learnlm", "native")
 RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
 MAX_TOOL_ROUNDS = 8
@@ -94,6 +97,28 @@ def describe_error(exc: Exception) -> str:
     return f"Gemini 처리 중 오류 ({type(exc).__name__}): {exc}"
 
 
+def available_models(client: Any) -> list[str]:
+    """Text chat models this API key can call, best candidates first (asks the API, 1 request)."""
+    names = []
+    for m in client.models.list():
+        name = (m.name or "").removeprefix("models/")
+        actions = m.supported_actions or []
+        if "gemini" in name and "generateContent" in actions and not any(w in name for w in _NOT_CHAT):
+            names.append(name)
+    return sorted(set(names), key=_model_preference)
+
+
+def _model_preference(name: str) -> tuple:
+    """Newest version first; flash before flash-lite before pro; stable before preview/exp."""
+    import re
+
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
+    version = float(m.group(1)) if m else 0.0
+    tier = 0 if "flash" in name and "lite" not in name else 1 if "lite" in name else 2
+    unstable = any(w in name for w in ("preview", "exp", "latest"))
+    return (unstable, -version, tier, name)
+
+
 def models_from_env(model: str | None = None) -> tuple[str, list[str]]:
     """(기본 모델, 대체 모델들). 인자 > .env의 GEMINI_MODEL / GEMINI_FALLBACK_MODELS > 기본값."""
     import os
@@ -145,6 +170,8 @@ class GeminiChat:
         self.on_tool_call = on_tool_call
         self.sleep = sleep
         self.last_model: str | None = None  # 마지막 응답을 만든 모델 (대체 모델로 바뀌었는지 확인용)
+        self.discover = True  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 찾아 시도
+        self._discovered: list[str] | None = None
         self.contents: list[Any] = []
         self.config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
@@ -158,7 +185,8 @@ class GeminiChat:
         from google.genai import errors
 
         failures: list[tuple[str, Exception]] = []
-        for model in [self.model, *self.fallback_models]:
+        configured = [self.model, *self.fallback_models]
+        for model in configured:
             for attempt in range(len(RETRY_DELAYS) + 1):
                 try:
                     response = self.client.models.generate_content(model=model, contents=self.contents, config=self.config)
@@ -179,7 +207,30 @@ class GeminiChat:
                     log.warning("answered by fallback model %s", model)
                 self.last_model = model
                 return response
+        # 설정한 모델이 모두 혼잡·사용 불가 → 이 키로 쓸 수 있는 다른 모델을 한 번씩
+        for model in self._discover(set(configured)):
+            try:
+                response = self.client.models.generate_content(model=model, contents=self.contents, config=self.config)
+            except errors.APIError as exc:
+                if exc.code not in RETRYABLE + UNAVAILABLE:
+                    raise
+                failures.append((model, exc))
+                continue
+            log.warning("answered by discovered model %s", model)
+            self.last_model = model
+            return response
         raise GeminiUnavailable(failures)
+
+    def _discover(self, tried: set[str]) -> list[str]:
+        if not self.discover:
+            return []
+        if self._discovered is None:
+            try:
+                self._discovered = available_models(self.client)
+            except Exception as exc:  # 목록 조회 실패는 무시 (원래 오류를 보여 준다)
+                log.warning("could not list models: %s", exc)
+                self._discovered = []
+        return [m for m in self._discovered if m not in tried][:MAX_DISCOVERED]
 
     def ask(self, question: str) -> GeminiTurn:
         """One user turn. On any error the history is rolled back so the next question starts clean."""

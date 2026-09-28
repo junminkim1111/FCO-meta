@@ -248,3 +248,57 @@ def test_unavailable_primary_moves_on_without_retry(toolbox):
     slept = []
     chat = GeminiChat(client, toolbox, model="old", fallback_models=["new"], sleep=slept.append)
     assert chat.ask("질문").text == "새 모델 답" and chat.last_model == "new" and slept == []
+
+
+class Listed:
+    def __init__(self, name, actions=("generateContent", "countTokens")):
+        self.name = f"models/{name}"
+        self.supported_actions = list(actions)
+
+
+def test_available_models_filters_and_orders():
+    from fco_meta.chatbot.gemini import available_models
+
+    class C:
+        class models:  # noqa: N801
+            @staticmethod
+            def list():
+                return [
+                    Listed("gemini-3.5-flash"), Listed("gemini-3.8-flash-lite"), Listed("gemini-3.8-flash"),
+                    Listed("gemini-3.8-flash-image"), Listed("text-embedding-004", ["embedContent"]),
+                    Listed("gemini-3.8-pro"), Listed("gemini-3.9-flash-preview"), Listed("gemini-3.8-flash-tts"),
+                ]  # fmt: skip
+
+    assert available_models(C()) == [
+        "gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-pro", "gemini-3.5-flash", "gemini-3.9-flash-preview",
+    ]  # fmt: skip
+
+
+def test_discovers_other_models_when_configured_ones_are_overloaded(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({
+        "gemini-3.8-flash": [_unavailable()] * 3,
+        "gemini-3.5-flash": [_unavailable()] * 3,
+        "gemini-3.8-flash-lite": [response([{"text": "lite 답"}])],
+    })  # fmt: skip
+    client.models.list = lambda: [Listed("gemini-3.8-flash"), Listed("gemini-3.5-flash"), Listed("gemini-3.8-flash-lite")]
+    chat = GeminiChat(client, toolbox, model="gemini-3.8-flash", fallback_models=["gemini-3.5-flash"], sleep=lambda s: None)
+    assert chat.ask("질문").text == "lite 답" and chat.last_model == "gemini-3.8-flash-lite"
+    # 목록은 한 번만 조회하고 재사용
+    client.models.list = lambda: (_ for _ in ()).throw(AssertionError("listed twice"))
+    client.models.outcomes["gemini-3.8-flash"] = [response([{"text": "복구"}])]
+    assert chat.ask("다시").text == "복구"
+
+
+def test_model_list_failure_keeps_original_errors(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"a": [_unavailable()] * 3})
+
+    def broken_list():
+        raise RuntimeError("list failed")
+
+    client.models.list = broken_list
+    chat = GeminiChat(client, toolbox, model="a", fallback_models=[], sleep=lambda s: None)
+    with pytest.raises(GeminiUnavailable) as info:
+        chat.ask("질문")
+    assert [m for m, _ in info.value.failures] == ["a"]
