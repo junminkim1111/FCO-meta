@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+gemini = ["google-genai>=2.25"]
 
 [tool.setuptools.packages.find]
 include = ["fco_meta*"]

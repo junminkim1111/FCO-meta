@@ -51,7 +51,7 @@ TOP 10,000 전수는 개발 키로 불가 → **조합 단위 수집 + 캐시**�
 ③ 스쿼드 수집: user/match(matchtype=50, limit=K) → match-detail → 해당 ouid의 player[]
 ④ 정합성 검증: 스냅샷 기준 시각 직전 경기인지, 추론 포메이션 = 페이지 포메이션인지
 ⑤ 집계: usage_stats (팀컬러 × 포메이션 × 역할 × 선수)
-⑥ 챗봇: Claude tool use로 집계 DB 조회 → 근거 포함 답변
+⑥ 챗봇: 규칙 기반(기본) 또는 Gemini function calling으로 집계 DB 조회 → 근거 포함 답변
 ```
 
 ### ① 랭킹 크롤러
@@ -118,16 +118,25 @@ usage_stats(
 
 `--strict`(77명)에서도 순위 동일 (라이스 58.4%).
 
-### ⑥ 챗봇 (Claude tool use)
+### ⑥ 챗봇 (`fco_meta/chatbot`)
+두 가지 모드가 같은 도구(`tools.py`의 `Toolbox`)를 씁니다. 수치는 도구 결과에서만 나옵니다.
+
+| 모드 | 방식 | 키 |
+|---|---|---|
+| **규칙 기반 (기본)** `rules.py` | 질문에서 팀컬러(별칭 포함)·포메이션·역할·인원·예산·선수명을 뽑아 도구 1개 호출 → 정해진 형식으로 답변 | 불필요 |
+| **Gemini** `gemini.py` | Gemini function calling 수동 루프 (기본 `gemini-3.5-flash`), 자유 대화·복합 질문 | `GEMINI_API_KEY` |
+
 | 도구 | 설명 |
 |---|---|
-| `recommend_players(team_color, formation, role, top_n, sort_by)` | 핵심 추천 (캐시 없으면 온디맨드 수집) |
-| `get_player_detail(spid)` | 시즌·강화 분포, ranker-stats 평균 스탯 |
-| `list_formations(team_color)` | 팀컬러별 랭커 포메이션 분포 |
-| `list_team_colors()` | 팀컬러 픽률 |
-| `resolve_alias(text)` | "볼란치"→DM, "아스날"→아스널(1004) 등 |
+| `resolve_terms(team_color, role)` | "아스날"→아스널(1004), "맨유"→맨체스터 유나이티드, "볼란치"→DM, 애매하면 후보 목록 |
+| `list_available_data()` | 집계된 팀컬러×포메이션 조합, 표본 수, 기준 시각 |
+| `list_formations(team_color)` | 스냅샷 포메이션 분포와 스쿼드 수집 여부 |
+| `recommend_players(team_color, role, formation, top_n, strict, max_price_bp)` | 사용률 순위 + 시즌 카드별 사용 수·주 강화·그 강화의 시세, 예산 필터, 표본 부족 시 전체 포메이션 폴백 |
+| `get_player_detail(name)` | 선수(부분 이름)의 팀컬러·포메이션·역할·시즌별 사용 현황과 시세 |
 
-LLM은 자연어 해석·도구 호출·결과 설명만 하고, 수치는 도구 결과에서만 인용.
+- 예산 비교 기준: 랭커들이 그 카드를 가장 많이 쓴 강화 단계의 최근 수집 시세
+- 온디맨드 수집(데이터 없는 조합을 질문 시 바로 수집)은 아직 없음 → 수집 명령을 안내 (6단계 스케줄 수집과 함께 검토)
+- `ranker-stats` 평균 스탯은 아직 미사용
 
 ---
 
@@ -141,7 +150,7 @@ LLM은 자연어 해석·도구 호출·결과 설명만 하고, 수치는 도�
 ---
 
 ## 5. 기술 스택
-Python 3.12 · httpx · selectolax · tenacity · SQLite(MVP) → PostgreSQL · Claude API(tool use) · FastAPI + Streamlit(MVP)
+Python 3.12 · httpx · selectolax · tenacity · SQLite(MVP) → PostgreSQL · 규칙 기반 + Gemini API(function calling, 선택) · FastAPI + Streamlit(MVP)
 
 ```
 fco_meta/
@@ -167,8 +176,8 @@ tests/fixtures/ # 랭킹 페이지 샘플
 | **2. Open API 클라이언트** | rate limiter·일일 예산, id/user/match/match-detail | ✅ 완료 (`fco_meta/openapi`) |
 | **3. 파이프라인** | ouid 매핑, 스쿼드 수집, 정합성 검증 | ✅ 완료 (`fco_meta/pipeline`) |
 | **4. 집계** | usage_stats, 아스널 4-2-3-1 볼란치로 end-to-end 검증 | ✅ 완료 (`fco_meta/analytics`) |
-| **5. 챗봇** | 도구·프롬프트·별칭 사전, CLI 챗봇 | 다음 |
-| **6. UI/운영** | 웹 UI, 스케줄 수집, 알림 | |
+| **5. 챗봇** | 도구·프롬프트·별칭 사전, CLI 챗봇 | ✅ 완료 (`fco_meta/chatbot`, 규칙 기반 + Gemini) |
+| **6. UI/운영** | 웹 UI, 스케줄 수집, 알림 | 다음 |
 
 ---
 

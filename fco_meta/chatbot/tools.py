@@ -1,4 +1,4 @@
-"""Tools the chatbot can call. Every number in an answer must come from one of these."""
+"""Tools the chatbot calls (규칙 기반·LLM 공통). Every number in an answer must come from one of these."""
 
 from __future__ import annotations
 
@@ -38,7 +38,8 @@ ROLE_HELP = "DM(볼란치: RDM/CDM/LDM), CAM(공미), CM, RM, LM, RW, LW, ST, CF
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+    """Plain JSON Schema (LLM 제공자와 무관). 선택 항목은 required에서 뺀다."""
+    return {"type": "object", "properties": properties, "required": required}
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -50,10 +51,10 @@ TOOLS: list[dict[str, Any]] = [
         ),
         "input_schema": _schema(
             {
-                "team_color": {"type": ["string", "null"], "description": "팀컬러 이름 또는 id"},
-                "role": {"type": ["string", "null"], "description": "역할/포지션 표현 (볼란치, 공미, CDM 등)"},
+                "team_color": {"type": "string", "description": "팀컬러 이름 또는 id"},
+                "role": {"type": "string", "description": "역할/포지션 표현 (볼란치, 공미, CDM 등)"},
             },
-            ["team_color", "role"],
+            [],
         ),
     },
     {
@@ -79,7 +80,7 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": _schema(
             {
                 "team_color": {"type": "string", "description": "팀컬러 이름 또는 id (예: 아스널)"},
-                "formation": {"type": ["string", "null"], "description": "포메이션 (예: 4-2-3-1). null이면 팀컬러 전체"},
+                "formation": {"type": "string", "description": "포메이션 (예: 4-2-3-1). 생략하면 팀컬러 전체"},
                 "role": {"type": "string", "description": "역할 (DM, CAM, ST … 또는 볼란치 같은 별칭)"},
                 "top_n": {"type": "integer", "description": "몇 명까지 (기본 5, 최대 20)"},
                 "strict": {
@@ -87,11 +88,11 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "true면 실제 경기 배치가 해당 포메이션과 일치한 스쿼드만 집계",
                 },
                 "max_price_bp": {
-                    "type": ["integer", "null"],
+                    "type": "integer",
                     "description": "카드 1장 최대 가격(BP). 랭커들이 가장 많이 쓴 강화 단계의 시세로 비교",
                 },
             },
-            ["team_color", "formation", "role", "top_n", "strict", "max_price_bp"],
+            ["team_color", "role"],
         ),
     },
     {
@@ -103,8 +104,6 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": _schema({"name": {"type": "string", "description": "선수 이름 (예: 라이스)"}}, ["name"]),
     },
 ]
-for _tool in TOOLS:
-    _tool["strict"] = True
 
 
 class ToolError(Exception):
@@ -112,8 +111,11 @@ class ToolError(Exception):
 
 
 class Toolbox:
-    def __init__(self, conn: sqlite3.Connection, catalog: TeamColorCatalog | None = None):
+    def __init__(
+        self, conn: sqlite3.Connection, catalog: TeamColorCatalog | None = None, *, min_sample: int = MIN_SAMPLE
+    ):
         self.conn = conn
+        self.min_sample = min_sample  # 이보다 표본이 적으면 팀컬러 전체 포메이션으로 폴백
         self.conn.row_factory = sqlite3.Row
         UsageStore(conn)
         self.conn.executescript(MARKET_SCHEMA)  # 시세 미수집이어도 조인이 되도록
@@ -175,7 +177,7 @@ class Toolbox:
 
     # --- tools -------------------------------------------------------------
 
-    def resolve_terms(self, team_color: str | None, role: str | None) -> dict[str, Any]:
+    def resolve_terms(self, team_color: str | None = None, role: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {}
         if team_color:
             tc = self._lookup_team_color(team_color)
@@ -245,8 +247,8 @@ class Toolbox:
     def recommend_players(
         self,
         team_color: str,
-        formation: str | None,
         role: str,
+        formation: str | None = None,
         top_n: int = 5,
         strict: bool = False,
         max_price_bp: int | None = None,
@@ -254,10 +256,12 @@ class Toolbox:
         tc = self._team_color(team_color)
         role_code = self._role(role)
         top_n = max(1, min(int(top_n or 5), 20))
+        # LLM이 숫자를 실수(5.0)로 넘기는 경우가 있어 정수로 맞춘다
+        max_price_bp = int(max_price_bp) if max_price_bp is not None else None
         # 예산 필터는 후보를 넉넉히 받아 거른다
         res = top_players(
             self.conn, tc.id, formation or ALL_FORMATIONS, role_code,
-            top=100 if max_price_bp else top_n, by="pid", strict=bool(strict), min_sample=MIN_SAMPLE,
+            top=100 if max_price_bp else top_n, by="pid", strict=bool(strict), min_sample=self.min_sample,
         )  # fmt: skip
         if not res.players:
             return {

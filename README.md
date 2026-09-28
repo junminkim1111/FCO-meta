@@ -7,7 +7,7 @@ FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프�
 
 ```bash
 pip install -e ".[dev]"
-cp .env.example .env   # NEXON_API_KEY 입력 (Open API 단계부터 필요)
+cp .env.example .env   # NEXON_API_KEY (Open API 수집), GEMINI_API_KEY (선택: Gemini 챗봇)
 ```
 
 ## 랭킹 크롤러
@@ -140,6 +140,35 @@ python -m fco_meta.market history --spid 100001419 --grade 5
 | `card_team_color` | 팀컬러 필터에 걸린 카드 = 팀컬러 적격 카드 |
 | `card_role` | 포지션 필터에 걸린 카드 = 해당 역할 기용 가능 카드 |
 | `price_history` | 카드·강화별 일별 시세 |
+
+## 챗봇
+
+집계(`usage_stats`)와 시세를 근거로 답합니다. 기본은 **규칙 기반**(API 키 불필요), 자유 대화는 **Gemini**를 선택할 수 있습니다.
+
+```bash
+python -m fco_meta.chatbot                                        # 대화형 (규칙 기반)
+python -m fco_meta.chatbot --ask "아스날 4-2-3-1 볼란치 2명 추천해줘"
+
+# Gemini: pip install -e ".[gemini]" 후 GEMINI_API_KEY 설정
+python -m fco_meta.chatbot --backend gemini [--model gemini-3.5-flash]
+
+# 모델 없이 도구만 실행 (디버깅)
+python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널", "role": "DM", "max_price_bp": 500000000}'
+```
+
+규칙 기반 모드가 이해하는 질문:
+
+| 예 | 동작 |
+|---|---|
+| 아스날 4-2-3-1 볼란치 2명 추천해줘 | 사용률 TOP 2 + 다음 후보, 시즌 카드·주 강화·시세 |
+| 아스널 볼란치 5억 이하로 3명 | 예산 필터 (랭커들이 주로 쓴 강화 단계 시세 기준) |
+| 아스널 4-2-3-1 ST 엄격하게 | 실제 경기 배치가 포메이션과 일치한 스쿼드만 |
+| 라이스 사용률 | 선수별 팀컬러·역할·시즌 사용 현황 |
+| 아스널 포메이션 / 어떤 데이터 있어? | 포메이션 분포, 집계된 조합 |
+
+- 팀컬러 별칭(아스날, 맨유, 맨시티, 레알, 바르사, PSG …)과 역할 별칭(볼란치·수미 → DM, 공미 → CAM …)을 인식합니다.
+- 포메이션 표본이 10명 미만이면 같은 팀컬러의 전체 포메이션으로 집계하고 그렇다고 표시합니다.
+- 시세는 `python -m fco_meta.market cards --team-color 아스널 --role 볼란치`로 수집한 값만 씁니다.
 
 ## 테스트
 

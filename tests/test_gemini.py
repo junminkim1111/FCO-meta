@@ -1,0 +1,112 @@
+"""Gemini loop with a scripted client. Responses are built from the SDK's own types."""
+
+import json
+
+import pytest
+from test_analytics import db  # noqa: F401
+
+pytest.importorskip("google.genai")
+from google.genai import types  # noqa: E402
+
+from fco_meta.chatbot import Toolbox  # noqa: E402
+from fco_meta.chatbot.gemini import GeminiChat, function_declarations  # noqa: E402
+
+
+def response(parts, finish="STOP"):
+    return types.GenerateContentResponse.model_validate(
+        {"candidates": [{"content": {"role": "model", "parts": parts}, "finish_reason": finish}]}
+    )
+
+
+class FakeModels:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.requests = []
+
+    def generate_content(self, *, model, contents, config):
+        self.requests.append({"model": model, "contents": list(contents), "config": config})
+        return self.responses.pop(0)
+
+
+class FakeClient:
+    def __init__(self, responses):
+        self.models = FakeModels(responses)
+
+
+@pytest.fixture
+def toolbox(db):  # noqa: F811
+    return Toolbox(db.conn, min_sample=1)
+
+
+def test_function_declarations_accepted_by_sdk():
+    decls = {d.name: d for d in function_declarations()}
+    assert set(decls) == {"resolve_terms", "list_available_data", "list_formations", "recommend_players", "get_player_detail"}
+    assert decls["recommend_players"].parameters_json_schema["required"] == ["team_color", "role"]
+
+
+def test_tool_round_trip(toolbox):
+    call = {
+        "function_call": {
+            "id": "call-1",
+            "name": "recommend_players",
+            # Gemini는 정수도 실수로 보낼 수 있다
+            "args": {"team_color": "아스날", "formation": "4-2-3-1", "role": "볼란치", "top_n": 2.0},
+        },
+        "thought_signature": b"sig-1",
+    }
+    client = FakeClient([response([call]), response([{"text": "라이스가 1순위입니다."}])])
+    seen = []
+    chat = GeminiChat(client, toolbox, model="gemini-test", on_tool_call=lambda n, a: seen.append(n))
+
+    turn = chat.ask("아스날 4-2-3-1 볼란치 2명 추천")
+
+    assert turn.text == "라이스가 1순위입니다." and turn.finish_reason == "STOP"
+    assert turn.tool_calls[0][0] == "recommend_players" and seen == ["recommend_players"]
+    first, second = client.models.requests
+    assert first["model"] == "gemini-test"
+    assert first["config"].automatic_function_calling.disable is True
+    assert "존댓말" in first["config"].system_instruction
+
+    # 두 번째 요청: user 질문 → 모델 content(서명 그대로) → 함수 결과
+    user, model_turn, tool_turn = second["contents"]
+    assert model_turn.parts[0].thought_signature == b"sig-1"
+    fr = tool_turn.parts[0].function_response
+    assert (fr.name, fr.id) == ("recommend_players", "call-1")
+    result = fr.response["result"]
+    assert result["team_color"] == "아스널" and [p["name"] for p in result["players"]] == ["볼란치R", "볼란치L"]
+
+
+def test_parallel_calls_and_errors_return_in_one_message(toolbox):
+    calls = [
+        {"function_call": {"id": "a", "name": "resolve_terms", "args": {"team_color": "맨유"}}},
+        {"function_call": {"id": "b", "name": "list_formations", "args": {"team_color": "없는팀"}}},
+    ]
+    client = FakeClient([response(calls), response([{"text": "확인했습니다."}])])
+    turn = GeminiChat(client, toolbox).ask("맨유랑 없는팀 포메이션")
+
+    assert turn.text == "확인했습니다."
+    tool_turn = client.models.requests[1]["contents"][-1]
+    ok, err = (p.function_response for p in tool_turn.parts)
+    assert ok.response["result"]["team_color"]["name"] == "맨체스터 유나이티드"
+    assert "알 수 없는 팀컬러" in err.response["error"]
+
+
+def test_history_accumulates_and_thoughts_are_hidden(toolbox):
+    client = FakeClient([
+        response([{"text": "생각 중", "thought": True}, {"text": "안녕하세요."}]),
+        response([{"text": "네."}]),
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox)
+    assert chat.ask("안녕").text == "안녕하세요."
+    assert chat.ask("고마워").text == "네."
+    assert len(client.models.requests[1]["contents"]) == 3  # user, model, user
+
+
+def test_empty_candidate_and_tool_limit(toolbox):
+    blocked = types.GenerateContentResponse.model_validate({"prompt_feedback": {"block_reason": "SAFETY"}})
+    assert "응답을 받지 못했습니다" in GeminiChat(FakeClient([blocked]), toolbox).ask("?").text
+
+    loop = response([{"function_call": {"name": "list_available_data", "args": {}}}])
+    turn = GeminiChat(FakeClient([loop] * 8), toolbox).ask("계속")
+    assert turn.finish_reason == "tool_limit" and len(turn.tool_calls) == 8
+    assert json.loads(Toolbox.run(toolbox, "list_available_data", {})[0])["combos"]
