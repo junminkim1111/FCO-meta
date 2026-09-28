@@ -179,6 +179,9 @@ python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널",
 ```
 
 - Gemini는 도구(`recommend_players` 등)로 DB를 조회해 답하므로, 수치는 규칙 기반과 같은 데이터에서 나옵니다.
+- 모델이 혼잡(503)하거나 한도(429)에 걸리면 1초·3초 뒤 다시 시도하고, 그래도 안 되면 대체 모델(기본 `gemini-2.5-flash`)로
+  답합니다(답 끝에 표시). `.env`의 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.
+- 그 밖의 Gemini 오류는 원인(키·권한·모델·한도)을 보여 주고, 웹에서는 그 질문을 규칙 기반으로 대신 답합니다.
 - 규칙 기반 모드가 이해하는 질문:
 
 | 예 | 동작 |

@@ -123,7 +123,7 @@ def test_failed_turn_is_rolled_back(toolbox):
 
     client = FakeClient([])
     client.models = Flaky([response([{"text": "첫 답"}])])
-    chat = GeminiChat(client, toolbox)
+    chat = GeminiChat(client, toolbox, sleep=lambda s: None)
     assert chat.ask("첫 질문").text == "첫 답"
     with pytest.raises(errors.ServerError):
         chat.ask("두 번째")
@@ -138,3 +138,83 @@ def test_describe_error():
     e = errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
     assert describe_error(e) == "Gemini API 오류 429 RESOURCE_EXHAUSTED: quota — 사용량 한도 초과 (잠시 후 다시 시도)"
     assert describe_error(ValueError("bad")) == "Gemini 처리 중 오류 (ValueError): bad"
+
+
+class ByModel(FakeModels):
+    """Each model name maps to a list of outcomes (Exception to raise or response to return)."""
+
+    def __init__(self, outcomes):
+        super().__init__([])
+        self.outcomes = {m: list(o) for m, o in outcomes.items()}
+
+    def generate_content(self, *, model, contents, config):
+        self.requests.append({"model": model, "contents": list(contents), "config": config})
+        outcome = self.outcomes[model].pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _unavailable():
+    from google.genai import errors
+
+    return errors.ServerError(503, {"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}})
+
+
+def test_retries_then_succeeds_on_same_model(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"primary": [_unavailable(), response([{"text": "답"}])]})
+    slept = []
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=slept.append)
+    assert chat.ask("질문").text == "답"
+    assert slept == [1.0] and chat.last_model == "primary"
+
+
+def test_falls_back_to_next_model_after_retries(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({
+        "primary": [_unavailable()] * 3,
+        "backup": [response([{"text": "대체 모델 답"}])],
+    })  # fmt: skip
+    slept = []
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=slept.append)
+    assert chat.ask("질문").text == "대체 모델 답"
+    assert [r["model"] for r in client.models.requests] == ["primary"] * 3 + ["backup"]
+    assert slept == [1.0, 3.0] and chat.last_model == "backup"
+
+
+def test_non_retryable_errors_raise_immediately(toolbox):
+    from google.genai import errors
+
+    bad_key = errors.ClientError(400, {"error": {"code": 400, "message": "API key not valid", "status": "INVALID_ARGUMENT"}})
+    client = FakeClient([])
+    client.models = ByModel({"primary": [bad_key]})
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=lambda s: None)
+    with pytest.raises(errors.ClientError):
+        chat.ask("질문")
+    assert len(client.models.requests) == 1
+
+
+def test_all_models_unavailable_raises_last_error(toolbox):
+    from google.genai import errors
+
+    client = FakeClient([])
+    client.models = ByModel({"primary": [_unavailable()] * 3, "backup": [_unavailable()] * 3})
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=lambda s: None)
+    with pytest.raises(errors.ServerError):
+        chat.ask("질문")
+    assert chat.contents == []  # 기록도 되돌림
+
+
+def test_models_from_env(monkeypatch):
+    from fco_meta.chatbot.gemini import DEFAULT_MODEL, models_from_env
+
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_FALLBACK_MODELS", raising=False)
+    assert models_from_env() == (DEFAULT_MODEL, ["gemini-2.5-flash"])
+    monkeypatch.setenv("GEMINI_MODEL", "m1")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "m2, m3")
+    assert models_from_env() == ("m1", ["m2", "m3"])
+    assert models_from_env("cli") == ("cli", ["m2", "m3"])
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "")
+    assert models_from_env()[1] == []  # 빈 값 = 대체 모델 없음

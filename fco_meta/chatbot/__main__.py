@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         "--backend", choices=["gemini", "rules"], default="gemini",
         help="gemini: LLM (기본, .env의 GEMINI_API_KEY 필요 — 없으면 규칙 기반), rules: 규칙 기반",
     )  # fmt: skip
-    parser.add_argument("--model", help="Gemini 모델 (기본: gemini-3.5-flash)")
+    parser.add_argument("--model", help="Gemini 모델 (기본: .env의 GEMINI_MODEL 또는 gemini-3.5-flash)")
     parser.add_argument("--ask", help="질문 하나만 하고 종료")
     parser.add_argument("--tool", nargs=2, metavar=("NAME", "JSON"), help="도구 하나를 직접 실행해 결과 출력")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -82,17 +82,19 @@ def _gemini(toolbox: Toolbox, args: argparse.Namespace):
     except ImportError:
         print('google-genai가 필요합니다: pip install -e ".[web]"', file=sys.stderr)
         return None
-    from .gemini import DEFAULT_MODEL, GeminiChat, describe_error
+    from .gemini import GeminiChat, describe_error, models_from_env
 
     try:
         client = genai.Client()  # GEMINI_API_KEY 또는 GOOGLE_API_KEY
     except ValueError as exc:
         print(f"Gemini API 키가 없습니다 (GEMINI_API_KEY): {exc}", file=sys.stderr)
         return None
+    primary, fallbacks = models_from_env(args.model)
     chat = GeminiChat(
         client,
         toolbox,
-        model=args.model or DEFAULT_MODEL,
+        model=primary,
+        fallback_models=fallbacks,
         on_tool_call=lambda name, tool_input: print(
             f"  · {name} {json.dumps(tool_input, ensure_ascii=False)}", file=sys.stderr
         ),
@@ -100,7 +102,10 @@ def _gemini(toolbox: Toolbox, args: argparse.Namespace):
 
     def ask(question: str) -> str:
         try:
-            return chat.ask(question).text
+            text = chat.ask(question).text
+            if chat.last_model and chat.last_model != chat.model:
+                text += f"\n\n({chat.model}가 혼잡해 {chat.last_model}로 답했습니다)"
+            return text
         except Exception as exc:  # noqa: BLE001 — 원인을 보여 주고 대화는 계속
             logging.getLogger(__name__).debug("gemini failed", exc_info=True)
             return f"⚠ {describe_error(exc)}"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,6 +18,10 @@ from .tools import TOOLS, Toolbox
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.5-flash"
+# 기본 모델이 과부하(503)·한도(429)로 계속 실패하면 차례로 시도할 모델
+DEFAULT_FALLBACK_MODELS = ("gemini-2.5-flash",)
+RETRYABLE = (429, 500, 503, 504)
+RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
 MAX_TOOL_ROUNDS = 8
 
 
@@ -65,6 +70,16 @@ def describe_error(exc: Exception) -> str:
     return f"Gemini 처리 중 오류 ({type(exc).__name__}): {exc}"
 
 
+def models_from_env(model: str | None = None) -> tuple[str, list[str]]:
+    """(기본 모델, 대체 모델들). 인자 > .env의 GEMINI_MODEL / GEMINI_FALLBACK_MODELS > 기본값."""
+    import os
+
+    primary = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
+    raw = os.environ.get("GEMINI_FALLBACK_MODELS")
+    fallbacks = [m.strip() for m in raw.split(",")] if raw is not None else list(DEFAULT_FALLBACK_MODELS)
+    return primary, [m for m in fallbacks if m]
+
+
 def _types():
     from google.genai import types  # 선택 의존성: gemini 백엔드를 쓸 때만 필요
 
@@ -94,13 +109,18 @@ class GeminiChat:
         toolbox: Toolbox,
         *,
         model: str = DEFAULT_MODEL,
+        fallback_models: tuple[str, ...] | list[str] = DEFAULT_FALLBACK_MODELS,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         types = _types()
         self.client = client
         self.toolbox = toolbox
         self.model = model
+        self.fallback_models = [m for m in fallback_models if m and m != model]
         self.on_tool_call = on_tool_call
+        self.sleep = sleep
+        self.last_model: str | None = None  # 마지막 응답을 만든 모델 (대체 모델로 바뀌었는지 확인용)
         self.contents: list[Any] = []
         self.config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
@@ -108,6 +128,31 @@ class GeminiChat:
             # 도구는 이 루프에서 직접 실행한다 (SDK 자동 호출 끔)
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
+
+    def _generate(self) -> Any:
+        """generate_content with retries on overload/quota, then the fallback models in order."""
+        from google.genai import errors
+
+        last_error: Exception | None = None
+        for model in [self.model, *self.fallback_models]:
+            for attempt in range(len(RETRY_DELAYS) + 1):
+                try:
+                    response = self.client.models.generate_content(model=model, contents=self.contents, config=self.config)
+                except errors.APIError as exc:
+                    if exc.code not in RETRYABLE:
+                        raise
+                    last_error = exc
+                    if attempt < len(RETRY_DELAYS):
+                        log.warning("%s: %s %s, retrying in %.0fs", model, exc.code, exc.status, RETRY_DELAYS[attempt])
+                        self.sleep(RETRY_DELAYS[attempt])
+                    continue
+                if model != self.model:
+                    log.warning("answered by fallback model %s", model)
+                self.last_model = model
+                return response
+            log.warning("%s unavailable, trying next model", model)
+        assert last_error is not None
+        raise last_error
 
     def ask(self, question: str) -> GeminiTurn:
         """One user turn. On any error the history is rolled back so the next question starts clean."""
@@ -123,7 +168,7 @@ class GeminiChat:
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
         for _ in range(MAX_TOOL_ROUNDS):
-            response = self.client.models.generate_content(model=self.model, contents=self.contents, config=self.config)
+            response = self._generate()
             candidate = response.candidates[0] if response.candidates else None
             finish = str(candidate.finish_reason.value if candidate and candidate.finish_reason else None)
             if candidate is None or candidate.content is None:

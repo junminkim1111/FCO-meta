@@ -125,7 +125,13 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
                         "tool_calls": [answer.tool] if answer.tool else [],
                         "error": reason,
                     }
-            return {"session_id": session_id, "answer": turn.text, "tool_calls": [n for n, _ in turn.tool_calls]}
+            answer_text = turn.text
+            if bot.last_model and bot.last_model != bot.model:
+                answer_text += f"\n\n({bot.model}가 혼잡해 {bot.last_model}로 답했습니다)"
+            return {
+                "session_id": session_id, "answer": answer_text,
+                "tool_calls": [n for n, _ in turn.tool_calls], "model": bot.last_model,
+            }  # fmt: skip
         with lock:
             answer = rules.ask(req.message)
         return {"session_id": req.session_id, "answer": answer.text, "tool_calls": [answer.tool] if answer.tool else []}
@@ -136,6 +142,7 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
 def _gemini_chat(toolbox: Toolbox, model: str | None):
     from google import genai
 
-    from ..chatbot.gemini import DEFAULT_MODEL, GeminiChat
+    from ..chatbot.gemini import GeminiChat, models_from_env
 
-    return GeminiChat(genai.Client(), toolbox, model=model or DEFAULT_MODEL)
+    primary, fallbacks = models_from_env(model)
+    return GeminiChat(genai.Client(), toolbox, model=primary, fallback_models=fallbacks)
