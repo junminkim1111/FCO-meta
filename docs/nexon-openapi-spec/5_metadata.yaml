@@ -1,0 +1,334 @@
+openapi: 3.0.3
+info:
+  title: FC온라인 API
+  version: 1.0.0
+  description: |-
+servers:
+  - url: 'https://open.api.nexon.com'
+tags:
+  - name: MetaData 
+    description: 메타데이터 정보 조회
+paths:
+  /static/fconline/meta/matchtype.json:
+    get:
+      tags:
+        - MetaData
+      summary: 매치 종류(matchtype) 메타데이터 조회
+      description: 매치 종류(matchtype) 메타데이터를 조회합니다.
+      operationId: fconline_get_matchtype
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchTypeMeta'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'                
+  /static/fconline/meta/spid.json:
+    get:
+      tags:
+        - MetaData
+      summary: 선수 고유 식별자(spid) 메타데이터 조회
+      description:
+        해당 API는 Path 정보만 제공합니다. 별도 클라이언트를 통해 확인할 수 있습니다.<br>
+        선수 고유 식별자는 시즌 아이디 (seasonid) 3자리 + 선수 아이디 (pid) 6자리로 구성되어 있습니다.<br>
+        시즌 아이디는 /metadata/seasonid API로 조회할 수 있습니다.
+      operationId: fconline_get_spid
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpidMeta'          
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'                
+  /static/fconline/meta/seasonid.json: 
+    get:
+      tags:
+        - MetaData
+      summary: 시즌 아이디(seasonId) 메타데이터 조회
+      description: 시즌 아이디는 선수가 속한 클래스를 나타냅니다.
+      operationId: fconline_get_seasonid
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeasonIdMeta'    
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'                
+  /static/fconline/meta/spposition.json:
+    get:
+      tags:
+        - MetaData
+      summary: 선수 포지션(spposition) 메타데이터 조회
+      description: 선수 포지션(spposition) 메타데이터를 조회합니다.
+      operationId: fconline_get_spposition
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SppositionMeta'  
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'                
+  /static/fconline/meta/division.json:
+    get:
+      tags:
+        - MetaData
+      summary: 등급 식별자(division) 메타데이터 조회
+      description: 등급 식별자(division) 메타데이터를 조회합니다.
+      operationId: fconline_get_division
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DivisionMeta'       
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'                
+  /static/fconline/meta/division-volta.json:
+    get:
+      tags:
+        - MetaData
+      summary: 볼타 공식경기 등급 식별자 메타데이터 조회
+      description: 볼타 공식경기의 등급 식별자(division) 메타데이터를 조회합니다.
+      operationId: fconline_get_division_volta
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DivisionVoltaMeta'  
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+components:
+  schemas:
+    MatchTypeMeta:
+      type: array
+      items:
+        properties:
+          matchtype:
+            type: integer
+            description: 매치 종류
+            example: "30"
+          desc:
+            type: string
+            description: 매치 종류명
+            example: "리그 친선"
+    SpidMeta:
+      type: array
+      items:
+        properties:
+          id:
+            type: integer
+            description: 선수 고유 식별자(spid)
+            example: "100000051"
+          name:
+            type: string
+            description: 선수명
+            example: "앨런 시어러"
+    SeasonIdMeta:
+      type: array
+      items:
+        properties:
+          seasonId:
+            type: integer
+            description: 시즌아이디
+            example: "100"
+          className:
+            type: string
+            description: 선수가 속한 클래스
+            example: "ICONTM (ICON The Moment)"
+          seasonImg:
+            type: string
+            description: 이미지 경로
+            example: "https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/season/icontm.png"  
+    SppositionMeta:
+      type: array
+      items:
+        properties:
+          spposition:
+            type: integer
+            description: 선수 포지션
+            example: 0
+          desc:
+            type: string
+            description: 선수 포지션명
+            example: "GK"
+    DivisionMeta:
+      type: array
+      items:
+        properties:
+          divisionId:
+            type: integer
+            description: 등급 식별자
+            example: "800"
+          divisionName:
+            type: string
+            description: 등급 식별자명
+            example: "슈퍼챔피언스"  
+    DivisionVoltaMeta:
+      type: array
+      items:
+        properties:
+          divisionId:
+            type: integer
+            description: 볼타 경기 등급 식별자
+            example: 1100
+          divisionName:
+            type: string
+            description: 볼타 경기 등급 식별자명
+            example: "월드 스타"              
+    ErrorMessage:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            name:
+              type: string
+              description: 에러 명
+              example: string
+            message:
+              type: string
+              description: 에러 설명
+              example: stirng

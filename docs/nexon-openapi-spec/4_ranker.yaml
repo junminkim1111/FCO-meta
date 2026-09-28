@@ -1,0 +1,168 @@
+openapi: 3.0.3
+info:
+  title: FC온라인 API
+  version: 1.0.0
+  description: |-
+    - 데이터는 매시 정각, 두 시간 전의 게임 데이터가 업데이트됩니다.
+    - e.g. 오후 3시 5분에 캐릭터 정보 API 호출하면 오늘 오후 1시까지의 정보를 조회할 수 있습니다.
+servers:
+  - url: 'https://open.api.nexon.com'
+tags:
+  - name: Ranker
+    description: 랭커 정보 조회
+  
+paths:
+  /fconline/v1/ranker-stats:
+    get:
+      tags:
+        - Ranker
+      summary: TOP 10,000 랭커 유저가 사용한 선수의 20경기
+      description: |
+        TOP 10,000 랭커 유저가 사용한 선수의 20경기 평균 스탯을 조회합니다.
+        * 선수의 고유 식별자와 포지션의 목록으로 랭커 유저가 사용한 선수의 평균 스탯 기록을 조회할 수 있습니다.
+        * 한번에 너무 많은 선수목록을 입력할 경우 413 Request Entity Too Large 에러가 반환될 수 있습니다. (1회 50명 적합)
+        * players 파라미터
+          * "id", "po" 필드를 갖고 있는 JsonArray 를 URL 인코딩한 값
+          * id : 선수 고유 식별자 (spid, /metadata/spid API 참고)
+          * po: 선수 포지션 (spposition, /metadata/spposition API 참고)
+          * 예) [{"id":100167680,"po":18}] -> %5B%7B%22id%22%3A100167680%2C%22po%22%3A18%7D%5D
+      operationId: fconline_get_ranker_stat
+      parameters:
+        - name: x-nxopen-api-key
+          in: header
+          description: API KEY
+          required: true
+          schema:
+            type: string
+        - name: matchtype
+          in: query
+          description: 매치 종류 (/metadata/matchtype API 참고)
+          required: true
+          schema:
+            type: integer
+            example: 52
+        - name: players
+          in: query
+          description: 조회하고자 하는 선수 목록 (URL 인코딩한 Json Array)
+          example: |
+            %5B%7B%22id%22%3A100167680%2C%22po%22%3A18%7D%5D
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SUCCESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RankerStats'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+                                              
+components:
+  schemas:
+    RankerStats:
+      type: array
+      items:
+        properties:
+          spId:
+            type: integer
+            description: 선수 고유 식별자 (/ metadata/spid API 참고) 
+            example: 100167680
+          spPosition:
+            type: integer
+            description: 선수 포지션 (/metadata/spposition API 참고) 
+            example: 18
+          status:
+            type: object
+            description: 선수의 경기 스탯 
+            properties:
+              shoot:
+                type: number
+                description: 평균 슛 수 
+                example: 0
+              effectiveShoot:
+                type: number
+                description: 평균 유효 슛 수 
+                example: 0
+              assist:
+                type: number
+                description: 평균 어시스트 수 
+                example: 0
+              goal:
+                type: number
+                description: 평균 득점 수 
+                example: 0
+              dribble:
+                type: number
+                description: 평균 드리블 거리(야드) 
+                example: 165
+              dribbleTry:
+                type: number
+                description: 평균 드리블 시도 수 
+                example: 9
+              dribbleSuccess:
+                type: number
+                description: 평균 드리블 성공 수 
+                example: 9
+              passTry:
+                type: number
+                description: 평균 패스 시도 수 
+                example: 14
+              passSuccess:
+                type: number
+                description: 평균 패스 성공 수 
+                example: 11
+              block:
+                type: number
+                description: 평균 블락 성공 수 
+                example: 0
+              tackle:
+                type: number
+                description: 평균 태클 성공 수 
+                example: 0
+              matchCount:
+                type: integer
+                description: 해당 포지션으로 경기 참여한 횟수 
+                example: 1
+          createDate:
+            type: string
+            description: 랭커 유저의 선수 스탯이 집계된 시간 (UTC0)
+            example: "2023-12-14T01:12:34"
+                        
+    ErrorMessage:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            name:
+              type: string
+              description: 에러 명
+              example: string
+            message:
+              type: string
+              description: 에러 설명
+              example: stirng
