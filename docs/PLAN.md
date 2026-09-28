@@ -12,7 +12,7 @@
 | 필요한 정보 | 출처 | 비고 |
 |---|---|---|
 | 랭커 목록 (TOP 10,000) | 데이터센터 `GET /datacenter/rank_inner` | 서버 렌더링 HTML, 20명/페이지, 1시간 단위 갱신 |
-| 팀컬러 | 같은 행의 `.team_color` (이름 + 해당 선수 수) | 이름 → ID는 `data/teamcolors.json` (804개) |
+| 팀컬러 | **팀컬러 필터(`tc_01`) 결과 포함 여부** | 행에 표시되는 이름은 1개뿐이고 특수 팀컬러가 우선 표시됨 → 소속은 `ranker_team_color` 테이블로 관리 |
 | 포메이션 | 같은 행의 `.formation` | |
 | **팀컬러×포메이션 필터** | `rank_inner?tc_01={id}&formation_01={포메이션}` | 공식 페이지가 직접 필터링 (아스널+4-2-3-1 = 94명 확인) |
 | 선수 구성 | Open API: 닉네임 → `id` → `user/match` → `match-detail` | 랭킹 페이지에는 스쿼드 없음 |
@@ -130,8 +130,8 @@ tests/fixtures/ # 랭킹 페이지 샘플
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | **0. 조사** | 랭킹 페이지 구조·필터·robots, Open API 스펙·한도 | ✅ 완료 |
-| **1. 크롤러** | `rank_inner` 파서 + 조합 조회 + 스냅샷 저장 | 다음 |
-| **2. Open API 클라이언트** | 키 발급, rate limiter·일일 예산, id/user/match/match-detail | **API 키 필요** |
+| **1. 크롤러** | `rank_inner` 파서 + 조합 조회 + 스냅샷 저장 | ✅ 완료 (`fco_meta/crawler`) |
+| **2. Open API 클라이언트** | rate limiter·일일 예산, id/user/match/match-detail | 다음 |
 | **3. 파이프라인** | ouid 매핑, 스쿼드 수집, 정합성 검증 | |
 | **4. 집계** | usage_stats, 아스널 4-2-3-1 볼란치로 end-to-end 검증 | |
 | **5. 챗봇** | 도구·프롬프트·별칭 사전, CLI 챗봇 | |

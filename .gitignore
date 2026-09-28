@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# secrets
+.env
+
+# local data produced by crawlers
+*.sqlite
+*.sqlite-journal
+raw/

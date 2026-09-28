@@ -49,12 +49,17 @@ Disallow: /news/*
 | 포메이션 | `.td.formation` → `4-2-3-1` |
 | 최고 등급 | `.td.rank_best` 이미지(ico_rankN) |
 
-- 팀컬러는 행당 1개만 표시됨 (샘플 20행 기준)
+- 팀컬러는 행당 1개만 표시됨. **특수 팀컬러(예: "Winning Streak")가 적용된 랭커는 그 이름이 표시**되고,
+  클럽 엠블럼(`crests/.../l1.png`)과 특수 팀컬러 아이콘(`teamcolorboost/.../4_l999848.png`)이 함께 나옴
+  → 아스널 필터 결과 94명 중 1명이 "Winning Streak (10명)"으로 표시됨.
+  **팀컬러 소속은 표시 이름이 아니라 "해당 팀컬러 필터 결과에 포함됐는지"로 판단해야 함**
 - **스쿼드 선수 목록은 제공되지 않음** (프로필 툴팁 `/Profile/Common/ToolTip/{sn}`에도 없음) → Open API 필요
 
 ### 팀컬러 ID 목록
-- 껍데기 페이지의 `select_tc(id, 'name')` 호출에서 추출 → `data/teamcolors.json` (804개)
-  - `< 1000`: 국가, `1000~`: 클럽(예: 1000 맨시티, 1004 아스널), `40000~`: 시즌/특수 팀컬러 등
+- 껍데기 페이지의 팀컬러 선택 목록에서 추출 → `data/teamcolors.json` (890개: 클럽 648, 국가 210, 특수 32)
+  - 각 항목: `id`, `name`, `category`(club/nationality/special), `group_id`(리그 id / 대륙 id)
+  - 같은 이름이 클럽·국가 양쪽에 있는 경우가 있음 (예: "잉글랜드" club 1318 / nationality 2006)
+  - 일부 국가 항목은 id가 겹침(예: 여러 국가가 id 2) → 국가 팀컬러 필터는 사용 전 검증 필요
 - 팀컬러 이름 검색: `POST /datacenter/rank_tc` (`search_tc=아스널`) → `data-no="1004"`
 
 ## 2. NEXON Open API
