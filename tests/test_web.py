@@ -75,3 +75,22 @@ def test_database_is_opened_read_only(client):
 def test_missing_db(tmp_path):
     with pytest.raises(FileNotFoundError):
         create_app(tmp_path / "missing.sqlite")
+
+
+def test_gemini_errors_are_shown_and_answered_by_rules(db, tmp_path, monkeypatch):  # noqa: F811
+    from google.genai import errors
+
+    import fco_meta.web.app as web_app
+
+    class Broken:
+        def ask(self, message):
+            raise errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
+
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda toolbox, model: Broken())
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
+    r = client.post("/api/chat", json={"message": "아스날 볼란치 1명 추천"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "Gemini API 오류 404" in body["answer"] and "모델을 찾을 수 없음" in body["answer"]
+    assert "볼란치R" in body["answer"]  # 규칙 기반 답변이 이어서 나옴
+    assert body["error"].startswith("Gemini API 오류 404")

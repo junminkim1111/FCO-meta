@@ -47,6 +47,24 @@ def choose_backend(requested: str) -> tuple[str, str | None]:
     return requested, None
 
 
+def describe_error(exc: Exception) -> str:
+    """Short Korean description of a Gemini failure for the user (no key values)."""
+    try:
+        from google.genai import errors
+    except ImportError:  # pragma: no cover
+        errors = None
+    if errors is not None and isinstance(exc, errors.APIError):
+        hint = {
+            400: "요청 형식 또는 API 키 문제",
+            401: "API 키 인증 실패",
+            403: "API 키 권한 없음 (키 제한·결제 설정 확인)",
+            404: "모델을 찾을 수 없음 (--model 로 다른 모델 지정)",
+            429: "사용량 한도 초과 (잠시 후 다시 시도)",
+        }.get(exc.code, "Gemini 서버 오류" if (exc.code or 0) >= 500 else "")
+        return f"Gemini API 오류 {exc.code} {exc.status or ''}: {exc.message or ''}" + (f" — {hint}" if hint else "")
+    return f"Gemini 처리 중 오류 ({type(exc).__name__}): {exc}"
+
+
 def _types():
     from google.genai import types  # 선택 의존성: gemini 백엔드를 쓸 때만 필요
 
@@ -92,6 +110,15 @@ class GeminiChat:
         )
 
     def ask(self, question: str) -> GeminiTurn:
+        """One user turn. On any error the history is rolled back so the next question starts clean."""
+        checkpoint = len(self.contents)
+        try:
+            return self._ask(question)
+        except Exception:
+            del self.contents[checkpoint:]
+            raise
+
+    def _ask(self, question: str) -> GeminiTurn:
         types = _types()
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []

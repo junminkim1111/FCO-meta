@@ -110,3 +110,31 @@ def test_empty_candidate_and_tool_limit(toolbox):
     turn = GeminiChat(FakeClient([loop] * 8), toolbox).ask("계속")
     assert turn.finish_reason == "tool_limit" and len(turn.tool_calls) == 8
     assert json.loads(Toolbox.run(toolbox, "list_available_data", {})[0])["combos"]
+
+
+def test_failed_turn_is_rolled_back(toolbox):
+    from google.genai import errors
+
+    class Flaky(FakeModels):
+        def generate_content(self, *, model, contents, config):
+            if not self.responses:
+                raise errors.ServerError(503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})
+            return super().generate_content(model=model, contents=contents, config=config)
+
+    client = FakeClient([])
+    client.models = Flaky([response([{"text": "첫 답"}])])
+    chat = GeminiChat(client, toolbox)
+    assert chat.ask("첫 질문").text == "첫 답"
+    with pytest.raises(errors.ServerError):
+        chat.ask("두 번째")
+    assert len(chat.contents) == 2  # 실패한 질문은 기록에서 빠짐 (user, model만 남음)
+
+
+def test_describe_error():
+    from google.genai import errors
+
+    from fco_meta.chatbot.gemini import describe_error
+
+    e = errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+    assert describe_error(e) == "Gemini API 오류 429 RESOURCE_EXHAUSTED: quota — 사용량 한도 초과 (잠시 후 다시 시도)"
+    assert describe_error(ValueError("bad")) == "Gemini 처리 중 오류 (ValueError): bad"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import uuid
@@ -14,10 +15,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..chatbot.gemini import describe_error
 from ..chatbot.rules import ROLE_LABELS, RuleBot
 from ..chatbot.tools import Toolbox
 from ..market.money import parse_bp
 from ..market.roles import ROLES
+
+log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_SESSIONS = 200
@@ -109,7 +113,18 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
                     if len(gemini_sessions) >= MAX_SESSIONS:
                         gemini_sessions.pop(next(iter(gemini_sessions)))
                     bot = gemini_sessions[session_id] = _gemini_chat(toolbox, gemini_model)
-                turn = bot.ask(req.message)
+                try:
+                    turn = bot.ask(req.message)
+                except Exception as exc:  # Gemini 실패 → 원인을 알리고 규칙 기반으로 대신 답한다
+                    log.exception("gemini chat failed")
+                    reason = describe_error(exc)
+                    answer = rules.ask(req.message)
+                    return {
+                        "session_id": session_id,
+                        "answer": f"⚠ {reason}\n(이번 질문은 규칙 기반으로 답합니다)\n\n{answer.text}",
+                        "tool_calls": [answer.tool] if answer.tool else [],
+                        "error": reason,
+                    }
             return {"session_id": session_id, "answer": turn.text, "tool_calls": [n for n, _ in turn.tool_calls]}
         with lock:
             answer = rules.ask(req.message)

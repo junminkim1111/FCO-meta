@@ -79,11 +79,10 @@ def main(argv: list[str] | None = None) -> int:
 def _gemini(toolbox: Toolbox, args: argparse.Namespace):
     try:
         from google import genai
-        from google.genai import errors
     except ImportError:
         print('google-genai가 필요합니다: pip install -e ".[web]"', file=sys.stderr)
         return None
-    from .gemini import DEFAULT_MODEL, GeminiChat
+    from .gemini import DEFAULT_MODEL, GeminiChat, describe_error
 
     try:
         client = genai.Client()  # GEMINI_API_KEY 또는 GOOGLE_API_KEY
@@ -102,8 +101,9 @@ def _gemini(toolbox: Toolbox, args: argparse.Namespace):
     def ask(question: str) -> str:
         try:
             return chat.ask(question).text
-        except errors.APIError as exc:
-            return f"Gemini API 오류 ({exc.code}): {exc.message}"
+        except Exception as exc:  # noqa: BLE001 — 원인을 보여 주고 대화는 계속
+            logging.getLogger(__name__).debug("gemini failed", exc_info=True)
+            return f"⚠ {describe_error(exc)}"
 
     return ask
 
