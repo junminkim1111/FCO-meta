@@ -37,6 +37,7 @@ def test_recommend_players_with_prices_and_budget(toolbox):
     assert [(c["sp_id"], c["most_used_grade"], c["price_at_most_used_grade"]["price"]) for c in cards] == [
         (250000009, 5, "3억"), (300000009, 5, "5,000만"),
     ]  # fmt: skip
+    assert all(c["season_img"] is None for c in cards)  # 메타데이터에 이미지 없음
 
     r = json.loads(toolbox.run("recommend_players", {"team_color": "아스널", "formation": "4-2-3-1", "role": "DM", "max_price_bp": 1e8})[0])
     # 1억 이하 = S300 카드만 → 볼란치R(그 카드 사용 1명)만 남음, 볼란치L(9억)은 제외
@@ -121,3 +122,11 @@ def test_rule_bot_player_detail(toolbox):
     assert answer.tool == "get_player_detail" and answer.tool_input == {"name": "마갈량이스"}
     assert "가브리엘 마갈량이스 — 랭커 사용 현황" in answer.text
     assert "아스널 4-2-3-1 CB · ICON: 3/3명 (100.0%)" in answer.text  # 모든 테스트 스쿼드의 RCB
+
+
+def test_recommend_cards_carry_season_icon(db):  # noqa: F811
+    db.conn.execute("UPDATE meta_season SET season_img = 'https://example.test/s250.png' WHERE season_id = 250")
+    db.conn.commit()
+    r = json.loads(Toolbox(db.conn, min_sample=1).run("recommend_players", {"team_color": "아스널", "formation": "4-2-3-1", "role": "DM"})[0])
+    imgs = {c["sp_id"]: c["season_img"] for p in r["players"] for c in p["cards"]}
+    assert imgs[250000009] == "https://example.test/s250.png" and imgs[300000009] is None

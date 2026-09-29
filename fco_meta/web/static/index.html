@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FCO 랭커 메타</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%231f6feb'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%232a78d6'/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e2e6eb;
-    --accent: #1f6feb; --accent-soft: #e7f0fd; --bar: #1f6feb; --warn-bg: #fff6e0; --warn: #7a5200;
+    --accent: #1f6feb; --accent-soft: #e7f0fd; --bar: #2a78d6; --track: #eef1f4; --warn-bg: #fff6e0; --warn: #7a5200;
     --chip: #f0f2f5; --bubble-me: #1f6feb; --bubble-me-text: #fff; --bubble-bot: #f0f2f5;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1216; --panel: #171b21; --text: #e6e9ee; --muted: #9aa4b1; --line: #2a3038;
-      --accent: #58a6ff; --accent-soft: #16263b; --bar: #58a6ff; --warn-bg: #3a2e12; --warn: #f2cc60;
+      --accent: #58a6ff; --accent-soft: #16263b; --bar: #3987e5; --track: #20262e; --warn-bg: #3a2e12; --warn: #f2cc60;
       --chip: #222831; --bubble-me: #2f6fd1; --bubble-me-text: #fff; --bubble-bot: #222831;
     }
   }
@@ -27,6 +27,7 @@
   main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px;
          max-width: 1200px; margin: 0 auto; padding: 8px 16px 32px; }
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
   section h2 { margin: 0 0 12px; font-size: 16px; }
   form.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; }
@@ -41,21 +42,39 @@
   .error { color: #d1242f; font-size: 14px; margin-top: 12px; }
   ol.players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   .player { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .player { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 0 12px; }
+  .player > .body { min-width: 0; }
+  .avatar { width: 56px; height: 56px; border-radius: 10px; background: var(--chip); overflow: hidden;
+            display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); }
+  @media (max-width: 520px) { .player { grid-template-columns: 44px minmax(0, 1fr); } .avatar { width: 44px; height: 44px; } }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
   .player .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .player .rank { font-weight: 700; color: var(--accent); min-width: 1.5em; }
   .player .name { font-weight: 700; font-size: 16px; background: none; color: var(--text); padding: 0; border: 0; cursor: pointer;
                   text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
   .player .stat { color: var(--muted); font-size: 13px; }
-  .bar { height: 6px; background: var(--chip); border-radius: 3px; margin: 8px 0; overflow: hidden; }
+  .bar { height: 6px; background: var(--track); border-radius: 3px; margin: 8px 0; overflow: hidden; }
   .bar > span { display: block; height: 100%; background: var(--bar); }
   .cards { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 12px;
+          display: inline-flex; align-items: center; gap: 4px; }
+  .chip img { height: 14px; width: auto; }
   .chip b { font-weight: 600; }
   .detail { margin-top: 10px; font-size: 13px; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; }
   .foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; }
+  .fchart .f { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .fchart .track { height: 16px; background: none; padding: 0; border-radius: 0; cursor: pointer; display: block; width: 100%; }
+  .fchart .track > span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .fchart .track:hover > span, .fchart .track:focus-visible > span { filter: brightness(1.15); }
+  .fchart .track.sel > span { outline: 2px solid var(--text); outline-offset: 1px; }
+  .fchart .v { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .fchart .other { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+  #tip { position: fixed; pointer-events: none; background: var(--text); color: var(--panel); font-size: 12px;
+         padding: 6px 8px; border-radius: 6px; white-space: pre; z-index: 10; }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; max-height: 60vh; }
   .msg { max-width: 92%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
@@ -73,6 +92,13 @@
   <p id="asof">데이터 불러오는 중…</p>
 </header>
 <main>
+  <div class="col">
+  <section aria-labelledby="form-title">
+    <h2 id="form-title">포메이션 분포 <span id="form-scope" class="stat"></span></h2>
+    <div id="fchart" class="fchart"></div>
+    <p id="form-foot" class="foot"></p>
+  </section>
+
   <section aria-labelledby="rec-title">
     <h2 id="rec-title">선수 추천</h2>
     <form class="filters" id="filters">
@@ -87,6 +113,7 @@
     </form>
     <div id="result" aria-live="polite"></div>
   </section>
+  </div>
 
   <section id="chat" aria-labelledby="chat-title">
     <h2 id="chat-title">챗봇 <span id="backend" class="stat"></span></h2>
@@ -98,6 +125,7 @@
     </form>
   </section>
 </main>
+<div id="tip" hidden></div>
 
 <script>
 "use strict";
@@ -157,7 +185,24 @@ function cardChip(c) {
   const parts = [`${c.rankers}명`];
   if (c.most_used_grade) parts.push(`주로 ${c.most_used_grade}강`);
   if (c.price_at_most_used_grade) parts.push(c.price_at_most_used_grade.price);
-  return el("span", { class: "chip" }, el("b", { text: season(c.season) }), " " + parts.join(" · "));
+  const icon = c.season_img ? el("img", { src: c.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
+  return el("span", { class: "chip", title: c.season || "" }, icon, el("b", { text: season(c.season) }), " " + parts.join(" · "));
+}
+
+// 선수 사진: 가장 많이 쓴 카드 → 선수 기본 사진 → 이름 첫 글자 (넥슨 이미지 CDN을 못 쓰면 글자로 표시)
+const IMG = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common";
+function avatar(p) {
+  const box = el("div", { class: "avatar", ariaHidden: "true" });
+  const sources = [...(p.cards.length ? [`${IMG}/playersAction/p${p.cards[0].sp_id}.png`] : []), `${IMG}/players/p${p.pid}.png`];
+  const next = () => {
+    const src = sources.shift();
+    if (!src) { box.replaceChildren(p.name.slice(0, 1)); return; }
+    const img = el("img", { src, alt: "", loading: "lazy" });
+    img.onerror = next;
+    box.replaceChildren(img);
+  };
+  next();
+  return box;
 }
 
 function renderRecommend(r) {
@@ -185,13 +230,13 @@ function renderRecommend(r) {
     if (r.budget) stats.push(`예산 내 카드 ${p.cards.reduce((s, c) => s + c.rankers, 0)}명`);
     if (p.avg_grade != null) stats.push(`평균 ${p.avg_grade.toFixed(1)}강`);
     if (p.avg_elo_of_users != null) stats.push(`사용 랭커 ELO ${Math.round(p.avg_elo_of_users)}`);
-    list.append(el("li", { class: "player" },
+    list.append(el("li", { class: "player" }, avatar(p), el("div", { class: "body" },
       el("div", { class: "top" }, el("span", { class: "rank", text: String(i + 1) }), name,
          el("span", { class: "stat", text: stats.join(" · ") })),
       el("div", { class: "bar", role: "img", ariaLabel: `사용률 ${pct(p.usage_rate)}` },
          el("span", { style: `width:${Math.min(100, p.usage_rate * 100)}%` })),
       el("div", { class: "cards" }, ...p.cards.slice(0, 6).map(cardChip)),
-      detail));
+      detail)));
   });
   out.push(list);
   if (r.players.some((p) => p.cards.some((c) => c.price_at_most_used_grade)))
@@ -222,7 +267,75 @@ async function togglePlayer(name, box) {
   }
 }
 
-$("tc").addEventListener("change", fillFormations);
+// --- formation distribution ---
+const MAX_BARS = 8;
+const tip = $("tip");
+function showTip(ev, text) {
+  tip.textContent = text;
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  const x = Math.min(ev.clientX + 12, window.innerWidth - r.width - 8);
+  const y = ev.clientY - r.height - 10 < 8 ? ev.clientY + 16 : ev.clientY - r.height - 10;
+  tip.style.left = Math.max(8, x) + "px";
+  tip.style.top = y + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+function markSelected() {
+  for (const b of $("fchart").querySelectorAll(".track"))
+    b.classList.toggle("sel", b.dataset.formation === $("formation").value);
+}
+
+async function loadFormations() {
+  const tc = $("tc").value.trim();
+  const box = $("fchart");
+  try {
+    const d = await api("/api/formations" + (tc ? "?" + new URLSearchParams({ team_color: tc }) : ""));
+    $("form-scope").textContent = "· " + d.team_color;
+    const forms = d.formations || [];
+    if (!forms.length) {
+      box.replaceChildren(el("p", { class: "stat", text: d.note || "랭킹 스냅샷이 없습니다." }));
+      $("form-foot").textContent = "";
+      return;
+    }
+    const shown = forms.slice(0, MAX_BARS);
+    const rest = forms.slice(MAX_BARS);
+    const max = shown[0].share || 1;
+    const rows = [];
+    for (const f of shown) {
+      const detail = `${f.formation}\n랭커 ${f.rankers}명 (${pct(f.share)})\n스쿼드 수집 ${f.squads_collected ?? 0}명`;
+      const bar = el("button", { type: "button", class: "track", ariaLabel: detail.replaceAll("\n", ", ") + " — 누르면 이 포메이션으로 추천" },
+        el("span", { style: `width:${(f.share / max) * 100}%` }));
+      bar.dataset.formation = f.formation;
+      bar.addEventListener("mousemove", (ev) => showTip(ev, detail));
+      bar.addEventListener("mouseleave", hideTip);
+      bar.addEventListener("click", () => {
+        hideTip();
+        if ([...$("formation").options].some((o) => o.value === f.formation)) {
+          $("formation").value = f.formation;
+          markSelected();
+          $("filters").requestSubmit();
+        } else {
+          $("result").replaceChildren(el("div", { class: "notice", text: `${f.formation}은 스쿼드 표본이 없어 추천할 수 없습니다.` }));
+        }
+      });
+      rows.push(el("span", { class: "f", text: f.formation }), bar,
+                el("span", { class: "v", text: `${f.rankers}명 · ${pct(f.share)}` }));
+    }
+    if (rest.length) {
+      const n = rest.reduce((s, f) => s + f.rankers, 0);
+      rows.push(el("span", { class: "other", text: `그 외 ${rest.length}개 포메이션 ${n}명` }));
+    }
+    box.replaceChildren(...rows);
+    markSelected();
+    $("form-foot").textContent = `${d.note || ""} · ${asOf(d.data_as_of)} · 막대를 누르면 그 포메이션으로 추천합니다`;
+  } catch (e) {
+    box.replaceChildren(el("p", { class: "error", text: e.message }));
+  }
+}
+
+$("tc").addEventListener("change", () => { fillFormations(); loadFormations(); });
+$("formation").addEventListener("change", markSelected);
 $("filters").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const params = new URLSearchParams({ role: $("role").value, top_n: $("topn").value || "5" });
@@ -274,7 +387,7 @@ for (const q of ["4-2-3-1 볼란치 2명 추천해줘", "랭커 포메이션 알
 }
 say("bot", "팀컬러·포메이션·역할로 물어보세요. 수치는 공식 랭킹과 랭커 경기 기록에서 나옵니다.");
 
-loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
+loadMeta().then(loadFormations).catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
 </script>
 </body>
 </html>

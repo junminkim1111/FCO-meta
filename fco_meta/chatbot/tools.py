@@ -227,6 +227,15 @@ class Toolbox:
             raise ToolError(f"알 수 없는 역할: {value}. 가능한 값: {ROLE_HELP}")
         return role
 
+    def _season_img(self, season_id: int) -> str | None:
+        """Season icon URL from seasonid.json metadata (웹 화면용)."""
+        if not hasattr(self, "_season_imgs"):
+            try:
+                self._season_imgs = dict(self.conn.execute("SELECT season_id, season_img FROM meta_season"))
+            except sqlite3.OperationalError:  # 메타데이터 전
+                self._season_imgs = {}
+        return self._season_imgs.get(season_id) or None
+
     def _price(self, sp_id: int, grade: int) -> dict[str, Any] | None:
         row = self.conn.execute(
             "SELECT price, fetched_at FROM card_price_latest WHERE spid = ? AND grade = ?", (sp_id, grade)
@@ -376,6 +385,7 @@ class Toolbox:
                 cards.append({
                     "sp_id": s.sp_id,
                     "season": s.season,
+                    "season_img": self._season_img(s.season_id),
                     "rankers": s.ranker_count,
                     "avg_grade": s.avg_grade,
                     "most_used_grade": typical_grade,
