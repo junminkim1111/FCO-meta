@@ -290,7 +290,10 @@ class GeminiChat:
                 if self.on_tool_call:
                     self.on_tool_call(fc.name, args)
                 content, is_error = self.toolbox.run(fc.name, args)
-                log.info("tool %s(%s) → %d chars%s", fc.name, args, len(content), " (error)" if is_error else "")
+                if is_error:
+                    log.warning("tool %s(%s) → error: %s", fc.name, args, json.loads(content).get("error"))
+                else:
+                    log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
                 payload = json.loads(content)
                 part = types.Part.from_function_response(
                     name=fc.name, response={"error": payload["error"]} if is_error else {"result": payload}

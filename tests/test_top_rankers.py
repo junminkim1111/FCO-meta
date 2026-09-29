@@ -72,3 +72,39 @@ def test_chatbot_without_team_color_uses_all_rankers(tmp_path, fixture_html):
 
     formations = bot.ask("랭커 포메이션 알려줘")
     assert formations.tool == "list_formations" and "랭킹 상위 20명 기준" in formations.text
+
+
+def test_every_listed_combo_is_accepted_by_recommend(tmp_path, fixture_html):
+    """list_available_data가 돌려준 이름(예: '전체 랭커')을 그대로 recommend_players에 넘겨도 동작해야 한다."""
+    import json
+
+    storage, _, _ = setup(tmp_path, fixture_html, top=10)
+    tb = Toolbox(storage.conn, min_sample=1)
+    combos = json.loads(tb.run("list_available_data", {})[0])["combos"]
+    assert any(c["team_color"] == "전체 랭커" for c in combos)
+    for c in combos:
+        formation = None if c["formation"] == "전체" else c["formation"]
+        content, is_error = tb.run("recommend_players", {"team_color": c["team_color"], "formation": formation, "role": "GK"})
+        assert not is_error, (c, content)
+        assert json.loads(content)["sample_size"] > 0
+
+
+def test_all_ranker_aliases(tmp_path, fixture_html):
+    import json
+
+    storage, _, _ = setup(tmp_path, fixture_html, top=10)
+    tb = Toolbox(storage.conn, min_sample=1)
+    for alias in (None, "", "전체", "전체 랭커", "전체랭커", "상위 랭커", "ALL"):
+        r = json.loads(tb.run("recommend_players", {"team_color": alias, "role": "GK"})[0])
+        assert r["team_color"] == "전체 랭커", alias
+    bad = json.loads(tb.run("recommend_players", {"team_color": "없는팀", "role": "GK"})[0])
+    assert "team_color를 생략" in bad["error"]
+
+
+def test_same_name_club_and_nation_resolves_to_the_one_with_data(tmp_path, fixture_html):
+    storage, _, _ = setup(tmp_path, fixture_html, top=10)
+    bot = RuleBot(Toolbox(storage.conn, min_sample=1))
+    # "대한민국"은 클럽(974)·국가(2001) 둘 다 있음. 랭커 소속은 국가 팀컬러(엠블럼 없음)
+    text = bot.ask("대한민국 골키퍼 추천").text
+    assert text.startswith("대한민국(국가) 전체 포메이션 골키퍼(GK) 추천"), text
+    assert "1. " in text

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -25,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--backend", choices=["gemini", "rules"], default="gemini", help="챗봇 (기본 gemini)")
     parser.add_argument("--model", help="Gemini 모델")
     args = parser.parse_args(argv)
+    # 챗봇 도구 호출·재시도 로그를 서버 터미널에 남긴다 (문제 확인용)
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("fco_meta").setLevel(logging.INFO)
 
     try:
         import uvicorn

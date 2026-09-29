@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from collections.abc import Callable
@@ -36,6 +37,10 @@ TEAM_COLOR_ALIASES = {
 }
 
 MAX_LISTED_COMBOS = 40
+CATEGORY_LABELS = {"club": "클럽", "nationality": "국가", "special": "특수"}
+CATEGORY_CODES = {v: k for k, v in CATEGORY_LABELS.items()}
+# team_color에 이 값들이 오면 팀컬러 무관 상위 랭커 전체 (공백·대소문자 무시)
+ALL_RANKER_WORDS = {"", "0", "전체", "전체랭커", "랭커전체", "상위랭커", "상위랭커전체", "all", "allrankers", "*", "none", "null"}
 
 ROLE_HELP = "DM(볼란치: RDM/CDM/LDM), CAM(공미), CM, RM, LM, RW, LW, ST, CF, CB, RB, LB, RWB, LWB, GK"
 
@@ -88,7 +93,9 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "team_color": {
                     "type": "string",
-                    "description": "팀컬러 이름 또는 id (예: 아스널). 사용자가 팀컬러를 말하지 않았으면 생략 → 상위 랭커 전체",
+                    "description": (
+                        "팀컬러 이름 또는 id (예: 아스널). 사용자가 팀컬러를 말하지 않았으면 생략하거나 '전체 랭커' → 상위 랭커 전체"
+                    ),
                 },
                 "formation": {"type": "string", "description": "포메이션 (예: 4-2-3-1). 생략하면 팀컬러 전체"},
                 "role": {"type": "string", "description": "역할 (DM, CAM, ST … 또는 볼란치 같은 별칭)"},
@@ -151,11 +158,33 @@ class Toolbox:
     # --- helpers -----------------------------------------------------------
 
     def _lookup_team_color(self, value: str | int):
-        tc = self.catalog.resolve(value)
-        if tc is None and isinstance(value, str):
-            alias = TEAM_COLOR_ALIASES.get("".join(value.split()).casefold())
-            tc = self.catalog.resolve(alias) if alias else None
-        return tc
+        """Name / id / alias → TeamColor. "대한민국"처럼 클럽·국가에 같은 이름이 있으면
+        "(국가)"·"(클럽)" 표기를 따르고, 없으면 실제로 집계된 데이터가 있는 쪽을 고른다."""
+        if isinstance(value, int) or str(value).strip().isdigit():
+            return self.catalog.resolve(value)
+        text = str(value).strip()
+        category = None
+        if m := re.fullmatch(r"(.+?)\s*\((클럽|국가|특수)\)", text):
+            text, category = m.group(1), CATEGORY_CODES[m.group(2)]
+        candidates = self.catalog.find(text)
+        if not candidates:
+            alias = TEAM_COLOR_ALIASES.get("".join(text.split()).casefold())
+            candidates = self.catalog.find(alias) if alias else []
+        if category:
+            candidates = [t for t in candidates if t.category == category] or candidates
+        if len(candidates) > 1:
+            squads = {
+                tc_id: n
+                for tc_id, n in self.conn.execute(
+                    f"SELECT team_color_id, MAX(squads) FROM usage_sample WHERE team_color_id IN"
+                    f" ({','.join('?' * len(candidates))}) GROUP BY team_color_id",
+                    [t.id for t in candidates],
+                )
+            }
+            with_data = [t for t in candidates if squads.get(t.id)]
+            if with_data:
+                return max(with_data, key=lambda t: squads[t.id])
+        return candidates[0] if candidates else None
 
     def _team_color_candidates(self, value: str) -> list[str]:
         key = "".join(value.split())
@@ -168,21 +197,29 @@ class Toolbox:
         tc = self._lookup_team_color(value)
         if tc is None:
             hint = self._team_color_candidates(str(value))
-            raise ToolError(f"알 수 없는 팀컬러: {value}" + (f". 후보: {', '.join(hint)}" if hint else ""))
+            raise ToolError(
+                f"알 수 없는 팀컬러: {value}" + (f". 후보: {', '.join(hint)}" if hint else "")
+                + ". 팀컬러와 무관하게 보려면 team_color를 생략(상위 랭커 전체)"
+            )
         return tc
 
-    def _scope(self, value: str | int | None) -> tuple[int, str]:
-        """(team_color_id, 표시 이름). 비어 있거나 '전체'면 상위 랭커 전체(0)."""
-        if value is None or str(value).strip() in ("", "0", "전체", "전체랭커", "all"):
+    def _scope(self, value: str | int | None) -> tuple[int, str]:  # noqa: D401
+        """(team_color_id, 표시 이름). 비어 있거나 '전체 랭커'(list_available_data가 쓰는 이름) 등이면 상위 랭커 전체(0)."""
+        if value is None or "".join(str(value).split()).casefold() in ALL_RANKER_WORDS:
             return ALL_RANKERS, "전체 랭커"
         tc = self._team_color(value)
-        return tc.id, tc.name
+        return tc.id, self._scope_name(tc.id)
 
     def _scope_name(self, team_color_id: int) -> str:
+        """Display name that `_scope` resolves back to the same team color."""
         if team_color_id == ALL_RANKERS:
             return "전체 랭커"
-        tc = self.catalog.resolve(team_color_id)
-        return tc.name if tc else str(team_color_id)
+        tc = next((t for t in self.catalog.entries if t.id == team_color_id), None)
+        if tc is None:
+            return str(team_color_id)
+        if len({t.category for t in self.catalog.find(tc.name)}) > 1:
+            return f"{tc.name}({CATEGORY_LABELS[tc.category]})"
+        return tc.name
 
     def _role(self, value: str) -> str:
         role = resolve_role(value)
