@@ -2,6 +2,7 @@
 
     python -m fco_meta.daily run --top 330            # 지금 한 번
     python -m fco_meta.daily schedule --at 00:00      # 매일 00:00 (KST)에 반복 (프로세스를 띄워 둔다)
+    python -m fco_meta.daily status                   # 수집 상태 확인
 
 Steps
 1. 필터 없이 랭킹 상위 N명 크롤링 (20명/페이지, 2초 간격)
@@ -146,6 +147,49 @@ def run_daily(
         storage.close()
 
 
+def status_lines(db: Path, mode: str = "1vs1") -> list[str]:
+    """Collection status of the latest daily snapshot (no nicknames, no API calls)."""
+    if not db.exists():
+        return [f"DB가 없습니다: {db}"]
+    storage = Storage(db)
+    try:
+        conn = storage.conn
+        latest = latest_unfiltered_snapshot(conn, mode)
+        if latest is None:
+            return ["필터 없이 수집한 랭킹이 없습니다 → python -m fco_meta.daily run"]
+        as_of, covered = latest
+        lines = [f"최근 스냅샷 {as_of}: 랭킹 상위 {covered}명 수집"]
+        statuses = dict(conn.execute(
+            "SELECT status, COUNT(*) FROM ranker_squad_status WHERE data_as_of = ? AND mode = ? AND rank <= ? GROUP BY status",
+            (as_of, mode, covered),
+        ).fetchall())  # fmt: skip
+        done = sum(statuses.values())
+        lines.append(
+            f"스쿼드: {done}/{covered}명 처리 — "
+            + (", ".join(f"{k} {v}" for k, v in sorted(statuses.items())) if statuses else "아직 없음")
+        )
+        by_formation = conn.execute(
+            "SELECT formation, squads, combo_rankers FROM usage_sample WHERE data_as_of = ? AND mode = ?"
+            " AND team_color_id = 0 AND strict = 0 AND formation != '*' ORDER BY squads DESC LIMIT 6",
+            (as_of, mode),
+        ).fetchall()
+        if by_formation:
+            lines.append("포메이션별 스쿼드(전체 랭커): " + ", ".join(f"{f} {n}/{t}명" for f, n, t in by_formation))
+        else:
+            lines.append("집계 없음 → 스쿼드 수집 후 python -m fco_meta.analytics build")
+        for day, calls in conn.execute(
+            "SELECT day, SUM(calls) FROM api_usage GROUP BY day ORDER BY day DESC LIMIT 3"
+        ).fetchall():
+            lines.append(f"Open API 사용 {day}: {calls}회")
+        for run_id, started, status, calls in conn.execute(
+            "SELECT id, started_at, status, api_calls FROM pipeline_run ORDER BY id DESC LIMIT 3"
+        ).fetchall():
+            lines.append(f"수집 실행 #{run_id} {started}: {status}, 호출 {calls}회")
+        return lines
+    finally:
+        storage.close()
+
+
 def next_run(at: str, current: datetime) -> datetime:
     """Next occurrence of HH:MM (KST) after `current`."""
     hour, minute = (int(x) for x in at.split(":"))
@@ -167,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m fco_meta.daily")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", parents=[common], help="지금 한 번 실행")
+    sub.add_parser("status", parents=[common], help="수집 상태 확인 (API 호출 없음)")
     p_sched = sub.add_parser("schedule", parents=[common], help="매일 정해진 시각(KST)에 실행 — 프로세스를 켜 둔다")
     p_sched.add_argument("--at", default="00:00", help="HH:MM, 한국 시간 (기본 00:00)")
     args = parser.parse_args(argv)
@@ -186,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         return once()
+    if args.command == "status":
+        print("\n".join(status_lines(args.db)))
+        return 0
     while True:
         at = next_run(args.at, datetime.now(timezone.utc))
         print(f"다음 실행: {at.astimezone(KST):%Y-%m-%d %H:%M} KST", flush=True)

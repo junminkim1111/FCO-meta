@@ -108,3 +108,15 @@ def test_same_name_club_and_nation_resolves_to_the_one_with_data(tmp_path, fixtu
     text = bot.ask("대한민국 골키퍼 추천").text
     assert text.startswith("대한민국(국가) 전체 포메이션 골키퍼(GK) 추천"), text
     assert "1. " in text
+
+
+def test_empty_role_reports_sample(tmp_path, fixture_html):
+    import json
+
+    storage, _, _ = setup(tmp_path, fixture_html, top=10)
+    tb = Toolbox(storage.conn, min_sample=1)
+    # 테스트 스쿼드(4-2-3-1 / 4-4-2)에는 LWB가 없음 → 표본 수와 함께 "선수 없음"
+    r = json.loads(tb.run("recommend_players", {"role": "LWB"})[0])
+    assert r["players"] == [] and r["sample_size"] == 10 and "표본 10명" in r["note"]
+    r = json.loads(tb.run("recommend_players", {"role": "DM", "formation": "3-4-3"})[0])
+    assert r["players"] == [] and r["sample_size"] == 0 and "수집·집계되지 않음" in r["note"]

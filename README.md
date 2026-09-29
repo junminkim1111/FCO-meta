@@ -60,6 +60,7 @@ ORDER BY s.rank;
 export NEXON_API_KEY=...
 python -m fco_meta.daily run --top 330               # 지금 한 번
 python -m fco_meta.daily schedule --at 00:00         # 매일 00:00(KST)에 실행 — 이 프로세스를 켜 둔다
+python -m fco_meta.daily status                      # 수집 상태 (스냅샷, 처리한 랭커 수, 포메이션별 표본, API 사용량)
 ```
 
 실행 순서:

@@ -354,10 +354,18 @@ class Toolbox:
             top=100 if max_price_bp else top_n, by="pid", strict=bool(strict), min_sample=self.min_sample,
         )  # fmt: skip
         if not res.players:
-            return {
+            out_empty: dict[str, Any] = {
                 "team_color": tc_name, "formation": formation, "role": role_code, "players": [],
-                "note": "수집·집계된 데이터가 없음. list_available_data로 가능한 조합을 확인",
+                "sample_size": res.sample_size, "data_as_of": res.data_as_of,
             }  # fmt: skip
+            if res.sample_size:
+                out_empty["note"] = (
+                    f"표본 {res.sample_size}명의 스쿼드에 이 역할({role_code})로 선발 출전한 선수가 없음."
+                    " 표본이 매우 작으면 수집이 덜 된 것 — 사용자에게 그대로 알린다"
+                )
+            else:
+                out_empty["note"] = "이 조합은 스쿼드가 수집·집계되지 않음. 다른 조합을 찾기보다 사용자에게 그대로 알린다"
+            return out_empty
 
         players = []
         for p in res.players:

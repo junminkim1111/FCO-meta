@@ -106,3 +106,15 @@ def test_cli_accepts_options_after_subcommand(monkeypatch, tmp_path):
     monkeypatch.setattr(daily, "run_daily", lambda db, **kw: seen.update(db=db, **kw) or daily.DailyReport())
     assert daily.main(["run", "--top", "50", "--no-wait", "--db", str(tmp_path / "x.sqlite")]) == 0
     assert seen["top"] == 50 and seen["wait_lag"] is False
+
+
+def test_status_lines(tmp_path, fixture_html):
+    from fco_meta.daily import status_lines
+
+    assert status_lines(tmp_path / "none.sqlite")[0].startswith("DB가 없습니다")
+    dc, api, _ = clients(tmp_path, fixture_html)
+    run_daily(tmp_path / "db.sqlite", top=10, datacenter=dc, api=api, now=lambda: datetime(2026, 9, 29, tzinfo=timezone.utc))
+    text = "\n".join(status_lines(tmp_path / "db.sqlite"))
+    assert "랭킹 상위 20명 수집" in text and "스쿼드: 10/20명 처리 — ok 10" in text
+    assert "포메이션별 스쿼드(전체 랭커):" in text and "Open API 사용" in text
+    assert "랭커" in text and "ouid" not in text  # 개인 식별 정보 없음
