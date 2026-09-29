@@ -33,7 +33,7 @@ from .crawler.models import PAGE_SIZE
 from .crawler.teamcolors import TeamColorCatalog
 from .openapi import CallBudget, NexonOpenApiClient
 from .pipeline import FormationTable, PipelineStore, SquadCollector, select_top_targets
-from .pipeline.squads import API_DATA_LAG
+from .pipeline.squads import API_DATA_LAG, STOP_HINTS
 from .storage import Storage, latest_unfiltered_snapshot
 
 log = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class DailyReport:
             + (f", 대기 {self.waited_seconds / 60:.0f}분" if self.waited_seconds else "")
             + (", 메타데이터 갱신" if self.meta_refreshed else ""),
             "  " + ", ".join(f"{k} {v}" for k, v in sorted(self.statuses.items())),
-            f"집계 {self.usage_rows}행" + (f" — 중단: {self.stopped} (다음 실행에서 이어서 수집)" if self.stopped else ""),
+            f"집계 {self.usage_rows}행" + (f" — 중단: {STOP_HINTS.get(self.stopped, self.stopped)}" if self.stopped else ""),
         ]
 
 
@@ -154,6 +154,8 @@ def status_lines(db: Path, mode: str = "1vs1") -> list[str]:
     storage = Storage(db)
     try:
         conn = storage.conn
+        UsageStore(conn)  # 집계 전에 멈춘 DB에도 조회할 테이블이 있도록 (CREATE IF NOT EXISTS)
+        CallBudget(conn)
         latest = latest_unfiltered_snapshot(conn, mode)
         if latest is None:
             return ["필터 없이 수집한 랭킹이 없습니다 → python -m fco_meta.daily run"]
@@ -185,6 +187,9 @@ def status_lines(db: Path, mode: str = "1vs1") -> list[str]:
             "SELECT id, started_at, status, api_calls FROM pipeline_run ORDER BY id DESC LIMIT 3"
         ).fetchall():
             lines.append(f"수집 실행 #{run_id} {started}: {status}, 호출 {calls}회")
+            reason = status.removeprefix("stopped_")
+            if status.startswith("stopped_") and reason in STOP_HINTS:
+                lines.append(f"  └ {STOP_HINTS[reason]}")
         return lines
     finally:
         storage.close()

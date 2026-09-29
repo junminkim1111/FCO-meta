@@ -118,3 +118,20 @@ def test_status_lines(tmp_path, fixture_html):
     assert "랭킹 상위 20명 수집" in text and "스쿼드: 10/20명 처리 — ok 10" in text
     assert "포메이션별 스쿼드(전체 랭커):" in text and "Open API 사용" in text
     assert "랭커" in text and "ouid" not in text  # 개인 식별 정보 없음
+
+
+def test_status_explains_rate_limit_stop(tmp_path):
+    from fco_meta.daily import status_lines
+    from fco_meta.pipeline import PipelineStore
+
+    storage = Storage(tmp_path / "db.sqlite")
+    storage.conn.execute(
+        "INSERT INTO crawl_run (started_at, mode, query_json, data_as_of, rows_saved, status)"
+        " VALUES ('x', '1vs1', '{\"mode\": \"1vs1\"}', '2026-09-28T22:00:00+09:00', 20, 'ok')"
+    )
+    store = PipelineStore(storage.conn)
+    run = store.start_run({})
+    store.finish_run(run, 8, "stopped_rate_limit", {})
+    storage.close()
+    text = "\n".join(status_lines(tmp_path / "db.sqlite"))
+    assert "stopped_rate_limit" in text and "일일 한도(1,000회)가 이미 소진됐을 수 있음" in text

@@ -19,7 +19,7 @@ from ..crawler.teamcolors import TeamColorCatalog
 from ..openapi import CallBudget, NexonOpenApiClient
 from ..storage import Storage
 from .formation import DEFAULT_TABLE_PATH, FormationTable, signature_key
-from .squads import SquadCollector, select_targets, select_top_targets
+from .squads import STOP_HINTS, SquadCollector, select_targets, select_top_targets
 from .store import PipelineStore
 
 DEFAULT_DB = Path("data/fco_meta.sqlite")
@@ -138,7 +138,7 @@ def _collect(storage: Storage, store: PipelineStore, args: argparse.Namespace) -
         )
         print("  " + ", ".join(f"{k} {v}" for k, v in sorted(result.statuses.items())))
         if result.stopped:
-            print(f"  중단: {result.stopped} — 같은 명령으로 이어서 수집할 수 있습니다")
+            print(f"  중단: {STOP_HINTS.get(result.stopped, result.stopped)}")
         return 0
 
 

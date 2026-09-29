@@ -40,6 +40,16 @@ def match_id_time(match_id: str) -> datetime | None:
         return None
 
 
+STOP_HINTS = {
+    "budget": "이 DB에 기록된 오늘 호출 예산 소진 — 다음 날 같은 명령으로 이어서 수집",
+    "rate_limit": (
+        "넥슨 API가 재시도 후에도 호출량 초과(429)를 돌려줌 — 오늘 키의 일일 한도(1,000회)가 이미 소진됐을 수 있음."
+        " 같은 키를 다른 PC·서버에서도 쓰고 있다면 그 사용량은 여기 기록되지 않음. 한도가 초기화된 뒤 다시 실행"
+    ),
+    "maintenance": "넥슨 API 점검 중 — 점검이 끝난 뒤 다시 실행",
+}
+
+
 @dataclass(frozen=True)
 class SquadTarget:
     data_as_of: str  # ranker_snapshot.data_as_of (KST, ISO 8601)
