@@ -21,41 +21,28 @@ def client(db, tmp_path):  # noqa: F811
 
 def test_index_and_static(client):
     res = client.get("/")
-    assert res.status_code == 200 and "FCO 랭커 메타" in res.text and "/api/recommend" in res.text
+    assert res.status_code == 200 and "FCO 랭커 메타" in res.text and "/api/formation?" in res.text
 
 
 def test_meta(client):
     meta = client.get("/api/meta").json()
     assert meta["backend"] == "rules"
     assert {(c["team_color"], c["formation"]) for c in meta["combos"]} >= {("아스널", "4-2-3-1"), ("아스널", "4-4-2")}
-    assert {"code": "DM", "label": "볼란치(DM)", "positions": [9, 10, 11]} in meta["roles"]
 
 
-def test_recommend(client):
-    r = client.get("/api/recommend", params={"team_color": "아스날", "formation": "4-2-3-1", "role": "볼란치", "top_n": 2}).json()
-    # 표본 3명 < 10명 → 전체 포메이션 폴백
-    assert r["fallback_to_all_formations"] and r["sample_size"] == 4
-    assert [p["name"] for p in r["players"]] == ["볼란치R", "볼란치L"]
-
-
-def test_recommend_budget_and_errors(client):
-    r = client.get("/api/recommend", params={"team_color": "아스널", "role": "DM", "max_price": "1억"}).json()
-    assert r["budget"]["max_price"] == "1억"
-    # 1억 이하 = S300(5,000만)만 → 볼란치R만 남고 볼란치L(9억)은 빠짐
-    assert [(p["name"], [c["price_at_most_used_grade"]["price"] for c in p["cards"]]) for p in r["players"]] == [
-        ("볼란치R", ["5,000만"])
-    ]
-    assert client.get("/api/recommend", params={"team_color": "아스널", "role": "DM", "max_price": "많이"}).status_code == 400
-    bad = client.get("/api/recommend", params={"team_color": "없는팀", "role": "DM"})
-    assert bad.status_code == 400 and "알 수 없는 팀컬러" in bad.json()["detail"]
-    assert client.get("/api/recommend", params={"team_color": "아스널", "role": "DM", "top_n": 99}).status_code == 422
-
-
-def test_formations_and_player(client):
+def test_formations_and_errors(client):
     f = client.get("/api/formations", params={"team_color": "아스널"}).json()
     assert {x["formation"]: x["rankers"] for x in f["formations"]} == {"4-2-3-1": 3, "4-4-2": 1}
-    p = client.get("/api/player", params={"name": "볼란치R"}).json()
-    assert p["matched_names"] == ["볼란치R"] and p["usage"][0]["role"] == "DM"
+    bad = client.get("/api/formations", params={"team_color": "없는팀"})
+    assert bad.status_code == 400 and "알 수 없는 팀컬러" in bad.json()["detail"]
+
+
+def test_formation_overview(client):
+    d = client.get("/api/formation", params={"name": "4231"}).json()
+    assert d["formation"] == "4-2-3-1"
+    # 테스트 DB는 필터 조회(아스널)만 있고 필터 없는 랭킹이 없음 → 랭킹 통계 없이 안내
+    assert "note" in d
+    assert client.get("/api/formation", params={"name": ""}).status_code == 422
 
 
 def test_chat_rules(client):

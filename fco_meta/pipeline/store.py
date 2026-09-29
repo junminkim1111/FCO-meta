@@ -134,10 +134,27 @@ class MatchPlayer:
     sp_rating: float | None
 
 
+# 나중에 추가한 열 — 새 DB든 기존 DB든 ALTER TABLE로 붙인다 (API 응답을 JSON 그대로 보관)
+ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "match_player": {"stats": "TEXT"},  # player.status 전체 (골·도움·슈팅·패스·드리블·태클·가로채기·공중볼 …)
+    "match_team": {"detail": "TEXT", "shots": "TEXT"},  # matchDetail·shoot·pass·defence / shootDetail (슈팅 위치·시간·도움)
+}
+
+
+def add_missing_columns(conn: sqlite3.Connection, added: dict[str, dict[str, str]]) -> None:
+    for table, columns in added.items():
+        have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, sql_type in columns.items():
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+    conn.commit()
+
+
 class PipelineStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.conn.executescript(SCHEMA)
+        add_missing_columns(conn, ADDED_COLUMNS)
 
     # --- runs --------------------------------------------------------------
 
@@ -223,20 +240,24 @@ class PipelineStore:
         for info in detail.get("matchInfo") or []:
             ouid = info["ouid"]
             md = info.get("matchDetail") or {}
+            team = {k: info.get(k) for k in ("matchDetail", "shoot", "pass", "defence")}
             self.conn.execute(
-                "INSERT OR REPLACE INTO match_team (match_id, ouid, match_result, match_end_type) VALUES (?, ?, ?, ?)",
-                (match_id, ouid, md.get("matchResult"), md.get("matchEndType")),
-            )
+                "INSERT OR REPLACE INTO match_team (match_id, ouid, match_result, match_end_type, detail, shots)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (match_id, ouid, md.get("matchResult"), md.get("matchEndType"),
+                 json.dumps(team, ensure_ascii=False), json.dumps(info.get("shootDetail") or [], ensure_ascii=False)),
+            )  # fmt: skip
             rows = []
             for p in info.get("player") or []:
                 sp_id, pos = int(p["spId"]), int(p["spPosition"])
-                rating = (p.get("status") or {}).get("spRating")
+                status = p.get("status") or {}
                 rows.append(
-                    (match_id, ouid, sp_id, sp_id // 1_000_000, sp_id % 1_000_000, pos, p.get("spGrade"), rating, int(pos != SUB))
-                )
+                    (match_id, ouid, sp_id, sp_id // 1_000_000, sp_id % 1_000_000, pos, p.get("spGrade"),
+                     status.get("spRating"), int(pos != SUB), json.dumps(status, ensure_ascii=False))
+                )  # fmt: skip
             self.conn.executemany(
                 "INSERT OR REPLACE INTO match_player (match_id, ouid, sp_id, season_id, pid, sp_position, sp_grade,"
-                " sp_rating, starter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " sp_rating, starter, stats) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         self.conn.commit()

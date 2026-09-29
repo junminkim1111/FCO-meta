@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..storage import Storage
@@ -8,6 +10,10 @@ from .client import DatacenterClient
 from .query import RankQuery
 
 log = logging.getLogger(__name__)
+
+# 정각 갱신은 서버마다 조금씩 늦게 퍼져서, 갱신 직후 몇 분은 이전 기준 시각 페이지가 섞여 온다
+STALE_RETRIES = 5
+STALE_WAIT = 10.0  # 초
 
 
 @dataclass
@@ -25,24 +31,62 @@ def crawl_rankings(
     query: RankQuery,
     *,
     max_pages: int | None = None,
+    restarts: int = 0,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> CrawlResult:
-    """Fetch ranking pages for `query` and upsert them into `storage`."""
+    """Fetch ranking pages for `query` and upsert them into `storage`.
+
+    The ranking data is refreshed hourly. With `restarts` > 0 a crawl that sees the refresh
+    part-way (long crawls such as TOP 10,000 ≈ 17 min) starts over from page 1 on the new data,
+    up to that many times; otherwise it finishes as `mixed_as_of`. A page older than the snapshot
+    being crawled (a server not yet refreshed) is fetched again after STALE_WAIT seconds.
+    """
+    for _ in range(restarts):
+        result = _crawl_once(client, storage, query, max_pages, stop_on_refresh=True, sleep=sleep)
+        if result.status != "refreshed":
+            return result
+        log.warning("ranking data was refreshed during the crawl; starting over from page 1")
+    return _crawl_once(client, storage, query, max_pages, stop_on_refresh=False, sleep=sleep)
+
+
+def _crawl_once(
+    client: DatacenterClient, storage: Storage, query: RankQuery, max_pages: int | None, *,
+    stop_on_refresh: bool, sleep: Callable[[float], None],
+) -> CrawlResult:  # fmt: skip
     run_id = storage.start_run(query.mode, query)
     member_of = _single_team_color(query)
     pages = rows = 0
     total = None
     as_of_seen = set()
     status = "ok"
+    target = None  # 이번 수집의 기준 시각 (첫 페이지)
     try:
-        for page in client.iter_rank_pages(query, max_pages=max_pages):
+        n = 1
+        while max_pages is None or n <= max_pages:
+            page = client.fetch_rank_page(query, n)
+            for _ in range(STALE_RETRIES):  # 아직 갱신 안 된 서버의 이전 데이터 → 잠시 뒤 다시
+                if target is None or not page.rows or page.data_as_of is None or page.data_as_of >= target:
+                    break
+                log.info("page %d is older (%s) than %s; retrying", n, page.data_as_of, target)
+                sleep(STALE_WAIT)
+                page = client.fetch_rank_page(query, n)
+            if not page.rows:
+                break
             if page.data_as_of is None:
-                raise ValueError(f"page {pages + 1}: data_as_of not found")
+                raise ValueError(f"page {n}: data_as_of not found")
+            target = target or page.data_as_of
+            if stop_on_refresh and page.data_as_of > target:
+                storage.finish_run(run_id, total, status="refreshed")  # 불완전한 수집 — 범위 계산에서 빠진다
+                return CrawlResult(run_id, total, pages, rows, "refreshed")
             as_of_seen.add(page.data_as_of)
             total = page.total_count
             storage.save_page(run_id, query.mode, page.data_as_of, page.rows, member_of)
             pages += 1
             rows += len(page.rows)
             log.info("page %d: %d rows (total %s, as of %s)", pages, len(page.rows), total, page.data_as_of)
+            if page.total_pages is not None and n >= page.total_pages:
+                break
+            n += 1
     except Exception:
         storage.finish_run(run_id, total, status="failed")
         raise

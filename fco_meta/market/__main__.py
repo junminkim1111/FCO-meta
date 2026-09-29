@@ -19,6 +19,7 @@ from ..crawler.client import DatacenterClient
 from ..crawler.teamcolors import TeamColorCatalog
 from .collector import fetch_price_history, search_all
 from .money import format_bp, parse_bp
+from .details import DEFAULT_CARDS, refresh_card_details
 from .refresh import DEFAULT_PLAYERS, refresh_used_prices
 from .roles import ROLES, resolve_role
 from .search import PlayerSearch
@@ -51,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_used = sub.add_parser("used", help="상위 랭커가 많이 쓰는 선수들의 시세 갱신 (집계 필요)")
     p_used.add_argument("--limit", type=int, default=DEFAULT_PLAYERS, help="많이 쓰는 순으로 몇 명 (선수당 약 2초)")
+
+    p_detail = sub.add_parser("details", help="상위 랭커가 쓰는 카드의 능력치·신체·특성 수집 (집계 필요, 30일 유지)")
+    p_detail.add_argument("--limit", type=int, default=DEFAULT_CARDS, help="이번 실행 최대 카드 수 (카드당 약 2초)")
 
     p_hist = sub.add_parser("history", help="카드·강화별 365일 시세 이력 수집")
     p_hist.add_argument("--spid", type=int, required=True)
@@ -102,6 +106,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"많이 쓰는 선수 {r.players}명 중 {r.requests}명 시세 갱신 (사용 시즌 카드 {r.cards}장 / 검색된 {r.cards_seen}장),"
                     f" 최근 갱신이라 건너뜀 {r.skipped_fresh}명" + (f", 실패 {r.failed}명" if r.failed else "")
                 )
+                return 0
+
+            if args.command == "details":
+                d = refresh_card_details(client, args.db, limit=args.limit)
+                print(f"카드 상세: 대상 {d.targets}장 중 {d.fetched}장 수집" + (f", 남음 {d.remaining}장" if d.remaining else "")
+                      + (f", 실패 {d.failed}장" if d.failed else ""))  # fmt: skip
                 return 0
 
             if args.command == "cards":

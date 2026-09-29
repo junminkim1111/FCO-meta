@@ -10,12 +10,14 @@
     --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e2e6eb;
     --accent: #1f6feb; --accent-soft: #e7f0fd; --bar: #2a78d6; --track: #eef1f4; --warn-bg: #fff6e0; --warn: #7a5200;
     --chip: #f0f2f5; --bubble-me: #1f6feb; --bubble-me-text: #fff; --bubble-bot: #f0f2f5;
+    --win: #2a78d6; --draw: #bdbcb6; --loss: #e34948;  /* 승·무·패: 파랑↔빨강 + 중립 회색 (dataviz 기준 팔레트) */
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1216; --panel: #171b21; --text: #e6e9ee; --muted: #9aa4b1; --line: #2a3038;
       --accent: #58a6ff; --accent-soft: #16263b; --bar: #3987e5; --track: #20262e; --warn-bg: #3a2e12; --warn: #f2cc60;
       --chip: #222831; --bubble-me: #2f6fd1; --bubble-me-text: #fff; --bubble-bot: #222831;
+      --win: #3987e5; --draw: #5a5955; --loss: #e66767;
     }
   }
   * { box-sizing: border-box; }
@@ -30,41 +32,13 @@
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
   section h2 { margin: 0 0 12px; font-size: 16px; }
-  form.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; }
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-  label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--text); grid-column: span 2; }
-  input, select, button { font: inherit; color: var(--text); background: var(--panel);
-                          border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
-  button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; }
-  button:disabled { opacity: .6; cursor: wait; }
-  .summary { margin: 16px 0 8px; font-size: 13px; color: var(--muted); }
+  .stat { color: var(--muted); font-size: 13px; font-weight: 400; }
   .notice { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
   .error { color: #d1242f; font-size: 14px; margin-top: 12px; }
-  ol.players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-  .player { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
-  .player { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 0 12px; }
-  .player > .body { min-width: 0; }
-  .avatar { width: 56px; height: 56px; border-radius: 10px; background: var(--chip); overflow: hidden;
-            display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); }
-  @media (max-width: 520px) { .player { grid-template-columns: 44px minmax(0, 1fr); } .avatar { width: 44px; height: 44px; } }
-  .avatar img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
-  .player .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-  .player .rank { font-weight: 700; color: var(--accent); min-width: 1.5em; }
-  .player .name { font-weight: 700; font-size: 16px; background: none; color: var(--text); padding: 0; border: 0; cursor: pointer;
-                  text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
-  .player .stat { color: var(--muted); font-size: 13px; }
-  .bar { height: 6px; background: var(--track); border-radius: 3px; margin: 8px 0; overflow: hidden; }
-  .bar > span { display: block; height: 100%; background: var(--bar); }
-  .cards { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 12px;
-          display: inline-flex; align-items: center; gap: 4px; }
-  .chip img { height: 14px; width: auto; }
-  .chip b { font-weight: 600; }
-  .detail { margin-top: 10px; font-size: 13px; overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { color: var(--muted); font-weight: 500; }
   .foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  button { font: inherit; background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 8px 10px; cursor: pointer; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
   .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; }
   .fchart .f { font-size: 13px; font-variant-numeric: tabular-nums; }
   .fchart .track { height: 16px; background: none; padding: 0; border-radius: 0; cursor: pointer; display: block; width: 100%; }
@@ -73,9 +47,60 @@
   .fchart .track.sel > span { outline: 2px solid var(--text); outline-offset: 1px; }
   .fchart .v { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .fchart .other { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+  /* formation detail */
+  .fd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .fd-head h2 { margin: 0; font-size: 20px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tile { background: var(--chip); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  .tile .k { font-size: 12px; color: var(--muted); }
+  .tile .val { font-size: clamp(15px, 1.6vw, 20px); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile .sub { font-size: 11px; color: var(--muted); }
+  h3 { font-size: 14px; margin: 18px 0 8px; }
+  .seg { display: inline-flex; background: var(--chip); border-radius: 999px; padding: 3px; gap: 2px; }
+  .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; border-radius: 999px; padding: 4px 12px; }
+  .seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .caption { font-size: 13px; color: var(--muted); margin: 8px 0; }
+  .pitch { position: relative; width: 100%; max-width: 380px; aspect-ratio: 68 / 88; margin: 0 auto; border-radius: 12px; overflow: hidden;
+           background: repeating-linear-gradient(180deg, #2f7d45 0 11.1%, #2b7340 11.1% 22.2%); }
+  .pitch::before { content: ""; position: absolute; inset: 4%; border: 2px solid rgba(255,255,255,.35); border-radius: 4px; }
+  .pitch .mid { position: absolute; left: 4%; right: 4%; top: 50%; border-top: 2px solid rgba(255,255,255,.35); }
+  .pitch .circle { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%, -50%);
+                   border: 2px solid rgba(255,255,255,.35); border-radius: 50%; }
+  .pitch .box { position: absolute; left: 26%; right: 26%; height: 14%; border: 2px solid rgba(255,255,255,.35); }
+  .pitch .box.top { top: 4%; border-top: 0; } .pitch .box.bottom { bottom: 4%; border-bottom: 0; }
+  .pp { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; width: 22%; }
+  .pp .ph { position: relative; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.35); overflow: hidden;
+            display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; border: 2px solid rgba(255,255,255,.8); }
+  .pp .ph img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+  .pp .gr { position: absolute; right: -4px; bottom: -2px; background: #111; color: #ffd24a; font-size: 10px; font-weight: 700;
+            border-radius: 6px; padding: 0 4px; line-height: 15px; }
+  .pp .nm { margin-top: 2px; max-width: 100%; font-size: 11px; color: #fff; text-align: center; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.8); display: flex; align-items: center; gap: 2px; }
+  .pp .nm img { height: 11px; }
+  @media (max-width: 520px) { .pp .ph { width: 34px; height: 34px; } .pp .nm { font-size: 10px; } }
+  .empty-pitch { display: flex; align-items: center; justify-content: center; text-align: center; color: #fff; padding: 20%; font-size: 13px; height: 100%; }
+  .mu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; font-size: 13px; }
+  .mu .f { font-variant-numeric: tabular-nums; }
+  .mu .stack { display: flex; height: 12px; gap: 2px; }
+  .mu .stack span { border-radius: 3px; min-width: 2px; }
+  .mu .v { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin: 6px 0; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 520px) { .two { grid-template-columns: minmax(0, 1fr); } }
+  .rows { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; font-size: 13px; }
+  .rows .v { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .band { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; font-size: 12px; }
+  .band .track { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+  .band .track span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; }
+  .band .v { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .typing { color: var(--muted); }
   #tip { position: fixed; pointer-events: none; background: var(--text); color: var(--panel); font-size: 12px;
          padding: 6px 8px; border-radius: 6px; white-space: pre; z-index: 10; }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
+  /* 넓은 화면: 왼쪽 포메이션 정보를 스크롤해도 챗봇은 화면에 붙어 있다 */
+  @media (min-width: 861px) { #chat { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); } #log { max-height: none; } }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; max-height: 60vh; }
   .msg { max-width: 92%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
   .msg.me { align-self: flex-end; background: var(--bubble-me); color: var(--bubble-me-text); }
@@ -99,19 +124,8 @@
     <p id="form-foot" class="foot"></p>
   </section>
 
-  <section aria-labelledby="rec-title">
-    <h2 id="rec-title">선수 추천</h2>
-    <form class="filters" id="filters">
-      <label>팀컬러 <input id="tc" list="tc-list" placeholder="비우면 전체 랭커" autocomplete="off"></label>
-      <datalist id="tc-list"></datalist>
-      <label>포메이션 <select id="formation"><option value="">전체</option></select></label>
-      <label>역할 <select id="role"></select></label>
-      <label>인원 <input id="topn" type="number" min="1" max="20" value="5"></label>
-      <label>예산 (카드 1장) <input id="budget" placeholder="예: 5억"></label>
-      <label class="check"><input id="strict" type="checkbox"> 배치 일치 스쿼드만</label>
-      <button id="go" type="submit">추천 보기</button>
-    </form>
-    <div id="result" aria-live="polite"></div>
+  <section id="fdetail" aria-live="polite">
+    <p class="stat">포메이션 막대를 누르면 여기에 그 포메이션 정보가 나옵니다.</p>
   </section>
   </div>
 
@@ -120,7 +134,7 @@
     <div id="log" aria-live="polite"></div>
     <div class="examples" id="examples"></div>
     <form id="chat-form">
-      <input id="msg" maxlength="500" placeholder="예: 아스날 4-2-3-1 볼란치 2명 추천해줘" autocomplete="off">
+      <input id="msg" maxlength="500" placeholder="무엇이든 물어보세요 — 예: 레알 5억 미만 공격수 추천해줘" autocomplete="off">
       <button type="submit">보내기</button>
     </form>
   </section>
@@ -140,7 +154,6 @@ const el = (tag, props = {}, ...children) => {
 };
 const pct = (x) => (x * 100).toFixed(1) + "%";
 const season = (s) => (s || "?").split(" (")[0];
-const roleLabel = (code) => (META && META.roles.find((r) => r.code === code) || { label: code }).label;
 const asOf = (v) => v ? v.slice(0, 16).replace("T", " ") + " 기준" : "";
 
 async function api(path, options) {
@@ -153,122 +166,16 @@ async function api(path, options) {
   return body;
 }
 
-let META = null;
-
 async function loadMeta() {
-  META = await api("/api/meta");
-  const teams = [...new Set(META.combos.map((c) => c.team_color))].filter((t) => t !== "전체 랭커");
-  $("tc-list").replaceChildren(...teams.map((t) => el("option", { value: t })));
-  $("role").replaceChildren(...META.roles.map((r) => el("option", { value: r.code, text: r.label, selected: r.code === "DM" })));
-  fillFormations();
-  const latest = META.combos.map((c) => c.data_as_of).sort().pop();
-  const scope = META.daily_scope;
+  const meta = await api("/api/meta");
+  const scope = meta.daily_scope;
   $("asof").textContent = scope
-    ? `랭킹 상위 ${scope.top_rankers}명 · ${asOf(scope.data_as_of)} 스냅샷`
-    : META.combos.length ? `랭킹 스냅샷 ${asOf(latest)}` : "아직 집계된 데이터가 없습니다";
-  $("backend").textContent = META.backend === "gemini" ? "· Gemini" : "· 규칙 기반";
+    ? `랭킹 상위 ${scope.top_rankers}명 · 스쿼드 ${scope.squads_collected}명 · ${asOf(scope.data_as_of)}`
+    : "아직 수집된 랭킹이 없습니다";
+  $("backend").textContent = meta.backend === "gemini" ? "· Gemini" : "· 규칙 기반";
 }
 
-function fillFormations() {
-  const tc = $("tc").value.trim() || "전체 랭커";
-  const forms = META.combos.filter((c) => c.team_color === tc && c.formation !== "전체");
-  const keep = $("formation").value;
-  $("formation").replaceChildren(
-    el("option", { value: "", text: "전체" }),
-    ...forms.map((c) => el("option", { value: c.formation, text: `${c.formation} (${c.squads_collected}명)` })),
-  );
-  if (forms.some((c) => c.formation === keep)) $("formation").value = keep;
-  else if (forms.length) $("formation").value = forms[0].formation;
-}
-
-function cardChip(c) {
-  const parts = [`${c.rankers}명`];
-  if (c.most_used_grade) parts.push(`주로 ${c.most_used_grade}강`);
-  if (c.price_at_most_used_grade) parts.push(c.price_at_most_used_grade.price);
-  const icon = c.season_img ? el("img", { src: c.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
-  return el("span", { class: "chip", title: c.season || "" }, icon, el("b", { text: season(c.season) }), " " + parts.join(" · "));
-}
-
-// 선수 사진: 가장 많이 쓴 카드 → 선수 기본 사진 → 이름 첫 글자 (넥슨 이미지 CDN을 못 쓰면 글자로 표시)
-const IMG = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common";
-function avatar(p) {
-  const box = el("div", { class: "avatar", ariaHidden: "true" });
-  const sources = [...(p.cards.length ? [`${IMG}/playersAction/p${p.cards[0].sp_id}.png`] : []), `${IMG}/players/p${p.pid}.png`];
-  const next = () => {
-    const src = sources.shift();
-    if (!src) { box.replaceChildren(p.name.slice(0, 1)); return; }
-    const img = el("img", { src, alt: "", loading: "lazy" });
-    img.onerror = next;
-    box.replaceChildren(img);
-  };
-  next();
-  return box;
-}
-
-function renderRecommend(r) {
-  const out = [];
-  const formation = r.formation_used === "전체" ? "전체 포메이션" : r.formation_used;
-  out.push(el("p", { class: "summary", text:
-    `${r.team_color} ${formation} · ${roleLabel(r.role)} · 랭커 ${r.sample_size}명 스쿼드 기준 · ${asOf(r.data_as_of)}` }));
-  if (r.fallback_to_all_formations)
-    out.push(el("div", { class: "notice", text: `${r.requested_formation} 표본이 적어 ${r.team_color} 전체 포메이션으로 집계했습니다.` }));
-  if (r.sample_size < 30)
-    out.push(el("div", { class: "notice", text: `표본이 ${r.sample_size}명으로 적어 참고용입니다.` }));
-  if (r.budget)
-    out.push(el("div", { class: "notice", text: `예산 ${r.budget.max_price} 이하 카드만 (랭커들이 가장 많이 쓴 강화 단계 시세 기준)` }));
-  if (r.note) out.push(el("div", { class: "notice", text: r.note }));
-  if (!r.players.length) {
-    out.push(el("p", { text: "조건에 맞는 선수가 없습니다." }));
-    return out;
-  }
-  const list = el("ol", { class: "players" });
-  r.players.forEach((p, i) => {
-    const detail = el("div", { class: "detail", hidden: true });
-    const name = el("button", { class: "name", type: "button", text: p.name, title: "사용 현황 보기" });
-    name.addEventListener("click", () => togglePlayer(p.name, detail));
-    const stats = [`${p.rankers}명 사용 (${pct(p.usage_rate)})`];
-    if (r.budget) stats.push(`예산 내 카드 ${p.cards.reduce((s, c) => s + c.rankers, 0)}명`);
-    if (p.avg_grade != null) stats.push(`평균 ${p.avg_grade.toFixed(1)}강`);
-    if (p.avg_elo_of_users != null) stats.push(`사용 랭커 ELO ${Math.round(p.avg_elo_of_users)}`);
-    list.append(el("li", { class: "player" }, avatar(p), el("div", { class: "body" },
-      el("div", { class: "top" }, el("span", { class: "rank", text: String(i + 1) }), name,
-         el("span", { class: "stat", text: stats.join(" · ") })),
-      el("div", { class: "bar", role: "img", ariaLabel: `사용률 ${pct(p.usage_rate)}` },
-         el("span", { style: `width:${Math.min(100, p.usage_rate * 100)}%` })),
-      el("div", { class: "cards" }, ...p.cards.slice(0, 6).map(cardChip)),
-      detail)));
-  });
-  out.push(list);
-  if (r.players.some((p) => p.cards.some((c) => c.price_at_most_used_grade)))
-    out.push(el("p", { class: "foot", text: "시세는 수집 시각 기준이며 변동될 수 있습니다. 이름을 누르면 역할·시즌별 사용 현황을 봅니다." }));
-  return out;
-}
-
-async function togglePlayer(name, box) {
-  if (!box.hidden) { box.hidden = true; return; }
-  box.hidden = false;
-  box.replaceChildren(el("span", { class: "stat", text: "불러오는 중…" }));
-  try {
-    const d = await api("/api/player?" + new URLSearchParams({ name }));
-    const usage = d.usage.slice(0, 12);
-    // 모든 행이 같은 팀컬러·포메이션이면 그 열은 생략 (모바일 폭 확보)
-    const combos = new Set(usage.map((u) => u.team_color + "|" + u.formation));
-    const cols = [
-      ...(combos.size > 1 ? [["팀컬러", (u) => u.team_color], ["포메이션", (u) => u.formation]] : []),
-      ["역할", (u) => u.role], ["시즌", (u) => season(u.season)], ["사용", (u) => `${u.rankers}/${u.sample_size}`],
-      ["사용률", (u) => pct(u.usage_rate)], ["평균 강화", (u) => (u.avg_grade != null ? u.avg_grade.toFixed(1) : "-")],
-    ];
-    const caption = combos.size === 1 ? el("p", { class: "stat", text: `${usage[0].team_color} ${usage[0].formation} 랭커 기준` }) : null;
-    box.replaceChildren(...[caption, el("table", {},
-      el("thead", {}, el("tr", {}, ...cols.map(([h]) => el("th", { text: h })))),
-      el("tbody", {}, ...usage.map((u) => el("tr", {}, ...cols.map(([, f]) => el("td", { text: f(u) }))))))].filter(Boolean));
-  } catch (e) {
-    box.replaceChildren(el("span", { class: "error", text: e.message }));
-  }
-}
-
-// --- formation distribution ---
-const MAX_BARS = 8;
+// --- tooltip ---
 const tip = $("tip");
 function showTip(ev, text) {
   tip.textContent = text;
@@ -280,17 +187,24 @@ function showTip(ev, text) {
   tip.style.top = y + "px";
 }
 const hideTip = () => { tip.hidden = true; };
+const hover = (node, text) => {
+  node.addEventListener("mousemove", (ev) => showTip(ev, text));
+  node.addEventListener("mouseleave", hideTip);
+  return node;
+};
+
+// --- formation distribution ---
+const MAX_BARS = 8;
+let selected = null;
 
 function markSelected() {
-  for (const b of $("fchart").querySelectorAll(".track"))
-    b.classList.toggle("sel", b.dataset.formation === $("formation").value);
+  for (const b of $("fchart").querySelectorAll(".track")) b.classList.toggle("sel", b.dataset.formation === selected);
 }
 
 async function loadFormations() {
-  const tc = $("tc").value.trim();
   const box = $("fchart");
   try {
-    const d = await api("/api/formations" + (tc ? "?" + new URLSearchParams({ team_color: tc }) : ""));
+    const d = await api("/api/formations");
     $("form-scope").textContent = "· " + d.team_color;
     const forms = d.formations || [];
     if (!forms.length) {
@@ -303,55 +217,175 @@ async function loadFormations() {
     const max = shown[0].share || 1;
     const rows = [];
     for (const f of shown) {
-      const detail = `${f.formation}\n랭커 ${f.rankers}명 (${pct(f.share)})\n스쿼드 수집 ${f.squads_collected ?? 0}명`;
-      const bar = el("button", { type: "button", class: "track", ariaLabel: detail.replaceAll("\n", ", ") + " — 누르면 이 포메이션으로 추천" },
-        el("span", { style: `width:${(f.share / max) * 100}%` }));
+      const detail = `${f.formation}\n랭커 ${f.rankers}명 (${pct(f.share)})`;
+      const bar = hover(el("button", { type: "button", class: "track", ariaLabel: `${f.formation}, 랭커 ${f.rankers}명 — 누르면 상세` },
+        el("span", { style: `width:${(f.share / max) * 100}%` })), detail);
       bar.dataset.formation = f.formation;
-      bar.addEventListener("mousemove", (ev) => showTip(ev, detail));
-      bar.addEventListener("mouseleave", hideTip);
-      bar.addEventListener("click", () => {
-        hideTip();
-        if ([...$("formation").options].some((o) => o.value === f.formation)) {
-          $("formation").value = f.formation;
-          markSelected();
-          $("filters").requestSubmit();
-        } else {
-          $("result").replaceChildren(el("div", { class: "notice", text: `${f.formation}은 스쿼드 표본이 없어 추천할 수 없습니다.` }));
-        }
-      });
-      rows.push(el("span", { class: "f", text: f.formation }), bar,
-                el("span", { class: "v", text: `${f.rankers}명 · ${pct(f.share)}` }));
+      bar.addEventListener("click", () => { hideTip(); showFormation(f.formation); });
+      rows.push(el("span", { class: "f", text: f.formation }), bar, el("span", { class: "v", text: `${f.rankers}명 · ${pct(f.share)}` }));
     }
     if (rest.length) {
       const n = rest.reduce((s, f) => s + f.rankers, 0);
       rows.push(el("span", { class: "other", text: `그 외 ${rest.length}개 포메이션 ${n}명` }));
     }
     box.replaceChildren(...rows);
-    markSelected();
-    $("form-foot").textContent = `${d.note || ""} · ${asOf(d.data_as_of)} · 막대를 누르면 그 포메이션으로 추천합니다`;
+    $("form-foot").textContent = `${d.note || ""} · ${asOf(d.data_as_of)} · 막대를 누르면 아래에 그 포메이션 정보가 나옵니다`;
+    showFormation(shown[0].formation);
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
   }
 }
 
-$("tc").addEventListener("change", () => { fillFormations(); loadFormations(); });
-$("formation").addEventListener("change", markSelected);
-$("filters").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const params = new URLSearchParams({ role: $("role").value, top_n: $("topn").value || "5" });
-  if ($("tc").value.trim()) params.set("team_color", $("tc").value.trim());
-  if ($("formation").value) params.set("formation", $("formation").value);
-  if ($("budget").value.trim()) params.set("max_price", $("budget").value.trim());
-  if ($("strict").checked) params.set("strict", "true");
-  $("go").disabled = true;
-  try {
-    $("result").replaceChildren(...renderRecommend(await api("/api/recommend?" + params)));
-  } catch (e) {
-    $("result").replaceChildren(el("p", { class: "error", text: e.message }));
-  } finally {
-    $("go").disabled = false;
+// --- formation detail ---
+// 선수 사진: 카드 사진 → 선수 기본 사진 → 이름 첫 글자 (넥슨 이미지 CDN을 못 쓰면 글자로 표시)
+const IMG = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common";
+function photo(p) {
+  const box = el("div", { class: "ph", ariaHidden: "true" });
+  const sources = [`${IMG}/playersAction/p${p.sp_id}.png`, `${IMG}/players/p${p.pid}.png`];
+  const next = () => {
+    const src = sources.shift();
+    if (!src) { box.replaceChildren((p.name || "?").slice(0, 1)); return; }
+    const img = el("img", { src, alt: "", loading: "lazy" });
+    img.onerror = next;
+    box.replaceChildren(img);
+  };
+  next();
+  if (p.grade) box.append(el("span", { class: "gr", text: String(p.grade) }));
+  return box;
+}
+
+// spposition 코드 → 경기장 위치 [x%, y%] (위쪽이 공격 방향, 오른쪽이 R 포지션)
+const POS = {
+  0: [50, 91], 1: [50, 80], 2: [88, 57], 3: [85, 73], 4: [66, 78], 5: [50, 79], 6: [34, 78], 7: [15, 73], 8: [12, 57],
+  9: [64, 62], 10: [50, 63], 11: [36, 62], 12: [86, 44], 13: [68, 48], 14: [50, 49], 15: [32, 48], 16: [14, 44],
+  17: [70, 32], 18: [50, 33], 19: [30, 32], 20: [66, 20], 21: [50, 21], 22: [34, 20],
+  23: [84, 17], 24: [63, 10], 25: [50, 10], 26: [37, 10], 27: [16, 17],
+};
+const POS_NAME = ["GK", "SW", "RWB", "RB", "RCB", "CB", "LCB", "LB", "LWB", "RDM", "CDM", "LDM", "RM", "RCM", "CM", "LCM", "LM",
+  "RAM", "CAM", "LAM", "RF", "CF", "LF", "RW", "RS", "ST", "LS", "LW"];
+
+function pitch(players, emptyText, detailOf) {
+  const box = el("div", { class: "pitch" }, el("div", { class: "mid" }), el("div", { class: "circle" }),
+    el("div", { class: "box top" }), el("div", { class: "box bottom" }));
+  if (!players || !players.length) {
+    box.append(el("div", { class: "empty-pitch", text: emptyText }));
+    return box;
   }
-});
+  for (const p of players) {
+    const [x, y] = POS[p.position] || [50, 50];
+    const short = (p.name || "?").split(" ").pop();
+    const icon = p.season_img ? el("img", { src: p.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
+    const node = el("div", { class: "pp", style: `left:${x}%;top:${y}%` }, photo(p), el("div", { class: "nm" }, icon, short));
+    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)} · ${p.grade ?? "-"}강${detailOf(p)}`);
+    box.append(node);
+  }
+  return box;
+}
+
+function tile(k, val, sub) {
+  return el("div", { class: "tile" }, el("div", { class: "k", text: k }), el("div", { class: "val", text: val }),
+            sub ? el("div", { class: "sub", text: sub }) : null);
+}
+
+function renderPitchArea(d) {
+  const area = el("div");
+  const top = d.top_ranker_squad, best = d.best_eleven;
+  const views = {
+    top: () => {
+      if (!top) return [el("p", { class: "caption", text: "스쿼드 수집 랭커 중 이 포메이션을 쓰는 랭커가 아직 없습니다." }),
+                        pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
+      const rec = top.wins != null ? ` · 시즌 ${top.wins}승 ${top.draws}무 ${top.losses}패` : "";
+      const res = top.result ? ` · 이 경기 ${top.result}${top.score ? " " + top.score : ""}` : "";
+      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${top.team_color || "팀컬러 미상"} · ELO ${Math.round(top.elo)}${rec}${res}` })];
+      if (!top.formation_match)
+        out.push(el("div", { class: "notice", text: `이 경기 실제 배치는 ${top.played_formation || "알 수 없음"}입니다 (랭킹 표시는 ${d.formation}).` }));
+      out.push(pitch(top.players, "", (p) => (p.rating != null ? ` · 평점 ${p.rating}` : "")));
+      return out;
+    },
+    best: () => {
+      if (!best) return [el("p", { class: "caption", text: "이 포메이션으로 실제 경기한 스쿼드가 아직 없습니다." }),
+                         pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
+      return [el("p", { class: "caption", text: `이 포메이션으로 경기한 랭커 ${best.squads}명 · 자리마다 가장 많이 쓴 선수 (가장 흔한 배치 ${best.layout_squads}명)` }),
+              pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
+    },
+  };
+  const body = el("div");
+  const seg = el("div", { class: "seg", role: "tablist" });
+  const show = (key) => {
+    for (const b of seg.children) b.classList.toggle("on", b.dataset.v === key);
+    body.replaceChildren(...views[key]());
+  };
+  for (const [key, label] of [["top", "최상위 랭커 스쿼드"], ["best", "랭커 베스트 11"]]) {
+    const b = el("button", { type: "button", text: label });
+    b.dataset.v = key;
+    b.addEventListener("click", () => show(key));
+    seg.append(b);
+  }
+  area.append(seg, body);
+  show(top ? "top" : "best");
+  return area;
+}
+
+function renderMatchups(m) {
+  if (!m.opponents.length)
+    return [el("p", { class: "stat", text: "아직 이 포메이션의 경기 기록이 없습니다. 매일 약 300경기씩 쌓입니다." })];
+  const rows = [];
+  for (const o of m.opponents.slice(0, 8)) {
+    const stack = el("div", { class: "stack", role: "img", ariaLabel: `${o.wins}승 ${o.draws}무 ${o.losses}패` });
+    for (const [n, color] of [[o.wins, "var(--win)"], [o.draws, "var(--draw)"], [o.losses, "var(--loss)"]])
+      if (n) stack.append(el("span", { style: `flex:${n};background:${color}` }));
+    rows.push(el("span", { class: "f", text: "vs " + o.opponent }),
+              hover(stack, `vs ${o.opponent}\n${o.games}경기 ${o.wins}승 ${o.draws}무 ${o.losses}패 · 승률 ${pct(o.win_rate)}`),
+              el("span", { class: "v", text: `${o.games}경기 ${o.wins}-${o.draws}-${o.losses} · ${pct(o.win_rate)}` }));
+  }
+  return [
+    el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:var(--win)" }), "승"),
+       el("span", {}, el("i", { style: "background:var(--draw)" }), "무"), el("span", {}, el("i", { style: "background:var(--loss)" }), "패")),
+    el("div", { class: "mu" }, ...rows),
+    el("p", { class: "foot", text: `수집된 공식경기 ${m.games}경기 기준 (상대 포메이션은 선발 배치로 추론). 경기 수가 적으면 참고용입니다.` }),
+  ];
+}
+
+async function showFormation(name) {
+  selected = name;
+  markSelected();
+  const box = $("fdetail");
+  box.replaceChildren(el("p", { class: "stat", text: `${name} 불러오는 중…` }));
+  try {
+    const d = await api("/api/formation?" + new URLSearchParams({ name }));
+    if (selected !== name) return;  // 그사이 다른 포메이션을 눌렀으면 버린다
+    const r = d.ranking;
+    const out = [el("div", { class: "fd-head" }, el("h2", { text: name }),
+      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${r.formations}개 · 랭킹 상위 ${d.ranking_scope}명 중 ${pct(r.share)}` : (d.note || "") }))];
+    if (r) {
+      const diff = d.all_formations_win_rate != null ? (r.season_win_rate - d.all_formations_win_rate) * 100 : null;
+      out.push(el("div", { class: "tiles" },
+        tile("시즌 승률", pct(r.season_win_rate), diff != null ? `전체 평균 대비 ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}%p` : ""),
+        tile("평균 ELO", String(Math.round(r.avg_elo)), `${r.rankers.toLocaleString()}명`),
+        tile("평균 구단가치", r.avg_squad_value || "-", ""),
+        tile("최고 순위", `${r.best_rank}위`, "")));
+    }
+    out.push(el("h3", { text: "스쿼드" }), renderPitchArea(d));
+    out.push(el("h3", { text: "상대 포메이션별 전적" }), ...renderMatchups(d.matchups));
+    if (r) {
+      const teams = el("div", { class: "rows" }, ...d.team_colors.flatMap((t) =>
+        [el("span", { text: t.team_color }), el("span", { class: "v", text: `${t.rankers}명 · ${pct(t.share)}` })]));
+      const maxBand = Math.max(...d.rank_bands.map((b) => b.share_of_band), 0.0001);
+      const bands = el("div", { class: "band" }, ...d.rank_bands.flatMap((b) => [
+        el("span", { text: b.rank_band }),
+        hover(el("div", { class: "track" }, el("span", { style: `width:${(b.share_of_band / maxBand) * 100}%` })),
+              `${b.rank_band}\n${b.rankers}명 (구간의 ${pct(b.share_of_band)})`),
+        el("span", { class: "v", text: pct(b.share_of_band) })]));
+      out.push(el("div", { class: "two" },
+        el("div", {}, el("h3", { text: "많이 쓰는 팀컬러" }), teams),
+        el("div", {}, el("h3", { text: "순위 구간별 사용 비율" }), bands)));
+    }
+    out.push(el("p", { class: "foot", text: `랭킹 ${asOf(d.data_as_of)} · 스쿼드·경기 기록은 매일 상위 300명 수집분` }));
+    box.replaceChildren(...out);
+  } catch (e) {
+    box.replaceChildren(el("p", { class: "error", text: e.message }));
+  }
+}
 
 // --- chat ---
 let sessionId = null;
@@ -363,7 +397,7 @@ const say = (who, text) => {
 };
 async function send(text) {
   say("me", text);
-  const pending = say("bot", "…");
+  const pending = say("bot typing", "답을 만드는 중입니다… 그동안 왼쪽 포메이션을 눌러 둘러보세요.");
   try {
     const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
                                         body: JSON.stringify({ message: text, session_id: sessionId }) });
@@ -372,6 +406,8 @@ async function send(text) {
   } catch (e) {
     pending.textContent = "오류: " + e.message;
   }
+  pending.classList.remove("typing");
+  $("log").scrollTop = $("log").scrollHeight;
 }
 $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
@@ -380,14 +416,16 @@ $("chat-form").addEventListener("submit", (ev) => {
   $("msg").value = "";
   send(text);
 });
-for (const q of ["4-2-3-1 볼란치 2명 추천해줘", "랭커 포메이션 알려줘", "아스날 볼란치 5억 이하로 3명", "어떤 데이터 있어?"]) {
+for (const q of ["4-2-3-1 쓰는 랭커들 베스트 11 알려줘", "레알 5억 미만 공격수 추천해줘", "상위 10000명 기준 승률 높은 포메이션은?",
+                 "라이스랑 수비멘디 비교해줘"]) {
   const b = el("button", { type: "button", text: q });
   b.addEventListener("click", () => send(q));
   $("examples").append(b);
 }
-say("bot", "팀컬러·포메이션·역할로 물어보세요. 수치는 공식 랭킹과 랭커 경기 기록에서 나옵니다.");
+say("bot", "무엇이든 물어보세요. 선수 추천, 스쿼드, 예산·급여, 능력치, 메타 동향까지 랭커 데이터로 답합니다. 수치는 공식 랭킹과 랭커 경기 기록에서 나옵니다.");
 
-loadMeta().then(loadFormations).catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
+loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
+loadFormations();
 </script>
 </body>
 </html>

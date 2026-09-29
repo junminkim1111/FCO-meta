@@ -29,6 +29,7 @@ RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
 MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
+MAX_EVIDENCE = 4  # 답 끝에 붙이는 [근거] 줄 수
 
 
 @dataclass
@@ -36,6 +37,7 @@ class GeminiTurn:
     text: str
     tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     finish_reason: str | None = None
+    evidence: list[str] = field(default_factory=list)  # 답 끝에 붙인 [근거] 줄 (도구 결과에서 만듦)
 
 
 def unavailable_reason() -> str | None:
@@ -272,6 +274,7 @@ class GeminiChat:
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
+        evidence: list[str] = []  # 모델이 아니라 도구 결과로 만든 근거 줄 → 답 끝에 붙인다
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
             if final:
@@ -291,7 +294,9 @@ class GeminiChat:
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
                 if not text:  # 도구를 끈 마지막 요청에서도 글이 없으면
                     return GeminiTurn("답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요.", calls, "tool_limit")
-                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish)
+                if evidence:
+                    text += "\n\n" + "\n".join(f"[근거] {e}" for e in evidence[:MAX_EVIDENCE])
+                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish, evidence)
 
             parts = []
             for fc in function_calls:
@@ -314,6 +319,9 @@ class GeminiChat:
                     else:
                         log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
                         payload = {"result": result}
+                        line = self.toolbox.evidence(fc.name, result)
+                        if line and line not in evidence:
+                            evidence.append(line)
                 part = types.Part.from_function_response(name=fc.name, response=payload)
                 if fc.id:
                     part.function_response.id = fc.id

@@ -221,6 +221,7 @@ class PlayerUsage:
     avg_grade: float | None
     grade_dist: dict[int, int]
     avg_elo: float | None
+    avg_ranker_win_rate: float | None = None  # 사용 랭커들의 시즌 승률(랭킹 페이지) 평균
     seasons: list[SeasonUsage] = field(default_factory=list)  # 많이 쓰인 순
 
 
@@ -245,7 +246,7 @@ def top_players(
     conn: sqlite3.Connection,
     team_color_id: int,
     formation: str,
-    role: str,
+    role: str | tuple[str, ...],
     *,
     top: int = 5,
     by: str = "pid",
@@ -254,25 +255,28 @@ def top_players(
     data_as_of: str | None = None,
     min_sample: int = MIN_SAMPLE,
 ) -> UsageResult:
-    """Most used cards (`by="sp_id"`) or players across seasons (`by="pid"`) in `role`.
+    """Most used cards (`by="sp_id"`) or players across seasons (`by="pid"`) in `role`
+    (or several roles, e.g. ("RW", "LW") — a player starts once per squad, so counts add up).
 
     Falls back to the team color's all-formation stats when fewer than `min_sample` squads
     of `formation` were collected.
     """
-    if role not in ROLES:
+    roles = (role,) if isinstance(role, str) else tuple(role)
+    if not roles or any(r not in ROLES for r in roles):
         raise ValueError(f"unknown role: {role}")
     if by not in ("sp_id", "pid"):
         raise ValueError("by must be 'sp_id' or 'pid'")
     UsageStore(conn)
-    result = _query(conn, team_color_id, formation, role, top, by, strict, mode, data_as_of)
+    result = _query(conn, team_color_id, formation, roles, top, by, strict, mode, data_as_of)
     if result.sample_size < min_sample and formation != ALL_FORMATIONS:
-        fallback = _query(conn, team_color_id, ALL_FORMATIONS, role, top, by, strict, mode, data_as_of)
+        fallback = _query(conn, team_color_id, ALL_FORMATIONS, roles, top, by, strict, mode, data_as_of)
         if fallback.sample_size > result.sample_size:
             return UsageResult(**{**fallback.__dict__, "requested_formation": formation})
     return result
 
 
-def _query(conn, team_color_id, formation, role, top, by, strict, mode, data_as_of) -> UsageResult:
+def _query(conn, team_color_id, formation, roles, top, by, strict, mode, data_as_of) -> UsageResult:
+    role = "+".join(roles)
     sample_where = "team_color_id = ? AND formation = ? AND strict = ? AND mode = ?"
     args = [team_color_id, formation, int(strict), mode]
     if data_as_of is None:
@@ -289,8 +293,9 @@ def _query(conn, team_color_id, formation, role, top, by, strict, mode, data_as_
         "SELECT u.*, sp.name, ss.class_name FROM usage_stats u"
         " LEFT JOIN meta_spid sp ON sp.sp_id = u.sp_id"
         " LEFT JOIN meta_season ss ON ss.season_id = u.season_id"
-        f" WHERE u.{sample_where.replace(' AND ', ' AND u.')} AND u.data_as_of = ? AND u.role = ?",
-        [*args, data_as_of, role],
+        f" WHERE u.{sample_where.replace(' AND ', ' AND u.')} AND u.data_as_of = ?"
+        f" AND u.role IN ({','.join('?' * len(roles))})",
+        [*args, data_as_of, *roles],
     ).fetchall()
 
     grouped: dict[int, list[sqlite3.Row]] = defaultdict(list)
@@ -315,10 +320,16 @@ def _merge(key: int, rows: list[sqlite3.Row], squads: int) -> PlayerUsage:
     dist: Counter[int] = Counter()
     for r in rows:
         dist.update({int(g): c for g, c in json.loads(r["grade_dist"]).items()})
-    seasons = sorted(
-        (SeasonUsage(r["sp_id"], r["season_id"], r["class_name"], r["ranker_count"], r["avg_grade"]) for r in rows),
-        key=lambda s: -s.ranker_count,
-    )
+    by_card: dict[int, list[sqlite3.Row]] = defaultdict(list)  # 여러 역할을 합치면 같은 카드가 역할마다 한 행
+    for r in rows:
+        by_card[r["sp_id"]].append(r)
+    seasons = []
+    for sp_id, rs in by_card.items():
+        count = sum(r["ranker_count"] for r in rs)
+        grades = [(r["avg_grade"], r["ranker_count"]) for r in rs if r["avg_grade"] is not None]
+        avg_grade = round(sum(g * w for g, w in grades) / sum(w for _, w in grades), 4) if grades else None
+        seasons.append(SeasonUsage(sp_id, rs[0]["season_id"], rs[0]["class_name"], count, avg_grade))
+    seasons.sort(key=lambda s: -s.ranker_count)
     return PlayerUsage(
         key=key,
         name=next((r["name"] for r in rows if r["name"]), None),
@@ -329,5 +340,121 @@ def _merge(key: int, rows: list[sqlite3.Row], squads: int) -> PlayerUsage:
         avg_grade=weighted("avg_grade"),
         grade_dist=dict(sorted(dist.items())),
         avg_elo=weighted("avg_elo"),
+        avg_ranker_win_rate=weighted("avg_ranker_win_rate"),
         seasons=seasons,
     )
+
+
+def role_slots(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> tuple[dict[str, int], int]:
+    """Role → number of starters in `formation` ({"GK": 1, "CB": 2, "DM": 2, …}, squads with that layout).
+
+    Taken from the most common starting layout among collected squads whose play matched the
+    formation (any snapshot, any team color). ({}, 0) if no such squad was collected.
+    """
+    UsageStore(conn)
+    squads: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    for match_id, ouid, position in conn.execute(
+        "SELECT DISTINCT q.match_id, q.ouid, p.sp_position FROM ranker_squad q"
+        " JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
+        " JOIN match_player p ON p.match_id = q.match_id AND p.ouid = q.ouid AND p.starter = 1"
+        " WHERE q.accepted = 1 AND q.formation_match = 1 AND s.formation = ? AND q.mode = ?",
+        (formation, mode),
+    ):
+        if role := _POSITION_ROLE.get(position):
+            squads[(match_id, ouid)][role] += 1
+    layouts = Counter(tuple(sorted(c.items())) for c in squads.values() if sum(c.values()) == 11)
+    if not layouts:
+        return {}, 0
+    layout, n = layouts.most_common(1)[0]
+    order = list(ROLES)
+    return dict(sorted(layout, key=lambda kv: order.index(kv[0]))), n
+
+
+@dataclass(frozen=True)
+class RoleUsage:
+    role: str
+    rank: int  # 이 역할에서 사용 랭커 수 순위 (1 = 가장 많이 쓰임)
+    players_in_role: int
+    usage: PlayerUsage
+
+
+def player_roles(
+    conn: sqlite3.Connection,
+    team_color_id: int,
+    formation: str,
+    pid: int,
+    *,
+    strict: bool = False,
+    mode: str = "1vs1",
+) -> tuple[str | None, int, list[RoleUsage]]:
+    """(data_as_of, sample size, roles the player started in, most used first) for the latest snapshot."""
+    UsageStore(conn)
+    where = "team_color_id = ? AND formation = ? AND strict = ? AND mode = ?"
+    args = [team_color_id, formation, int(strict), mode]
+    row = conn.execute(f"SELECT MAX(data_as_of) FROM usage_sample WHERE {where}", args).fetchone()
+    data_as_of = row[0]
+    if data_as_of is None:
+        return None, 0, []
+    squads = conn.execute(f"SELECT squads FROM usage_sample WHERE {where} AND data_as_of = ?", [*args, data_as_of]).fetchone()[0]
+    rows = conn.execute(
+        "SELECT u.*, sp.name, ss.class_name FROM usage_stats u"
+        " LEFT JOIN meta_spid sp ON sp.sp_id = u.sp_id"
+        " LEFT JOIN meta_season ss ON ss.season_id = u.season_id"
+        f" WHERE u.{where.replace(' AND ', ' AND u.')} AND u.data_as_of = ? AND u.pid = ?",
+        [*args, data_as_of, pid],
+    ).fetchall()
+    by_role: dict[str, list[sqlite3.Row]] = defaultdict(list)
+    for r in rows:
+        by_role[r["role"]].append(r)
+    out = []
+    for role, rs in by_role.items():
+        usage = _merge(pid, rs, squads)
+        counts = [
+            n for (n,) in conn.execute(
+                f"SELECT SUM(ranker_count) FROM usage_stats WHERE {where} AND data_as_of = ? AND role = ? GROUP BY pid",
+                [*args, data_as_of, role],
+            )
+        ]  # fmt: skip
+        out.append(RoleUsage(role, 1 + sum(n > usage.ranker_count for n in counts), len(counts), usage))
+    out.sort(key=lambda r: -r.usage.ranker_count)
+    return data_as_of, squads, out
+
+
+def usage_history(
+    conn: sqlite3.Connection, team_color_id: int, formation: str, pid: int, *, limit: int = 14, mode: str = "1vs1"
+) -> list[dict]:
+    """Per snapshot (oldest first): how many sampled rankers started the player in any role."""
+    UsageStore(conn)
+    samples = conn.execute(
+        "SELECT data_as_of, squads FROM usage_sample WHERE team_color_id = ? AND formation = ? AND strict = 0 AND mode = ?"
+        " ORDER BY data_as_of DESC LIMIT ?",
+        (team_color_id, formation, mode, limit),
+    ).fetchall()
+    used = dict(
+        conn.execute(
+            "SELECT data_as_of, SUM(ranker_count) FROM usage_stats WHERE team_color_id = ? AND formation = ? AND strict = 0"
+            " AND mode = ? AND pid = ? GROUP BY data_as_of",
+            (team_color_id, formation, mode, pid),
+        ).fetchall()
+    )
+    return [
+        {"data_as_of": as_of, "rankers": used.get(as_of, 0), "sample_size": n, "usage_rate": round(used.get(as_of, 0) / n, 4)}
+        for as_of, n in reversed(samples)
+    ]
+
+
+def squad_range(conn: sqlite3.Connection, data_as_of: str, mode: str = "1vs1") -> int:
+    """Squad collection range of a snapshot: the largest k such that ranks 1..k were all processed.
+
+    The ranking may cover TOP 10,000 while squads cover only the top few hundred (API limit), and
+    team-color collections add scattered deeper ranks — those don't extend the range.
+    """
+    UsageStore(conn)
+    k = 0
+    for (rank,) in conn.execute(
+        "SELECT DISTINCT rank FROM ranker_squad_status WHERE data_as_of = ? AND mode = ? ORDER BY rank", (data_as_of, mode)
+    ):
+        if rank != k + 1:
+            break
+        k = rank
+    return k

@@ -1,7 +1,7 @@
-"""Keep prices fresh for the players top rankers actually use.
+"""Keep prices (and salaries) fresh for the players top rankers actually use.
 
 The datacenter search can't look up a card by spid, but a full player name returns every season
-card of that player with its 1~13강 prices. So: take the most used players from `usage_stats`
+card of that player with its 1~13강 prices and salary. So: take the used players from `usage_stats`
 (all rankers, all formations), search each by name (one request per player), keep only the season
 cards rankers actually used, and skip players refreshed recently.
 """
@@ -21,7 +21,7 @@ from .storage import MarketStorage
 
 log = logging.getLogger(__name__)
 
-DEFAULT_PLAYERS = 150
+DEFAULT_PLAYERS = 2000  # 사실상 수집된 랭커가 쓴 선수 전부 (300명 × 선발 11명 → 보통 수백 명, 선수당 약 2초)
 MAX_AGE = timedelta(hours=20)  # 이보다 최근에 받은 선수는 다시 받지 않음 (매일 실행 기준)
 
 

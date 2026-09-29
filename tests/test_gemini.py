@@ -40,7 +40,10 @@ def toolbox(db):  # noqa: F811
 
 def test_function_declarations_accepted_by_sdk():
     decls = {d.name: d for d in function_declarations()}
-    assert set(decls) == {"resolve_terms", "list_available_data", "list_formations", "recommend_players", "get_player_detail"}
+    assert set(decls) == {
+        "resolve_terms", "list_available_data", "list_formations", "recommend_players", "recommend_squad",
+        "get_player_detail", "get_meta_trends", "query_squads", "query_rankers", "get_formation_overview",
+    }  # fmt: skip
     assert decls["recommend_players"].parameters_json_schema["required"] == ["role"]  # 팀컬러 생략 = 전체 랭커
 
 
@@ -60,7 +63,10 @@ def test_tool_round_trip(toolbox):
 
     turn = chat.ask("아스날 4-2-3-1 볼란치 2명 추천")
 
-    assert turn.text == "라이스가 1순위입니다." and turn.finish_reason == "STOP"
+    assert turn.text.startswith("라이스가 1순위입니다.") and turn.finish_reason == "STOP"
+    # 근거 줄은 모델이 아니라 도구 결과에서 만든다
+    assert turn.evidence == ["아스널 4-2-3-1 DM — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)"]
+    assert turn.text.endswith("\n\n[근거] 아스널 4-2-3-1 DM — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)")
     assert turn.tool_calls[0][0] == "recommend_players" and seen == ["recommend_players"]
     first, second = client.models.requests
     assert first["model"] == "gemini-test"

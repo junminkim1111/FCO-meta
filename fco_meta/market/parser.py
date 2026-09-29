@@ -5,7 +5,7 @@ from datetime import date
 
 from selectolax.parser import HTMLParser, Node
 
-from .models import MAX_GRADE, Card, PriceHistory
+from .models import MAX_GRADE, Card, CardDetail, PriceHistory
 
 _UNIT_ID_RE = re.compile(r"area_playerunit_(\d+)")
 _SEASON_RE = re.compile(r"/season/([^/\"']+)\.png")
@@ -62,6 +62,55 @@ def _parse_card(spid: int, unit: Node) -> Card:
         rating=rating,
         rating_count=rating_count,
         prices=prices,
+    )
+
+
+_BIRTH_RE = re.compile(r"(\d{4})\.(\d{2})\.(\d{2})")
+_FOOT_RE = re.compile(r"L\s*(\d)\D+R\s*(\d)")
+
+
+def parse_player_preview(html: str, spid: int, grade: int) -> CardDetail:
+    """Parse `/datacenter/PlayerPreView` (card popup: profile, traits, 6 summary + 34 detailed stats, clubs)."""
+    tree = HTMLParser(html)
+    positions = {}
+    for pos in tree.css(".info_ab .position"):
+        name, value = _text(pos, ".txt"), _to_int(_text(pos, ".value"))
+        if name and value is not None:
+            positions[name] = value
+    if not positions:
+        raise ParseError(f"card {spid}: preview has no position ratings")
+    birth = _BIRTH_RE.search(_text(tree.body, ".info_etc .birth"))
+    foot = _FOOT_RE.search(_text(tree.body, ".info_etc .foot"))
+    skill = tree.css_first(".info_etc .skill span")
+
+    def stat_list(selector: str) -> dict[str, int]:
+        out = {}
+        for li in tree.css(selector):
+            name, value = _text(li, ".txt"), _to_int(_text(li, ".value"))
+            if name and value is not None:
+                out[name] = value
+        return out
+
+    clubs = [
+        {"years": _text(li, ".year"), "club": _text(li, ".club"), "loan": _text(li, ".rent")}
+        for li in tree.css(".data_detail_club .data_table li")
+    ]
+    return CardDetail(
+        spid=spid,
+        grade=grade,
+        positions=positions,
+        birth="-".join(birth.groups()) if birth else None,
+        height=_to_int(_text(tree.body, ".info_etc .height").removesuffix("cm")),
+        weight=_to_int(_text(tree.body, ".info_etc .weight").removesuffix("kg")),
+        body_type=_text(tree.body, ".info_etc .physical") or None,
+        skill_moves=skill.text().count("★") if skill else None,
+        left_foot=int(foot.group(1)) if foot else None,
+        right_foot=int(foot.group(2)) if foot else None,
+        reputation=_text(tree.body, ".info_etc .season") or None,
+        traits=[t for t in (_text(n, ".desc") for n in tree.css(".skill_wrap > span")) if t],
+        summary=stat_list(".content_middle li.ab"),
+        stats=stat_list(".content_bottom li.ab"),
+        clubs=clubs,
     )
 
 

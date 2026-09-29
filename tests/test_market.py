@@ -80,6 +80,18 @@ def test_resolve_role(text, role):
 
 def test_resolve_unknown_role():
     assert resolve_role("리베로") is None
+    assert resolve_role("윙어") is None  # 여러 역할 → resolve_roles
+
+
+@pytest.mark.parametrize(
+    "text,roles",
+    [("윙어", ("RW", "LW")), ("공격수", ("ST", "CF", "RW", "LW")), ("볼란치", ("DM",)), ("RW, LW", ("RW", "LW")),
+     ("rw+lw+rw", ("RW", "LW")), ("리베로", None), ("RW,리베로", None)],
+)  # fmt: skip
+def test_resolve_roles(text, roles):
+    from fco_meta.market.roles import resolve_roles
+
+    assert resolve_roles(text) == roles
 
 
 @pytest.mark.parametrize(

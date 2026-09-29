@@ -71,3 +71,36 @@ def test_unfiltered_crawl_records_no_membership(tmp_path, fixture_html):
     crawl_rankings(client, storage, RankQuery(team_color_id=1004, team_color_id_2=1016), max_pages=1)
 
     assert storage.conn.execute("SELECT COUNT(*) FROM ranker_team_color").fetchone()[0] == 0
+
+
+def test_long_crawl_restarts_when_the_ranking_refreshes(tmp_path, fixture_html):
+    html = fixture_html("rank_inner_1vs1_p1.html")
+    newer = html.replace("2026-09-28 20:00:00", "2026-09-28 21:00:00")
+    served = []
+
+    def handler(request):  # 첫 페이지 이후 정각 갱신
+        served.append(request.url.params["n4pageno"])
+        return httpx.Response(200, text=html if len(served) == 1 else newer)
+
+    storage = Storage(tmp_path / "db.sqlite")
+    result = crawl_rankings(client_for(handler), storage, RankQuery(), max_pages=2, restarts=1)
+    assert result.status == "ok" and served == ["1", "2", "1", "2"]
+    runs = [tuple(r) for r in storage.conn.execute("SELECT data_as_of, status FROM crawl_run ORDER BY id")]
+    assert runs == [("2026-09-28T20:00:00+09:00", "refreshed"), ("2026-09-28T21:00:00+09:00", "ok")]
+
+    served.clear()
+    assert crawl_rankings(client_for(handler), storage, RankQuery(), max_pages=2).status == "mixed_as_of"  # 재시작 없음
+
+
+def test_stale_page_after_a_refresh_is_fetched_again(tmp_path, fixture_html):
+    html = fixture_html("rank_inner_1vs1_p1.html")
+    newer = html.replace("2026-09-28 20:00:00", "2026-09-28 21:00:00")
+    replies = iter([newer, html, html, newer])  # 2페이지가 두 번 이전 데이터로 왔다가 갱신됨
+    slept = []
+    storage = Storage(tmp_path / "db.sqlite")
+    client = client_for(lambda r: httpx.Response(200, text=next(replies)))
+    result = crawl_rankings(client, storage, RankQuery(), max_pages=2, restarts=1, sleep=slept.append)
+    assert result.status == "ok" and result.pages == 2 and len(slept) == 2
+    assert [tuple(r) for r in storage.conn.execute("SELECT data_as_of, status FROM crawl_run")] == [
+        ("2026-09-28T21:00:00+09:00", "ok")
+    ]

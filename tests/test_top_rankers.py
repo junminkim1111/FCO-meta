@@ -67,7 +67,7 @@ def test_chatbot_without_team_color_uses_all_rankers(tmp_path, fixture_html):
     bot = RuleBot(Toolbox(storage.conn, min_sample=1))
 
     text = bot.ask("4-2-3-1 볼란치 추천").text
-    assert text.startswith("전체 랭커 4-2-3-1 볼란치(DM) 추천 — 랭킹 상위 20명 중 랭커")
+    assert text.startswith("전체 랭커 4-2-3-1 볼란치(DM) 추천 — 랭킹 상위 10명 중 랭커")  # 랭킹은 20명, 스쿼드는 상위 10명
     assert "매일 수집: 랭킹 상위 20명, 그중 스쿼드 10명" in bot.ask("어떤 데이터 있어?").text
 
     formations = bot.ask("랭커 포메이션 알려줘")

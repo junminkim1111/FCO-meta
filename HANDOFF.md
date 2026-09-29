@@ -38,7 +38,8 @@
 1. **사용자의 매일 수집 결과 확인 (최우선)**
    - 사용자 DB는 스쿼드가 1/340명만 수집된 상태입니다. 원인은 클라우드 세션이 같은 키의 한도를 소진한 것입니다(`stopped_rate_limit`).
    - 사용자가 KST 자정 이후 `run_daily.command`를 다시 돌리고 결과를 알려주기로 했습니다.
-   - 확인 방법: `python -m fco_meta.daily status`. 스냅샷, 수집 상태, 포메이션별 표본, 오늘 API 사용량, 중단 사유가 나옵니다.
+   - 확인 방법: `python -m fco_meta.daily status
+python -m fco_meta.daily rank                                                 # 랭킹 상위 10,000명만 웹에서 (약 17분)`. 스냅샷, 수집 상태, 포메이션별 표본, 오늘 API 사용량, 중단 사유가 나옵니다.
    - 문제가 있으면 `STOP_HINTS`(pipeline/squads.py)의 설명과 로그를 보고 대응합니다.
 2. **웹 화면 이미지 확인**
    - 선수 사진과 시즌 아이콘은 클라우드 환경에서 넥슨 CDN이 막혀 확인하지 못했습니다.
@@ -49,7 +50,27 @@
      - 그것도 실패하면 이름 첫 글자를 표시합니다.
    - 관련 코드: `fco_meta/web/static/index.html`의 `avatar()`.
    - 로컬에서 사진이 안 뜨면 올바른 경로를 찾아 고칩니다.
-3. **남은 로드맵**
+3. **챗봇 답변 품질 개선 (2026-09-29 로컬 세션, 진행 중)**
+   - 사용자 요청: 스쿼드 전체 추천, 선수 비교·대체, 예산·가성비, 메타 동향. 불만: 못 알아듣는 질문, 수치 신뢰. Gemini 우선.
+   - 추가: `recommend_squad`, `get_meta_trends`, `recommend_players(sort="price")`, `get_player_detail` 범위·역할 요약·추이,
+     Gemini 답 끝 `[근거]` 줄(도구 결과로 생성), 프롬프트 개편, 포메이션 `4231` 표기·역할 별칭, 규칙 기반 스쿼드·메타 의도.
+   - 질문 유형을 늘리는 대신 **범용 조회 `query_squads`**(`analytics/query.py`)를 둠: 원본 선발 명단을 조건으로 거르고 묶어 집계.
+     전용 도구는 계산 과정이 복잡한 것(스쿼드 예산 맞추기, 추이 비교)만. 자주 막히는 질문은 평가 보고서로 찾아 보강.
+   - 이어서 추가: 팀컬러 별칭 파일(`data/team_color_aliases.json`, AC밀란 = 밀라노 FC는 사용자 확인), 묶음 포지션(윙어 = RW+LW …),
+     급여(카드 table의 salary) 필터·합계 한도, `recommend_squad(slots=…)` 조합 최적화, 시즌 전적 승률(`season_win_rate`),
+     포지션별 평균 시세·급여, 카드 상세 수집(`market/details.py`)과 능력치 조회(`stat`, `card_profiles`).
+   - 사용자 결정: 시세 수집은 쓰인 선수 전부, 데이터센터에서는 최대한 많은 정보 수집. 최근 20경기 승률은 개발 키로 불가(랭커당 20회) → 시즌 전적 사용.
+   - 수집 확대(사용자 결정): 매일 **상위 300명**(한도 여유), match-detail 전체 기록 저장(`match_player.stats`, `match_team.detail/shots`, JSON),
+     Open API `ranker-stats`(TOP 10,000 랭커 20경기 평균, `pipeline/ranker_stats.py`, 하루 최대 30회·7일 유지) → `query_squads(match_stat)`, `top10000_stats`.
+   - 범위 분리(사용자 결정): 랭킹은 웹에서 **상위 10,000명**(`--rank-top`, `daily rank`로 단독 실행), 스쿼드는 **상위 300명**(`--top`).
+     긴 크롤링은 정각 갱신 시 처음부터 한 번 더(`crawl_rankings(restarts=1)`). 스쿼드 범위는 `squad_range()`(1위부터 연속 처리된 순위),
+     랭킹 범위는 `unfiltered_coverage()`. 선수 없는 랭커 질문은 `query_rankers`(`analytics/rankers.py`).
+   - 웹 개편(사용자 요청): 선수 추천 패널 제거(자연어 챗봇 중심), 포메이션 막대 클릭 → 상세 패널(`get_formation_overview`,
+     `analytics/formation_view.py`: 최상위 랭커 스쿼드·베스트 11·상대 포메이션별 전적 + 10,000명 통계). 선수 사진 CDN 경로는 실제로 동작 확인.
+   - **다음**: 매일 수집으로 실데이터가 쌓이면 `python -m fco_meta.chatbot.evaluate`로 `eval/questions.txt`(40개)를 돌려 보고서를 검토하고 다듬기.
+     첫 실험에서 모델이 비율을 직접 더한 수치("약 87%")를 쓴 적이 있음 → 보고서의 "확인 필요 숫자"로 추적.
+   - 작업 폴더는 `~/fco-meta` (DB·.env가 여기 있음). `~/Desktop/py/FCO_meta/fco-meta`는 예전 클론.
+4. **남은 로드맵**
    - 알림(수집 실패 시)
    - 서비스 키로 전환하면 `--top`을 확대
    - 서비스로 공개하기 전 이용약관 확인
@@ -59,7 +80,8 @@
 ```
 fco_meta/
   crawler/     데이터센터 랭킹 크롤러 (rank_inner), 팀컬러 목록, membership.py(표시 팀컬러·엠블럼으로 소속 추정)
-  market/      시세 크롤러 (선수 검색 PlayerList, 시세 이력), refresh.py(많이 쓰인 선수 150명 시세 갱신, 쓰인 시즌 카드만 저장)
+  market/      시세 크롤러 (선수 검색 PlayerList, 시세 이력), refresh.py(쓰인 선수 전부 시세·급여, 쓰인 시즌 카드만),
+               details.py(카드 팝업 PlayerPreView → card_detail: 능력치·신체·특성, 30일 유지)
   openapi/     Open API 클라이언트 (초당 제한, CallBudget = api_usage 테이블에 KST 일자별 사용량, 재시도)
   pipeline/    닉네임→ouid→user/match→match-detail로 스쿼드 수집, 포지션 조합→포메이션 추론
   analytics/   usage.py: usage_sample / usage_stats 집계 (team_color_id 0 = 전체 랭커, formation '*' = 전체)
@@ -74,12 +96,13 @@ tests/         pytest (네트워크 없음, fixtures/openapi/는 익명화된 �
 ### 주요 명령
 
 ```bash
-python -m fco_meta.daily run [--top 330 --no-wait --price-players 150 -v]   # 매일 수집 (옵션은 서브커맨드 뒤)
+python -m fco_meta.daily run [--top 300 --no-wait --ranker-stats-calls 30 --price-players 2000 --detail-cards 600 -v]   # 매일 수집
 python -m fco_meta.daily status
 python -m fco_meta.daily schedule --at 00:00                                 # KST 자정마다 실행 (프로세스 상주)
-python -m fco_meta.pipeline squads --top 330 | meta | budget | formations
+python -m fco_meta.pipeline squads --top 300 | meta | budget | formations | ranker-stats
 python -m fco_meta.analytics ...                                              # README '집계' 참고
-python -m fco_meta.market used --limit 150
+python -m fco_meta.market used | details
+python -m fco_meta.chatbot.evaluate [--only 1-10]                              # eval/questions.txt로 챗봇 평가 → reports/
 python -m fco_meta.chatbot [--backend gemini|rules] [--list-models] [--ask "..."]
 python -m fco_meta.web [--backend rules] [--port 8000]
 ```
@@ -90,7 +113,7 @@ python -m fco_meta.web [--backend rules] [--port 8000]
 - 랭킹 페이지 스냅샷은 약 2.5시간 늦게 갱신되고, Open API 반영은 약 2시간 늦습니다.
   그래서 자정에 실행하면 대개 대기 없이 바로 수집됩니다.
 - 랭커 1명당 호출: `id` 1회(ouid 캐시 후 0회) + `user/match` 1회 + `match-detail` 몇 회.
-  하루 1,000회로 약 330명을 수집합니다. 일일 수집에서는 메타데이터 갱신용 3회를 남겨 둡니다(META_RESERVE).
+  하루 1,000회로 약 330명이 한계라 여유를 두고 300명을 수집합니다. 메타데이터 3회(META_RESERVE)와 랭커 스탯 몫(최대 30회, 남은 예산의 10% 이하)을 남겨 둡니다.
 - matchId의 앞 4바이트는 경기 시작 시각(unix)입니다. 이 시각이 스냅샷 이후인 경기는 상세 호출 없이 건너뜁니다.
 - 팀컬러 소속은 필터 조회 결과(`source='filter'`)를 표시 기반 추정(`'display'`)보다 우선합니다.
   같은 이름의 클럽/국가(예: 대한민국)는 데이터가 있는 쪽으로 해석하고 "(국가)/(클럽)"을 붙여 구분합니다.

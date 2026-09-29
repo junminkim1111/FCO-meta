@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import Card, PriceHistory
+from .models import Card, CardDetail, PriceHistory
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS card (
@@ -55,6 +56,26 @@ CREATE TABLE IF NOT EXISTS price_history (
 );
 
 -- 카드·강화별 가장 최근 수집 가격
+-- 카드 상세 (데이터센터 카드 팝업, 1강 기준): 신체·개인기·주발·특성·능력치. 능력치는 거의 바뀌지 않아 드물게 갱신
+CREATE TABLE IF NOT EXISTS card_detail (
+    spid        INTEGER PRIMARY KEY,
+    grade       INTEGER NOT NULL,       -- 능력치 기준 강화
+    positions   TEXT NOT NULL,          -- {"CM": 125, "CDM": 125}
+    birth       TEXT,
+    height      INTEGER,
+    weight      INTEGER,
+    body_type   TEXT,
+    skill_moves INTEGER,
+    left_foot   INTEGER,
+    right_foot  INTEGER,
+    reputation  TEXT,
+    traits      TEXT NOT NULL,          -- ["커맨더", …]
+    summary     TEXT NOT NULL,          -- {"스피드": 121, …}
+    stats       TEXT NOT NULL,          -- {"속력": 124, … 34개}
+    clubs       TEXT NOT NULL,
+    fetched_at  TEXT NOT NULL
+);
+
 CREATE VIEW IF NOT EXISTS card_price_latest AS
 SELECT p.spid, p.grade, p.price, p.fetched_at
 FROM card_price p
@@ -110,6 +131,16 @@ class MarketStorage:
                 "INSERT OR REPLACE INTO card_role (spid, role, seen_at) VALUES (?, ?, ?)",
                 [(c.spid, role, now) for c in cards],
             )
+        self.conn.commit()
+
+    def save_card_detail(self, d: CardDetail, fetched_at: str | None = None) -> None:
+        dump = lambda v: json.dumps(v, ensure_ascii=False)  # noqa: E731
+        self.conn.execute(
+            "INSERT OR REPLACE INTO card_detail VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (d.spid, d.grade, dump(d.positions), d.birth, d.height, d.weight, d.body_type, d.skill_moves,
+             d.left_foot, d.right_foot, d.reputation, dump(d.traits), dump(d.summary), dump(d.stats), dump(d.clubs),
+             fetched_at or _now()),
+        )  # fmt: skip
         self.conn.commit()
 
     def save_price_history(self, history: PriceHistory) -> None:

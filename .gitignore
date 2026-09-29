@@ -11,3 +11,6 @@ __pycache__/
 *.sqlite
 *.sqlite-journal
 raw/
+
+# chatbot evaluation reports (python -m fco_meta.chatbot.evaluate)
+reports/

@@ -2,7 +2,7 @@
 
     python -m fco_meta.pipeline meta                                   # spid/seasonid/spposition 메타데이터 저장
     python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
-    python -m fco_meta.pipeline squads --top 330                       # 필터 없는 랭킹 상위 330명
+    python -m fco_meta.pipeline squads --top 300                       # 필터 없는 랭킹 상위 300명
     python -m fco_meta.pipeline formations --save                     # 포지션 조합 → 포메이션 표 갱신
     python -m fco_meta.pipeline budget                                 # 오늘 호출 수
 """
@@ -19,6 +19,8 @@ from ..crawler.teamcolors import TeamColorCatalog
 from ..openapi import CallBudget, NexonOpenApiClient
 from ..storage import Storage
 from .formation import DEFAULT_TABLE_PATH, FormationTable, signature_key
+from .ranker_stats import DEFAULT_CALLS as RANKER_STATS_CALLS
+from .ranker_stats import collect_ranker_stats
 from .squads import STOP_HINTS, SquadCollector, select_targets, select_top_targets
 from .store import PipelineStore
 
@@ -36,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("meta", help="메타데이터(spid, seasonid, spposition) 저장")
     sub.add_parser("budget", help="오늘(KST) 호출 수")
+    p_rs = sub.add_parser("ranker-stats", help="수집된 스쿼드의 카드·포지션별 TOP 10,000 랭커 20경기 평균 스탯 (1회 50쌍)")
+    p_rs.add_argument("--calls", type=int, default=RANKER_STATS_CALLS, help="이번 실행 최대 호출 수")
 
     p_sq = sub.add_parser("squads", help="팀컬러×포메이션 또는 상위 N명 랭커 스쿼드 수집")
     p_sq.add_argument("--top", type=int, help="필터 없이 수집한 랭킹의 상위 N명 (팀컬러·포메이션 대신)")
@@ -94,6 +98,12 @@ def _collect(storage: Storage, store: PipelineStore, args: argparse.Namespace) -
         if args.command == "meta":
             for name in ("spposition", "seasonid", "spid"):
                 print(f"{name}: {store.save_metadata(name, api.metadata(name))}")
+            return 0
+
+        if args.command == "ranker-stats":
+            r = collect_ranker_stats(api, storage.conn, max_calls=args.calls)
+            print(f"랭커 스탯: 대상 {r.pairs}쌍, 호출 {r.calls}회, 데이터 {r.saved}쌍 / 기록 없음 {r.empty}쌍"
+                  + (f", 남음 {r.remaining}쌍" if r.remaining else "") + (f" — 중단: {r.stopped}" if r.stopped else ""))  # fmt: skip
             return 0
 
         if args.top:

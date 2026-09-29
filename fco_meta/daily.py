@@ -1,6 +1,6 @@
 """Daily collection: ranking TOP N → squads → usage stats.
 
-    python -m fco_meta.daily run --top 330            # 지금 한 번
+    python -m fco_meta.daily run --top 300            # 지금 한 번
     python -m fco_meta.daily schedule --at 00:00      # 매일 00:00 (KST)에 반복 (프로세스를 띄워 둔다)
     python -m fco_meta.daily status                   # 수집 상태 확인
 
@@ -32,9 +32,14 @@ from .crawler import DatacenterClient, RankQuery, crawl_rankings
 from .crawler.membership import record_displayed_membership
 from .crawler.models import PAGE_SIZE
 from .crawler.teamcolors import TeamColorCatalog
+from .market.details import DEFAULT_CARDS, DetailResult, refresh_card_details
 from .market.refresh import DEFAULT_PLAYERS, RefreshResult, refresh_used_prices
+from .market.storage import SCHEMA as MARKET_SCHEMA
 from .openapi import CallBudget, NexonOpenApiClient
 from .pipeline import FormationTable, PipelineStore, SquadCollector, select_top_targets
+from .pipeline.ranker_stats import DEFAULT_CALLS as RANKER_STATS_CALLS
+from .pipeline.ranker_stats import SCHEMA as RANKER_STATS_SCHEMA
+from .pipeline.ranker_stats import RankerStatsResult, collect_ranker_stats
 from .pipeline.squads import API_DATA_LAG, STOP_HINTS
 from .storage import Storage, latest_unfiltered_snapshot
 
@@ -43,12 +48,16 @@ log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path("data/fco_meta.sqlite")
 META_RESERVE = 3  # 메타데이터 갱신용으로 남겨 둘 호출 수
+DEFAULT_TOP = 300  # 스쿼드를 받을 랭커 수. 개발 키 하루 1,000회: 랭커당 2~3회 → 약 750회, 나머지는 메타데이터·랭커 스탯·여유분
+DEFAULT_RANK_TOP = 10_000  # 웹에서 받을 랭킹 범위 (팀컬러·포메이션·시즌 전적, API 불필요, 500페이지 ≈ 17분)
+RANK_RESTARTS = 1  # 긴 랭킹 수집 도중 정각 갱신이 일어나면 처음부터 다시 받는 횟수
 
 
 @dataclass
 class DailyReport:
     data_as_of: str | None = None
     ranked: int = 0
+    full_ranking: str | None = None  # 2단계 전체 랭킹 수집 결과 ("상위 N명 (기준 시각)" 또는 실패 사유)
     membership_unresolved: int = 0
     waited_seconds: float = 0.0
     targets: int = 0
@@ -58,10 +67,13 @@ class DailyReport:
     meta_refreshed: bool = False
     usage_rows: int = 0
     prices: RefreshResult | None = None
+    details: DetailResult | None = None
+    ranker_stats: RankerStatsResult | None = None
 
     def lines(self) -> list[str]:
         return [
             f"스냅샷 {self.data_as_of}: 랭킹 {self.ranked}명 (팀컬러 미확인 {self.membership_unresolved}명)",
+            *([f"전체 랭킹: {self.full_ranking}"] if self.full_ranking else []),
             f"스쿼드 대상 {self.targets}명, API {self.api_calls}회"
             + (f", 대기 {self.waited_seconds / 60:.0f}분" if self.waited_seconds else "")
             + (", 메타데이터 갱신" if self.meta_refreshed else ""),
@@ -69,11 +81,28 @@ class DailyReport:
             f"집계 {self.usage_rows}행" + (f" — 중단: {STOP_HINTS.get(self.stopped, self.stopped)}" if self.stopped else ""),
         ] + (
             [
+                f"랭커 스탯(TOP 10,000 20경기 평균): {self.ranker_stats.saved + self.ranker_stats.empty}쌍 조회,"
+                f" API {self.ranker_stats.calls}회"
+                + (f", 다음 실행으로 넘김 {self.ranker_stats.remaining}쌍" if self.ranker_stats.remaining else "")
+                + (f" — 중단: {self.ranker_stats.stopped}" if self.ranker_stats.stopped else "")
+            ]
+            if self.ranker_stats
+            else []
+        ) + (
+            [
                 f"시세: 많이 쓰는 선수 {self.prices.players}명 중 {self.prices.requests}명 갱신"
                 f" (사용 시즌 카드 {self.prices.cards}장, 최근 갱신이라 건너뜀 {self.prices.skipped_fresh}명"
                 + (f", 실패 {self.prices.failed}명" if self.prices.failed else "") + ")"
             ]
             if self.prices
+            else []
+        ) + (
+            [
+                f"카드 상세(능력치): {self.details.fetched}장 수집"
+                + (f", 다음 실행으로 넘김 {self.details.remaining}장" if self.details.remaining else "")
+                + (f", 실패 {self.details.failed}장" if self.details.failed else "")
+            ]
+            if self.details
             else []
         )
 
@@ -81,13 +110,16 @@ class DailyReport:
 def run_daily(
     db: Path,
     *,
-    top: int = 330,
+    top: int = DEFAULT_TOP,
+    rank_top: int = DEFAULT_RANK_TOP,
     mode: str = "1vs1",
     wait_lag: bool = True,
     daily_limit: int = 1000,
     run_budget: int | None = None,
     datacenter: DatacenterClient | None = None,
     price_players: int = DEFAULT_PLAYERS,
+    detail_cards: int = DEFAULT_CARDS,
+    ranker_stats_calls: int = RANKER_STATS_CALLS,
     api: NexonOpenApiClient | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     sleep: Callable[[float], None] = time.sleep,
@@ -98,17 +130,23 @@ def run_daily(
     datacenter = datacenter or DatacenterClient()  # 랭킹(1단계)과 시세(7단계)에 같이 쓴다
     storage = Storage(db)
     try:
-        # 1. 랭킹 TOP N
+        # 1. 랭킹 TOP N (스쿼드 대상, 필수) + 2. 팀컬러 소속
         crawl = crawl_rankings(datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(top / PAGE_SIZE))
         latest = latest_unfiltered_snapshot(storage.conn, mode)
         if latest is None:
             raise RuntimeError(f"ranking crawl failed (status={crawl.status})")
         report.data_as_of = latest[0]
         report.ranked = min(top, latest[1])
-
-        # 2. 팀컬러 소속
         members = record_displayed_membership(storage.conn, report.data_as_of, mode, TeamColorCatalog.load())
         report.membership_unresolved = members.unresolved
+
+        # 1-1. 전체 랭킹 TOP rank_top (분포·시즌 전적용, 실패해도 스쿼드 수집은 계속)
+        if rank_top > top:
+            try:
+                report.full_ranking = crawl_full_ranking(storage, datacenter, rank_top, mode)
+            except Exception as exc:
+                log.warning("full ranking crawl failed: %s", exc)
+                report.full_ranking = f"실패 ({exc})"
 
         # 3. API 반영 지연 대기
         ready_at = datetime.fromisoformat(report.data_as_of).astimezone(timezone.utc) + API_DATA_LAG
@@ -120,7 +158,9 @@ def run_daily(
 
         # 4. 스쿼드
         budget = CallBudget(storage.conn, daily_limit=daily_limit)
-        allowed = max(budget.remaining() - META_RESERVE, 0)
+        # 메타데이터(3회)와 랭커 스탯 몫(최대 ranker_stats_calls회, 남은 예산의 10% 이하)은 남겨 둔다
+        stats_reserve = min(max(ranker_stats_calls, 0), budget.remaining() // 10)
+        allowed = max(budget.remaining() - META_RESERVE - stats_reserve, 0)
         budget.run_limit = min(run_budget, allowed) if run_budget is not None else allowed
         api = api or NexonOpenApiClient(budget=budget)
         api.budget = budget
@@ -146,6 +186,14 @@ def run_daily(
                 report.meta_refreshed = True
             except Exception as exc:  # 메타데이터 실패는 다음 날 재시도
                 log.warning("metadata refresh failed: %s", exc)
+
+        # 5-1. 쓰인 카드의 TOP 10,000 랭커 20경기 평균 스탯 (남겨 둔 예산 안에서)
+        if ranker_stats_calls > 0:
+            budget.run_limit = None
+            try:
+                report.ranker_stats = collect_ranker_stats(api, storage.conn, max_calls=ranker_stats_calls)
+            except Exception as exc:
+                log.warning("ranker-stats failed: %s", exc)
         report.api_calls = budget.used_this_run
 
         # 6. 집계
@@ -157,6 +205,13 @@ def run_daily(
                 report.prices = refresh_used_prices(datacenter, db, limit=price_players)
             except Exception as exc:  # 시세 실패가 수집 결과를 막지 않게
                 log.warning("price refresh failed: %s", exc)
+
+        # 8. 쓰인 카드의 상세·능력치 (데이터센터, 한 번 받으면 30일 유지)
+        if detail_cards > 0:
+            try:
+                report.details = refresh_card_details(datacenter, db, limit=detail_cards)
+            except Exception as exc:
+                log.warning("card detail refresh failed: %s", exc)
         return report
     finally:
         storage.close()
@@ -164,7 +219,19 @@ def run_daily(
             datacenter.close()
 
 
-def status_lines(db: Path, mode: str = "1vs1") -> list[str]:
+def crawl_full_ranking(storage: Storage, datacenter: DatacenterClient, rank_top: int, mode: str = "1vs1") -> str:
+    """Crawl ranks 1..rank_top (restarting once on an hourly refresh) and record displayed team colors."""
+    crawl = crawl_rankings(
+        datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(rank_top / PAGE_SIZE), restarts=RANK_RESTARTS
+    )
+    as_of = storage.conn.execute("SELECT data_as_of FROM crawl_run WHERE id = ?", (crawl.run_id,)).fetchone()[0]
+    if crawl.status != "ok":
+        return f"완료 못 함 ({crawl.status}, {crawl.rows}명)"
+    record_displayed_membership(storage.conn, as_of, mode, TeamColorCatalog.load())
+    return f"상위 {crawl.rows}명 ({as_of})"
+
+
+def status_lines(db: Path, mode: str = "1vs1", top: int = DEFAULT_TOP) -> list[str]:
     """Collection status of the latest daily snapshot (no nicknames, no API calls)."""
     if not db.exists():
         return [f"DB가 없습니다: {db}"]
@@ -177,25 +244,35 @@ def status_lines(db: Path, mode: str = "1vs1") -> list[str]:
         if latest is None:
             return ["필터 없이 수집한 랭킹이 없습니다 → python -m fco_meta.daily run"]
         as_of, covered = latest
-        lines = [f"최근 스냅샷 {as_of}: 랭킹 상위 {covered}명 수집"]
+        lines = [f"최근 랭킹 {as_of}: 상위 {covered}명 수집 (웹)"]
+        # 스쿼드는 전체 랭킹과 다른 (조금 이른) 스냅샷에 있을 수 있다
+        squad_as_of = conn.execute(
+            "SELECT MAX(data_as_of) FROM ranker_squad_status WHERE mode = ?", (mode,)
+        ).fetchone()[0] or as_of
         statuses = dict(conn.execute(
             "SELECT status, COUNT(*) FROM ranker_squad_status WHERE data_as_of = ? AND mode = ? AND rank <= ? GROUP BY status",
-            (as_of, mode, covered),
+            (squad_as_of, mode, top),
         ).fetchall())  # fmt: skip
         done = sum(statuses.values())
         lines.append(
-            f"스쿼드: {done}/{covered}명 처리 — "
+            f"스쿼드 ({squad_as_of}): 상위 {top}명 중 {done}명 처리 — "
             + (", ".join(f"{k} {v}" for k, v in sorted(statuses.items())) if statuses else "아직 없음")
         )
         by_formation = conn.execute(
             "SELECT formation, squads, combo_rankers FROM usage_sample WHERE data_as_of = ? AND mode = ?"
             " AND team_color_id = 0 AND strict = 0 AND formation != '*' ORDER BY squads DESC LIMIT 6",
-            (as_of, mode),
+            (squad_as_of, mode),
         ).fetchall()
         if by_formation:
             lines.append("포메이션별 스쿼드(전체 랭커): " + ", ".join(f"{f} {n}/{t}명" for f, n, t in by_formation))
         else:
             lines.append("집계 없음 → 스쿼드 수집 후 python -m fco_meta.analytics build")
+        conn.executescript(MARKET_SCHEMA + RANKER_STATS_SCHEMA)  # 아직 안 받은 DB에서도 개수를 세도록
+        cards, priced, detailed, pairs = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM card), (SELECT COUNT(DISTINCT spid) FROM card_price),"
+            " (SELECT COUNT(*) FROM card_detail), (SELECT COUNT(*) FROM ranker_stats WHERE match_count > 0)"
+        ).fetchone()
+        lines.append(f"시세·급여 카드 {priced}장 (카드 정보 {cards}장), 능력치 카드 {detailed}장, 랭커 스탯 {pairs}쌍(카드×포지션)")
         for day, calls in conn.execute(
             "SELECT day, SUM(calls) FROM api_usage GROUP BY day ORDER BY day DESC LIMIT 3"
         ).fetchall():
@@ -226,18 +303,31 @@ def main(argv: list[str] | None = None) -> int:
     load_env()
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--db", type=Path, default=DEFAULT_DB)
-    common.add_argument("--top", type=int, default=330, help="랭킹 상위 몇 명 (개발 키 하루 약 330명)")
+    common.add_argument("--top", type=int, default=DEFAULT_TOP, help=f"스쿼드를 받을 랭킹 상위 몇 명 (기본 {DEFAULT_TOP}, 개발 키 기준 여유 있게)")
+    common.add_argument(
+        "--rank-top", type=int, default=DEFAULT_RANK_TOP,
+        help=f"웹에서 받을 랭킹 범위 (기본 {DEFAULT_RANK_TOP}, 팀컬러·포메이션·시즌 전적, 20명당 2초, --top 이하면 생략)",
+    )  # fmt: skip
     common.add_argument("--daily-limit", type=int, default=1000, help="Open API 일일 한도")
     common.add_argument("--no-wait", action="store_true", help="API 반영 지연(2시간)을 기다리지 않음")
     common.add_argument(
         "--price-players", type=int, default=DEFAULT_PLAYERS,
-        help=f"시세를 갱신할 '많이 쓰는 선수' 수 (기본 {DEFAULT_PLAYERS}, 0이면 생략, 선수당 2초)",
+        help=f"시세를 갱신할 '많이 쓰는 선수' 수 (기본 {DEFAULT_PLAYERS} = 사실상 쓰인 선수 전부, 0이면 생략, 선수당 2초)",
+    )  # fmt: skip
+    common.add_argument(
+        "--ranker-stats-calls", type=int, default=RANKER_STATS_CALLS,
+        help=f"랭커 스탯(TOP 10,000 20경기 평균)에 쓸 최대 API 호출 (기본 {RANKER_STATS_CALLS}, 1회 50쌍, 0이면 생략)",
+    )  # fmt: skip
+    common.add_argument(
+        "--detail-cards", type=int, default=DEFAULT_CARDS,
+        help=f"능력치 등 카드 상세를 받을 최대 카드 수 (기본 {DEFAULT_CARDS}, 0이면 생략, 카드당 2초, 받은 카드는 30일 유지)",
     )  # fmt: skip
     common.add_argument("-v", "--verbose", action="store_true")
     parser = argparse.ArgumentParser(prog="python -m fco_meta.daily")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", parents=[common], help="지금 한 번 실행")
     sub.add_parser("status", parents=[common], help="수집 상태 확인 (API 호출 없음)")
+    sub.add_parser("rank", parents=[common], help="랭킹 상위 --rank-top명만 웹에서 수집 (API 키 불필요)")
     p_sched = sub.add_parser("schedule", parents=[common], help="매일 정해진 시각(KST)에 실행 — 프로세스를 켜 둔다")
     p_sched.add_argument("--at", default="00:00", help="HH:MM, 한국 시간 (기본 00:00)")
     args = parser.parse_args(argv)
@@ -249,8 +339,9 @@ def main(argv: list[str] | None = None) -> int:
     def once() -> int:
         try:
             report = run_daily(
-                args.db, top=args.top, wait_lag=not args.no_wait, daily_limit=args.daily_limit,
-                price_players=args.price_players,
+                args.db, top=args.top, rank_top=args.rank_top, wait_lag=not args.no_wait, daily_limit=args.daily_limit,
+                price_players=args.price_players, detail_cards=args.detail_cards,
+                ranker_stats_calls=args.ranker_stats_calls,
             )  # fmt: skip
         except ValueError as exc:  # NEXON_API_KEY 없음 등
             print(f"실패: {exc}", file=sys.stderr)
@@ -261,7 +352,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         return once()
     if args.command == "status":
-        print("\n".join(status_lines(args.db)))
+        print("\n".join(status_lines(args.db, top=args.top)))
+        return 0
+    if args.command == "rank":
+        args.db.parent.mkdir(parents=True, exist_ok=True)
+        storage = Storage(args.db)
+        try:
+            with DatacenterClient() as datacenter:
+                print(f"랭킹 수집: {crawl_full_ranking(storage, datacenter, args.rank_top)}")
+        finally:
+            storage.close()
         return 0
     while True:
         at = next_run(args.at, datetime.now(timezone.utc))
