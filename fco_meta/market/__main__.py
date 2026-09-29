@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                     print("집계가 없습니다. 먼저 `python -m fco_meta.daily run`으로 수집하세요.", file=sys.stderr)
                     return 1
                 print(
-                    f"많이 쓰는 선수 {r.players}명 중 {r.requests}명 시세 갱신 (카드 {r.cards}장),"
+                    f"많이 쓰는 선수 {r.players}명 중 {r.requests}명 시세 갱신 (사용 시즌 카드 {r.cards}장 / 검색된 {r.cards_seen}장),"
                     f" 최근 갱신이라 건너뜀 {r.skipped_fresh}명" + (f", 실패 {r.failed}명" if r.failed else "")
                 )
                 return 0

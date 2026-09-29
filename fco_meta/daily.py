@@ -70,7 +70,7 @@ class DailyReport:
         ] + (
             [
                 f"시세: 많이 쓰는 선수 {self.prices.players}명 중 {self.prices.requests}명 갱신"
-                f" (카드 {self.prices.cards}장, 최근 갱신이라 건너뜀 {self.prices.skipped_fresh}명"
+                f" (사용 시즌 카드 {self.prices.cards}장, 최근 갱신이라 건너뜀 {self.prices.skipped_fresh}명"
                 + (f", 실패 {self.prices.failed}명" if self.prices.failed else "") + ")"
             ]
             if self.prices

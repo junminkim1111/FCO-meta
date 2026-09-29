@@ -2,7 +2,8 @@
 
 The datacenter search can't look up a card by spid, but a full player name returns every season
 card of that player with its 1~13강 prices. So: take the most used players from `usage_stats`
-(all rankers, all formations), search each by name, skip players refreshed recently.
+(all rankers, all formations), search each by name (one request per player), keep only the season
+cards rankers actually used, and skip players refreshed recently.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ class UsedPlayer:
 class RefreshResult:
     players: int = 0
     requests: int = 0
-    cards: int = 0
+    cards: int = 0  # 저장한 카드 (랭커가 쓴 시즌)
+    cards_seen: int = 0  # 검색 응답에 온 카드 (그 선수의 모든 시즌)
     skipped_fresh: int = 0
     failed: int = 0
 
@@ -99,10 +101,14 @@ def refresh_used_prices(
                 result.failed += 1
                 continue
             result.requests += 1
-            # 이름이 다른 동명이인·부분 일치 카드는 버리지 않고 함께 저장 (시세 정보로는 유효)
-            storage.save_cards(cards, fetched_at=now.isoformat(timespec="seconds"))
-            result.cards += len(cards)
-            log.info("prices: %s → %d cards", p.name, len(cards))
+            # 응답에는 그 선수의 모든 시즌 카드가 오지만, 랭커들이 실제로 쓴 시즌 카드만 저장한다 (강화 1~13은 모두)
+            used = [c for c in cards if c.spid in p.sp_ids]
+            storage.save_cards(used, fetched_at=now.isoformat(timespec="seconds"))
+            result.cards += len(used)
+            result.cards_seen += len(cards)
+            if len(used) < len(p.sp_ids):
+                log.warning("prices: %s — %d of %d used cards not in search result", p.name, len(p.sp_ids) - len(used), len(p.sp_ids))
+            log.info("prices: %s → %d/%d cards kept", p.name, len(used), len(cards))
         return result
     finally:
         storage.close()
