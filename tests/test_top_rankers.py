@@ -118,5 +118,6 @@ def test_empty_role_reports_sample(tmp_path, fixture_html):
     # 테스트 스쿼드(4-2-3-1 / 4-4-2)에는 LWB가 없음 → 표본 수와 함께 "선수 없음"
     r = json.loads(tb.run("recommend_players", {"role": "LWB"})[0])
     assert r["players"] == [] and r["sample_size"] == 10 and "표본 10명" in r["note"]
-    r = json.loads(tb.run("recommend_players", {"role": "DM", "formation": "3-4-3"})[0])
+    # 3-4-3은 데이터가 없어도 전체 포메이션으로 대체되므로, 대체할 데이터도 없는 팀컬러(첼시)로 확인
+    r = json.loads(tb.run("recommend_players", {"role": "DM", "team_color": "첼시"})[0])
     assert r["players"] == [] and r["sample_size"] == 0 and "수집·집계되지 않음" in r["note"]
