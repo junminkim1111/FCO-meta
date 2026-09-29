@@ -27,6 +27,8 @@ from ..analytics import (
     TOP10000_STATS,
     SquadQuery,
     UsageStore,
+    best_eleven,
+    formation_matchups,
     player_roles,
     query_rankers,
     ranker_stats_summary,
@@ -35,9 +37,9 @@ from ..analytics import (
     squad_range,
     squad_snapshot,
     top_players,
+    top_ranker_squad,
     usage_history,
 )
-from ..analytics.formation_view import best_eleven, formation_matchups, top_ranker_squad
 from ..crawler.teamcolors import TeamColorCatalog
 from ..market.money import format_bp
 from ..market.roles import ROLES, resolve_roles
@@ -345,7 +347,7 @@ TOOLS: list[dict[str, Any]] = [
         "name": "query_rankers",
         "description": (
             "랭킹 페이지 정보만으로 답하는 조회 — 웹에서 받은 랭킹 전체(보통 상위 10,000명) 기준. 랭커를 조건으로 거르고 "
-            "팀컬러·포메이션·순위 구간·팀컬러 인원으로 묶어 랭커 수·비율·시즌 승률(승/무/패 합산)·평균 ELO·평균 구단가치를 준다. "
+            "팀컬러·포메이션·순위 구간으로 묶어 랭커 수·비율·시즌 승률(승/무/패 합산)·평균 ELO·평균 구단가치를 준다. "
             "선수 정보는 없음(선수는 상위 수백 명 스쿼드 기준인 다른 도구). 예: 10,000명 중 많이 쓰는 팀컬러 = group_by team_color / "
             "승률 높은 포메이션 = group_by formation, sort_by season_win_rate / 1,000~2,000위 포메이션 = rank_min 1000, rank_max 2000 / "
             "순위 구간별 4-2-3-1 비율 = formation 4-2-3-1, group_by rank_band"
@@ -354,7 +356,7 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "group_by": {
                     "type": "string", "enum": list(RANKER_GROUP_BY),
-                    "description": "team_color, formation, rank_band(순위 구간, band명 단위), team_color_count(팀컬러 적용 선수 수)",
+                    "description": "team_color, formation, rank_band(순위 구간, band명 단위)",
                 },
                 "sort_by": {
                     "type": "string", "enum": list(RANKER_SORT_BY),
@@ -724,7 +726,6 @@ class Toolbox:
                 "avg_season_win_rate_of_users": "사용 랭커들의 이번 시즌 승률(랭킹 페이지 승/무/패) 평균",
                 "price_at_most_used_grade": "랭커들이 가장 많이 쓴 강화 단계의 최근 수집 시세 (없으면 미수집)",
                 "salary": "카드 급여 (데이터센터, 없으면 미수집)",
-                "profile": "카드 요약 능력치·키·개인기·약발 (1강 기준, 없으면 미수집)",
             },
         }
         if sort in ("price", "salary"):
@@ -778,30 +779,21 @@ class Toolbox:
                 "most_used_grade": typical_grade,
                 "price_at_most_used_grade": self._price(s.sp_id, typical_grade) if typical_grade else None,
                 "salary": self._salary(s.sp_id),
-                "profile": self._card_profile(s.sp_id, full=False),
             })  # fmt: skip
         return cards
 
-    def _card_profile(self, sp_id: int, *, full: bool = True) -> dict[str, Any] | None:
-        """Card details (1강 기준). full=False: 요약 능력치·키·개인기·약발만 (추천 목록용)."""
+    def _card_profile(self, sp_id: int) -> dict[str, Any] | None:
+        """Card details (1강 기준): 포지션별 능력치·신체·개인기·주발·특성·요약/세부 능력치·클럽 경력."""
         row = self.conn.execute("SELECT * FROM card_detail WHERE spid = ?", (sp_id,)).fetchone()
         if row is None:
             return None
-        feet = [f for f in (row["left_foot"], row["right_foot"]) if f is not None]
-        out: dict[str, Any] = {
-            "stats_grade": row["grade"],
-            "summary": json.loads(row["summary"]),
-            "height": row["height"],
-            "skill_moves": row["skill_moves"],
-            "weak_foot": min(feet) if feet else None,
-        }
-        if full:
-            out.update(
-                positions=json.loads(row["positions"]), weight=row["weight"], body_type=row["body_type"],
-                foot=f"L{row['left_foot']}-R{row['right_foot']}", reputation=row["reputation"], birth=row["birth"],
-                traits=json.loads(row["traits"]), stats=json.loads(row["stats"]), clubs=json.loads(row["clubs"]),
-            )  # fmt: skip
-        return out
+        return {
+            "stats_grade": row["grade"], "positions": json.loads(row["positions"]), "height": row["height"],
+            "weight": row["weight"], "body_type": row["body_type"], "skill_moves": row["skill_moves"],
+            "foot": f"L{row['left_foot']}-R{row['right_foot']}", "reputation": row["reputation"], "birth": row["birth"],
+            "traits": json.loads(row["traits"]), "summary": json.loads(row["summary"]), "stats": json.loads(row["stats"]),
+            "clubs": json.loads(row["clubs"]),
+        }  # fmt: skip
 
     def _grade_dist(self, key: tuple[str, int, str, bool], roles: tuple[str, ...], sp_id: int) -> dict[int, int]:
         data_as_of, team_color_id, formation, strict = key
@@ -1245,11 +1237,9 @@ class Toolbox:
             raise ToolError(f"수집된 랭커 스쿼드에서 '{name}' 선수를 찾지 못함")
         return rows[0][0], rows[0][1], [r[1] for r in rows[1:]]
 
-    def _names(self, table: str, key: str, value: str, ids: set[int]) -> dict[int, str]:
-        if not ids:
-            return {}
-        marks = ",".join("?" * len(ids))
-        return dict(self.conn.execute(f"SELECT {key}, {value} FROM {table} WHERE {key} IN ({marks})", sorted(ids)).fetchall())
+    def _lookup(self, table: str, key: str, value: str, id_: int) -> str | None:
+        row = self.conn.execute(f"SELECT {value} FROM {table} WHERE {key} = ?", (id_,)).fetchone()
+        return row[0] if row else None
 
     def query_squads(
         self,
@@ -1418,7 +1408,6 @@ class Toolbox:
                 "team_color": lambda: {"team_color": self._scope_name(key)},
                 "formation": lambda: {"formation": key},
                 "rank_band": lambda: {"rank_band": f"{key}~{key + band - 1}위"},
-                "team_color_count": lambda: {"team_color_count": key},
             }[group_by]()
             value = r["avg_squad_value"]
             rows.append({**label, **{k: r[k] for k in ("rankers", "share", "season_win_rate", "season_games", "avg_elo")},
@@ -1498,11 +1487,11 @@ class Toolbox:
     def _query_row(self, group_by: str, r: dict[str, Any]) -> dict[str, Any]:
         key = r["key"]
         if group_by == "player":
-            label = {"player": self._names("meta_spid", "sp_id", "name", {r["top_sp_id"]}).get(r["top_sp_id"]), "pid": key}
+            label = {"player": self._lookup("meta_spid", "sp_id", "name", r["top_sp_id"]), "pid": key}
         elif group_by == "card":
-            label = {"player": self._names("meta_spid", "sp_id", "name", {key}).get(key), "sp_id": key}
+            label = {"player": self._lookup("meta_spid", "sp_id", "name", key), "sp_id": key}
         elif group_by == "season":
-            label = {"season": self._names("meta_season", "season_id", "class_name", {key}).get(key, str(key))}
+            label = {"season": self._lookup("meta_season", "season_id", "class_name", key) or str(key)}
         elif group_by == "team_color":
             label = {"team_color": self._scope_name(key)}
         else:
@@ -1520,7 +1509,7 @@ class Toolbox:
         if group_by in ("player", "card"):
             season_id = r["top_sp_id"] // 1_000_000
             metrics["most_used_card"] = {
-                "season": self._names("meta_season", "season_id", "class_name", {season_id}).get(season_id),
+                "season": self._lookup("meta_season", "season_id", "class_name", season_id),
                 "grade": r["top_grade"],
                 "price": format_bp(r["price_bp"]) if r["price_bp"] is not None else None,
                 "price_bp": r["price_bp"],

@@ -275,7 +275,7 @@ python -m fco_meta.web --host 0.0.0.0 --port 8080
   - 많이 쓰는 팀컬러, 순위 구간별 사용 비율
 - **챗봇**: 자연어 질문. 답을 만드는 동안에도 포메이션을 둘러볼 수 있고, 넓은 화면에서는 챗봇이 화면에 고정됨
 - 라이트/다크 모드, 모바일 폭 대응
-- JSON API: `/api/meta`, `/api/formations`, `/api/formation?name=4-2-3-1`, `POST /api/chat` (문서: `/api/docs`)
+- JSON API: `/api/meta`(수집 범위), `/api/formations`, `/api/formation?name=4-2-3-1`, `POST /api/chat` (문서: `/api/docs`)
 
 ## 테스트
 

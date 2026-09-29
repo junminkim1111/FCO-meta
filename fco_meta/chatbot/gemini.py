@@ -37,7 +37,6 @@ class GeminiTurn:
     text: str
     tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     finish_reason: str | None = None
-    evidence: list[str] = field(default_factory=list)  # 답 끝에 붙인 [근거] 줄 (도구 결과에서 만듦)
 
 
 def unavailable_reason() -> str | None:
@@ -296,7 +295,7 @@ class GeminiChat:
                     return GeminiTurn("답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요.", calls, "tool_limit")
                 if evidence:
                     text += "\n\n" + "\n".join(f"[근거] {e}" for e in evidence[:MAX_EVIDENCE])
-                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish, evidence)
+                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish)
 
             parts = []
             for fc in function_calls:

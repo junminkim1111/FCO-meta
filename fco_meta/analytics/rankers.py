@@ -13,7 +13,7 @@ from typing import Any
 from ..storage import latest_unfiltered_snapshot, unfiltered_coverage
 from .usage import ALL_RANKERS
 
-RANKER_GROUP_BY = ("team_color", "formation", "rank_band", "team_color_count")
+RANKER_GROUP_BY = ("team_color", "formation", "rank_band")
 RANKER_SORT_BY = ("rankers", "season_win_rate", "avg_elo", "avg_squad_value")
 
 
@@ -47,7 +47,7 @@ def query_rankers(
         "rank_min": rank_min, "rank_max": rank_max, "elo_min": elo_min,
     }  # fmt: skip
     rows = conn.execute(
-        "SELECT s.rank, s.elo, s.wins, s.draws, s.losses, s.squad_value, s.formation, s.team_color_count"
+        "SELECT s.rank, s.elo, s.wins, s.draws, s.losses, s.squad_value, s.formation"
         " FROM ranker_snapshot s WHERE s.data_as_of = :as_of AND s.mode = :mode AND s.rank <= :covered"
         " AND (:tc = 0 OR EXISTS (SELECT 1 FROM ranker_team_color m WHERE m.data_as_of = s.data_as_of"
         "      AND m.mode = s.mode AND m.rank = s.rank AND m.team_color_id = :tc))"
@@ -65,15 +65,13 @@ def query_rankers(
 
     groups: dict[Any, list] = defaultdict(list)
     for r in rows:
-        rank, formation_, count = r[0], r[6], r[7]
+        rank = r[0]
         if group_by == "team_color":
             keys = teams.get(rank, ())
         elif group_by == "formation":
-            keys = [formation_]
-        elif group_by == "rank_band":
-            keys = [(rank - 1) // band * band + 1]
+            keys = [r[6]]
         else:
-            keys = [count]
+            keys = [(rank - 1) // band * band + 1]
         for key in keys:
             if key is not None:
                 groups[key].append(r)

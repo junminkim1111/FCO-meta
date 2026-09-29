@@ -8,9 +8,10 @@ import sqlite3
 from collections import Counter, defaultdict
 from typing import Any
 
+from ..market.roles import ROLES
 from ..pipeline.formation import SUB, FormationTable
 from .query import squad_snapshot
-from .usage import UsageStore
+from .usage import _POSITION_ROLE, UsageStore
 
 _PLAYERS = """
 SELECT p.sp_id, p.pid, p.sp_position, p.sp_grade, p.sp_rating, sp.name, ss.class_name, ss.season_img
@@ -116,7 +117,18 @@ def best_eleven(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") ->
             "season": p["class_name"] if p else None, "season_img": (p["season_img"] or None) if p else None,
             "grade": grades[(pos, pid)].most_common(1)[0][0], "rankers": at[pos][pid],
         })  # fmt: skip
-    return {"squads": len(squads), "layout_squads": layouts[layout], "data_as_of": as_of, "players": players}
+    return {"squads": len(squads), "layout": list(layout), "layout_squads": layouts[layout], "data_as_of": as_of, "players": players}
+
+
+def role_slots(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> tuple[dict[str, int], int]:
+    """Role → number of starters in `formation` ({"GK": 1, "CB": 2, "DM": 2, …}, squads with that layout),
+    from the best XI's layout. ({}, 0) if no squad played the formation."""
+    best = best_eleven(conn, formation, mode)
+    if best is None:
+        return {}, 0
+    counts = Counter(_POSITION_ROLE[p] for p in best["layout"])
+    order = list(ROLES)
+    return dict(sorted(counts.items(), key=lambda kv: order.index(kv[0]))), best["layout_squads"]
 
 
 def formation_matchups(conn: sqlite3.Connection, formation: str, table: FormationTable | None = None) -> dict[str, Any]:

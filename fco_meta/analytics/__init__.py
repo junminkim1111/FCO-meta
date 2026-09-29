@@ -1,3 +1,4 @@
+from .formation_view import best_eleven, formation_matchups, role_slots, top_ranker_squad
 from .query import (
     GROUP_BY,
     MATCH_STATS,
@@ -21,7 +22,6 @@ from .usage import (
     UsageResult,
     UsageStore,
     player_roles,
-    role_slots,
     squad_range,
     top_players,
     usage_history,
@@ -44,6 +44,8 @@ __all__ = [
     "SquadQuery",
     "UsageResult",
     "UsageStore",
+    "best_eleven",
+    "formation_matchups",
     "player_roles",
     "query_rankers",
     "query_squads",
@@ -52,6 +54,7 @@ __all__ = [
     "role_slots",
     "squad_range",
     "squad_snapshot",
+    "top_ranker_squad",
     "top_players",
     "usage_history",
 ]

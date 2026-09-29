@@ -147,21 +147,6 @@ def test_player_detail_history_across_snapshots(tmp_path, fixture_html):
     assert [(h["data_as_of"], h["rankers"]) for h in history][0] == (OLDER, 0) and history[-1]["rankers"] > 0
 
 
-def test_rule_bot_squad_and_meta(toolbox):  # noqa: F811
-    bot = RuleBot(toolbox)
-    answer = bot.ask("아스날 4231 스쿼드 10억 이하로 짜줘")
-    assert answer.tool == "recommend_squad" and answer.tool_input["max_total_price_bp"] == 1_000_000_000
-    assert "아스널 4-2-3-1 추천 스쿼드 — 랭커 3명 스쿼드 기준" in answer.text
-    assert "· DM: 볼란치R (66.7%) — S300 1명 (주로 5강, 시세 5,000만)" in answer.text
-    assert "총예산 10억 안에 맞췄습니다" in answer.text and "총액 9억 5,000만 (시세 미수집 9명 제외)" in answer.text
-
-    # 역할을 말하면 스쿼드가 아니라 역할 추천
-    assert bot.ask("아스널 스쿼드에 넣을 볼란치 추천").tool == "recommend_players"
-
-    meta = bot.ask("요즘 메타 어때?")
-    assert meta.tool == "get_meta_trends" and "필터 없이 수집한 랭킹 스냅샷이 없음" in meta.text
-
-
 def test_evidence_lines(toolbox):  # noqa: F811
     r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4-2-3-1"})
     assert toolbox.evidence("recommend_squad", r) == "아스널 4-2-3-1 스쿼드 — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)"
@@ -187,16 +172,16 @@ def test_evaluate_cli_rules(db, tmp_path, capsys):  # noqa: F811
     from fco_meta.chatbot.evaluate import main
 
     questions = tmp_path / "q.txt"
-    questions.write_text("# 주석\n아스날 4-2-3-1 볼란치 1명 추천 || recommend_players\n아스널 4231 스쿼드\n", encoding="utf-8")
+    questions.write_text("# 주석\n아스날 4-2-3-1 볼란치 1명 추천 || recommend_players\n아스널 포메이션\n", encoding="utf-8")
     out = tmp_path / "report.md"
     assert main(["--db", str(tmp_path / "db.sqlite"), "--backend", "rules", "--questions", str(questions), "--out", str(out)]) == 0
     report = out.read_text(encoding="utf-8")
-    assert "## 1. 아스날 4-2-3-1 볼란치 1명 추천" in report and "도구 `recommend_squad`" in report
+    assert "## 1. 아스날 4-2-3-1 볼란치 1명 추천" in report and "도구 `list_formations`" in report
     assert "질문 2개" in report and "- 기대: recommend_players" in report
 
     assert main(["--db", str(tmp_path / "db.sqlite"), "--backend", "rules", "--questions", str(questions), "--out", str(out), "--only", "2"]) == 0
     report = out.read_text(encoding="utf-8")
-    assert "## 2. 아스널 4231 스쿼드" in report and "## 1." not in report
+    assert "## 2. 아스널 포메이션" in report and "## 1." not in report
 
 
 def test_default_question_file_parses():
@@ -330,16 +315,12 @@ def test_query_by_stat(toolbox, fixture_html):  # noqa: F811
         assert is_error and message in json.loads(content)["error"]
 
 
-def test_card_profiles_in_detail_and_recommend(toolbox, fixture_html):  # noqa: F811
+def test_card_profiles_in_detail(toolbox, fixture_html):  # noqa: F811
     add_details(toolbox.conn, fixture_html)
     r = run(toolbox, "get_player_detail", {"name": "볼란치R", "team_color": "아스널"})
     (profile,) = r["players"][0]["card_profiles"]  # S300은 상세 미수집
     assert profile["season"] == "S250" and profile["foot"] == "L3-R5" and profile["stats"]["속력"] == 124
-    assert profile["traits"][0] == "커맨더" and profile["stats_grade"] == 1
-
-    r = run(toolbox, "recommend_players", {"team_color": "아스널", "formation": "4-2-3-1", "role": "DM"})
-    card = r["players"][0]["cards"][0]
-    assert card["profile"] == {"stats_grade": 1, "summary": profile["summary"], "height": 188, "skill_moves": 3, "weak_foot": 3}
+    assert profile["traits"][0] == "커맨더" and profile["stats_grade"] == 1 and profile["height"] == 188
 
 
 def add_match_stats(conn):

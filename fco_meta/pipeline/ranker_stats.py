@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS ranker_stats (
 );
 """
 
+STOPS = {BudgetExceededError: "budget", MaintenanceError: "maintenance", RateLimitError: "rate_limit"}
 DEFAULT_CALLS = 30  # 한 번 실행에 쓸 최대 호출 (1회 50쌍 → 1,500쌍)
 MAX_AGE = timedelta(days=7)
 
@@ -85,14 +86,8 @@ def collect_ranker_stats(
             break
         try:
             rows = api.ranker_stats(chunk)
-        except BudgetExceededError:
-            result.stopped, result.remaining = "budget", sum(len(c) for c in chunks[n:])
-            break
-        except MaintenanceError:
-            result.stopped, result.remaining = "maintenance", sum(len(c) for c in chunks[n:])
-            break
-        except RateLimitError:
-            result.stopped, result.remaining = "rate_limit", sum(len(c) for c in chunks[n:])
+        except (BudgetExceededError, MaintenanceError, RateLimitError) as exc:  # 오늘은 더 부르지 않는다
+            result.stopped, result.remaining = STOPS[type(exc)], sum(len(c) for c in chunks[n:])
             break
         except OpenApiError as exc:  # 이 묶음만 건너뛰고 다음 실행에서 다시
             log.warning("ranker-stats failed for %d pairs: %s", len(chunk), exc)

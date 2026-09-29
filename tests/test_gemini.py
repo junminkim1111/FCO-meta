@@ -65,7 +65,6 @@ def test_tool_round_trip(toolbox):
 
     assert turn.text.startswith("라이스가 1순위입니다.") and turn.finish_reason == "STOP"
     # 근거 줄은 모델이 아니라 도구 결과에서 만든다
-    assert turn.evidence == ["아스널 4-2-3-1 DM — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)"]
     assert turn.text.endswith("\n\n[근거] 아스널 4-2-3-1 DM — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)")
     assert turn.tool_calls[0][0] == "recommend_players" and seen == ["recommend_players"]
     first, second = client.models.requests

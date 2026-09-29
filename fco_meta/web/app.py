@@ -66,7 +66,7 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
     def meta() -> dict[str, Any]:
         """수집 범위와 챗봇 방식 (화면 머리말)."""
         data = tool("list_available_data", {})
-        return {"backend": backend, "combos": data["combos"], "daily_scope": data.get("daily_scope")}
+        return {"backend": backend, "daily_scope": data.get("daily_scope")}
 
     @app.get("/api/formations")
     def formations(team_color: str | None = Query(default=None, max_length=40)) -> dict[str, Any]:

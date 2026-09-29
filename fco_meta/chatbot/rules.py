@@ -25,8 +25,6 @@ _MONEY_RE = re.compile(r"(?:\d[\d,.]*(?:조|억|만))+(?:\d[\d,.]*)?")
 _ROLE_CODE_RE = re.compile(r"(?<![A-Z])(" + "|".join(sorted({*ROLES, "CDM", "RDM", "LDM"}, key=len, reverse=True)) + r")(?![A-Z])")
 _STRICT_WORDS = ("엄격", "strict", "실제배치", "배치일치")
 _DATA_WORDS = ("데이터", "가능한", "어떤조합", "목록", "뭐있", "무엇이있")
-_SQUAD_WORDS = ("스쿼드", "라인업", "베스트11", "베스트일레븐", "선발11")
-_META_WORDS = ("메타", "동향", "트렌드", "요즘", "유행", "인기")
 
 
 def _norm(text: str) -> str:
@@ -103,11 +101,6 @@ class RuleBot:
     def ask(self, text: str) -> Answer:
         q = self.parse(text)
         norm = _norm(text)
-        if q.role is None and any(w in norm for w in _SQUAD_WORDS):
-            tool_input = {
-                "team_color": q.team_color, "formation": q.formation, "strict": q.strict, "max_total_price_bp": q.max_price_bp,
-            }  # fmt: skip
-            return Answer(self._format_squad(self._call("recommend_squad", tool_input)), "recommend_squad", tool_input)
         if q.role:
             # 팀컬러를 말하지 않으면 매일 수집하는 상위 랭커 전체 기준
             wanted = q.top_n or 5
@@ -119,9 +112,6 @@ class RuleBot:
         if q.player:
             tool_input = {"name": q.player}
             return Answer(self._format_detail(self._call("get_player_detail", tool_input)), "get_player_detail", tool_input)
-        if any(w in norm for w in _META_WORDS):
-            tool_input = {"team_color": q.team_color} if q.team_color else {}
-            return Answer(self._format_trends(self._call("get_meta_trends", tool_input)), "get_meta_trends", tool_input)
         if (q.team_color or "포메이션" in norm) and not any(w in norm for w in _DATA_WORDS):
             tool_input = {"team_color": q.team_color} if q.team_color else {}
             return Answer(self._format_formations(self._call("list_formations", tool_input)), "list_formations", tool_input)
@@ -178,62 +168,6 @@ class RuleBot:
             lines.append("시세는 수집 시각 기준이며 변동될 수 있습니다.")
         if r.get("note"):
             lines.append(f"※ {r['note']}")
-        return "\n".join(lines)
-
-    def _format_squad(self, r: dict[str, Any]) -> str:
-        if "error" in r:
-            return r["error"]
-        if not r.get("lineup"):
-            combo = " ".join(x for x in (r["team_color"], r.get("formation")) if x)
-            return f"{combo}: {r['note']}"
-        scope = f"랭킹 상위 {r['ranking_scope']}명 중 " if r.get("ranking_scope") else ""
-        lines = [f"{r['team_color']} {r['formation']} 추천 스쿼드 — {scope}랭커 {r['sample_size']}명 스쿼드 기준 ({_as_of(r['data_as_of'])})"]
-        if r["formation_source"] == "most_used":
-            lines.append(f"※ 포메이션을 말하지 않아 가장 많이 쓰인 {r['formation']}로 짰습니다.")
-        if r["fallback_to_all_formations"]:
-            lines.append(f"※ {r['formation']} 표본이 적어 선수 사용률은 {r['team_color']} 전체 포메이션으로 집계했습니다.")
-        if b := r.get("budget"):
-            caps = [f"총예산 {b['max_total_price']}"] if b["max_total_price"] else []
-            caps += [f"총 급여 {b['max_total_salary']}"] if b["max_total_salary"] is not None else []
-            state = "안에 맞췄습니다" if b["within_budget"] else "안에 맞출 수 없어 가장 가까운 조합입니다"
-            lines.append(f"※ {' · '.join(caps)} {state} (시세는 랭커들이 가장 많이 쓴 강화 단계 기준)")
-        lines.append("")
-        for s in r["lineup"]:
-            if s.get("pid") is None:
-                lines.append(f"· {s['role']}: 후보 부족")
-                continue
-            lines.append(f"· {s['role']}: {s['player'] or '이름 미상'} ({s['usage_rate']:.1%}) — {_card_text(s['card'])}")
-        unpriced = f" (시세 미수집 {len(r['unpriced_players'])}명 제외)" if r.get("unpriced_players") else ""
-        lines += ["", f"총액 {r['total_price']}{unpriced}"]
-        alts = [f"{role}: {', '.join(a['player'] or '이름 미상' for a in alt)}" for role, alt in r["alternatives"].items() if alt]
-        if alts:
-            lines.append("대안 — " + " / ".join(alts))
-        return "\n".join(lines)
-
-    def _format_trends(self, r: dict[str, Any]) -> str:
-        if "error" in r:
-            return r["error"]
-        if not r.get("data_as_of"):
-            return r["note"]
-
-        def change(x: dict[str, Any], key: str = "share_change") -> str:
-            return f" ({x[key] * 100:+.1f}%p)" if x.get(key) is not None else ""
-
-        vs = f", {_as_of(r['compared_with'])}과 비교" if r.get("compared_with") else ""
-        lines = [f"{r['scope']} 메타 — 랭킹 상위 {r['ranking_scope']}명 ({_as_of(r['data_as_of'])}{vs})"]
-        if r.get("team_colors"):
-            lines.append("팀컬러: " + ", ".join(f"{t['team_color']} {t['share']:.1%}{change(t)}" for t in r["team_colors"][:5]))
-        if r.get("formations"):
-            lines.append("포메이션: " + ", ".join(f"{f['formation']} {f['share']:.1%}{change(f)}" for f in r["formations"][:5]))
-        if r.get("top_players"):
-            lines.append(
-                f"많이 쓰인 선수 (스쿼드 {r['player_sample_size']}명): "
-                + ", ".join(f"{p['player']}({p['main_role']}) {p['usage_rate']:.1%}" for p in r["top_players"][:5])
-            )
-        for key, label in (("rising", "오른 선수"), ("falling", "내린 선수")):
-            if r.get(key):
-                lines.append(f"{label}: " + ", ".join(f"{p['player']} {p['usage_rate']:.1%}{change(p, 'change')}" for p in r[key]))
-        lines.append(f"※ {r['note']}")
         return "\n".join(lines)
 
     def _format_detail(self, r: dict[str, Any]) -> str:
@@ -298,8 +232,6 @@ HELP_TEXT = """\
 · 아스널 4-2-3-1 볼란치 2명 추천해줘
 · 아스널 볼란치 5억 이하로 추천
 · 아스널 4-2-3-1 공미 추천 (엄격하게)
-· 4-2-3-1 스쿼드 50억 이하로 짜줘
-· 요즘 메타 (많이 쓰는 팀컬러·포메이션·선수)
 · 라이스 사용률
 · 아스널 포메이션
 · 어떤 데이터 있어?"""

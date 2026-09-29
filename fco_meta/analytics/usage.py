@@ -345,31 +345,6 @@ def _merge(key: int, rows: list[sqlite3.Row], squads: int) -> PlayerUsage:
     )
 
 
-def role_slots(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> tuple[dict[str, int], int]:
-    """Role → number of starters in `formation` ({"GK": 1, "CB": 2, "DM": 2, …}, squads with that layout).
-
-    Taken from the most common starting layout among collected squads whose play matched the
-    formation (any snapshot, any team color). ({}, 0) if no such squad was collected.
-    """
-    UsageStore(conn)
-    squads: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
-    for match_id, ouid, position in conn.execute(
-        "SELECT DISTINCT q.match_id, q.ouid, p.sp_position FROM ranker_squad q"
-        " JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
-        " JOIN match_player p ON p.match_id = q.match_id AND p.ouid = q.ouid AND p.starter = 1"
-        " WHERE q.accepted = 1 AND q.formation_match = 1 AND s.formation = ? AND q.mode = ?",
-        (formation, mode),
-    ):
-        if role := _POSITION_ROLE.get(position):
-            squads[(match_id, ouid)][role] += 1
-    layouts = Counter(tuple(sorted(c.items())) for c in squads.values() if sum(c.values()) == 11)
-    if not layouts:
-        return {}, 0
-    layout, n = layouts.most_common(1)[0]
-    order = list(ROLES)
-    return dict(sorted(layout, key=lambda kv: order.index(kv[0]))), n
-
-
 @dataclass(frozen=True)
 class RoleUsage:
     role: str

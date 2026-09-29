@@ -13,9 +13,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from ..market.roles import ROLES
 from ..storage import unfiltered_coverage
-from .usage import ALL_RANKERS, UsageStore
+from .usage import _POSITION_ROLE, ALL_RANKERS, UsageStore
 
 GROUP_BY = ("player", "card", "season", "grade", "team_color", "formation", "role")
 SORT_BY = (
@@ -67,7 +66,6 @@ def stat_value(detail: dict[str, Any] | None, stat: str) -> int | None:
     return detail["stats"].get(stat) if stat in DETAIL_STATS else detail["summary"].get(stat)
 PRICED_GROUPS = ("player", "card")
 
-_POSITION_ROLE = {pos: role for role, positions in ROLES.items() for pos in positions}
 
 _STARTERS = """
 WITH base AS (

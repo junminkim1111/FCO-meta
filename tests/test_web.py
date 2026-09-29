@@ -27,7 +27,7 @@ def test_index_and_static(client):
 def test_meta(client):
     meta = client.get("/api/meta").json()
     assert meta["backend"] == "rules"
-    assert {(c["team_color"], c["formation"]) for c in meta["combos"]} >= {("아스널", "4-2-3-1"), ("아스널", "4-4-2")}
+    assert set(meta) == {"backend", "daily_scope"}
 
 
 def test_formations_and_errors(client):
