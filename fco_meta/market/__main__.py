@@ -3,6 +3,7 @@
     python -m fco_meta.market cards --team-color 아스널 --role 볼란치   # 적격 카드 + 강화별 시세 수집
     python -m fco_meta.market find --team-color 아스널 --role DM --grade 5 --max-price 5억 --sort ovr
     python -m fco_meta.market history --spid 100001419 --grade 8     # 365일 시세 이력
+    python -m fco_meta.market used --limit 150                        # 상위 랭커가 많이 쓰는 선수 시세 갱신
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from ..crawler.client import DatacenterClient
 from ..crawler.teamcolors import TeamColorCatalog
 from .collector import fetch_price_history, search_all
 from .money import format_bp, parse_bp
+from .refresh import DEFAULT_PLAYERS, refresh_used_prices
 from .roles import ROLES, resolve_role
 from .search import PlayerSearch
 from .storage import MarketStorage
@@ -46,6 +48,9 @@ def main(argv: list[str] | None = None) -> int:
     p_find.add_argument("--max-price", help="최대 가격 (예: 5억, 3000만)")
     p_find.add_argument("--sort", choices=["price", "ovr"], default="price", help="price: 싼 순, ovr: OVR 높은 순")
     p_find.add_argument("--limit", type=int, default=20)
+
+    p_used = sub.add_parser("used", help="상위 랭커가 많이 쓰는 선수들의 시세 갱신 (집계 필요)")
+    p_used.add_argument("--limit", type=int, default=DEFAULT_PLAYERS, help="많이 쓰는 순으로 몇 명 (선수당 약 2초)")
 
     p_hist = sub.add_parser("history", help="카드·강화별 365일 시세 이력 수집")
     p_hist.add_argument("--spid", type=int, required=True)
@@ -88,6 +93,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         with DatacenterClient(min_interval=args.interval) as client:
+            if args.command == "used":
+                r = refresh_used_prices(client, args.db, limit=args.limit)
+                if not r.players:
+                    print("집계가 없습니다. 먼저 `python -m fco_meta.daily run`으로 수집하세요.", file=sys.stderr)
+                    return 1
+                print(
+                    f"많이 쓰는 선수 {r.players}명 중 {r.requests}명 시세 갱신 (카드 {r.cards}장),"
+                    f" 최근 갱신이라 건너뜀 {r.skipped_fresh}명" + (f", 실패 {r.failed}명" if r.failed else "")
+                )
+                return 0
+
             if args.command == "cards":
                 if not (team_color_id or role or args.name):
                     print("--team-color, --role, --name 중 하나 이상 지정해 주세요.", file=sys.stderr)

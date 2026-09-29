@@ -11,6 +11,7 @@ Steps
 4. 상위 N명 스쿼드 수집 (오늘 남은 호출 예산 안에서, 순위 순)
 5. 새 카드가 있으면 선수·시즌 메타데이터 갱신
 6. 이 스냅샷의 usage_stats 재계산
+7. 많이 쓰이는 선수(기본 150명)의 강화별 시세 갱신 — 데이터센터 선수 검색, 선수당 2초
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from .crawler import DatacenterClient, RankQuery, crawl_rankings
 from .crawler.membership import record_displayed_membership
 from .crawler.models import PAGE_SIZE
 from .crawler.teamcolors import TeamColorCatalog
+from .market.refresh import DEFAULT_PLAYERS, RefreshResult, refresh_used_prices
 from .openapi import CallBudget, NexonOpenApiClient
 from .pipeline import FormationTable, PipelineStore, SquadCollector, select_top_targets
 from .pipeline.squads import API_DATA_LAG, STOP_HINTS
@@ -55,6 +57,7 @@ class DailyReport:
     stopped: str | None = None
     meta_refreshed: bool = False
     usage_rows: int = 0
+    prices: RefreshResult | None = None
 
     def lines(self) -> list[str]:
         return [
@@ -64,7 +67,15 @@ class DailyReport:
             + (", 메타데이터 갱신" if self.meta_refreshed else ""),
             "  " + ", ".join(f"{k} {v}" for k, v in sorted(self.statuses.items())),
             f"집계 {self.usage_rows}행" + (f" — 중단: {STOP_HINTS.get(self.stopped, self.stopped)}" if self.stopped else ""),
-        ]
+        ] + (
+            [
+                f"시세: 많이 쓰는 선수 {self.prices.players}명 중 {self.prices.requests}명 갱신"
+                f" (카드 {self.prices.cards}장, 최근 갱신이라 건너뜀 {self.prices.skipped_fresh}명"
+                + (f", 실패 {self.prices.failed}명" if self.prices.failed else "") + ")"
+            ]
+            if self.prices
+            else []
+        )
 
 
 def run_daily(
@@ -76,22 +87,19 @@ def run_daily(
     daily_limit: int = 1000,
     run_budget: int | None = None,
     datacenter: DatacenterClient | None = None,
+    price_players: int = DEFAULT_PLAYERS,
     api: NexonOpenApiClient | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     sleep: Callable[[float], None] = time.sleep,
 ) -> DailyReport:
     report = DailyReport()
     db.parent.mkdir(parents=True, exist_ok=True)
+    own_client = datacenter is None
+    datacenter = datacenter or DatacenterClient()  # 랭킹(1단계)과 시세(7단계)에 같이 쓴다
     storage = Storage(db)
     try:
         # 1. 랭킹 TOP N
-        own_client = datacenter is None
-        datacenter = datacenter or DatacenterClient()
-        try:
-            crawl = crawl_rankings(datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(top / PAGE_SIZE))
-        finally:
-            if own_client:
-                datacenter.close()
+        crawl = crawl_rankings(datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(top / PAGE_SIZE))
         latest = latest_unfiltered_snapshot(storage.conn, mode)
         if latest is None:
             raise RuntimeError(f"ranking crawl failed (status={crawl.status})")
@@ -142,9 +150,18 @@ def run_daily(
 
         # 6. 집계
         report.usage_rows = sum(n for _, n in UsageStore(storage.conn).build_all(report.data_as_of))
+
+        # 7. 많이 쓰이는 선수 시세 (데이터센터, 넥슨 API 한도와 무관)
+        if price_players > 0:
+            try:
+                report.prices = refresh_used_prices(datacenter, db, limit=price_players)
+            except Exception as exc:  # 시세 실패가 수집 결과를 막지 않게
+                log.warning("price refresh failed: %s", exc)
         return report
     finally:
         storage.close()
+        if own_client:
+            datacenter.close()
 
 
 def status_lines(db: Path, mode: str = "1vs1") -> list[str]:
@@ -212,6 +229,10 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--top", type=int, default=330, help="랭킹 상위 몇 명 (개발 키 하루 약 330명)")
     common.add_argument("--daily-limit", type=int, default=1000, help="Open API 일일 한도")
     common.add_argument("--no-wait", action="store_true", help="API 반영 지연(2시간)을 기다리지 않음")
+    common.add_argument(
+        "--price-players", type=int, default=DEFAULT_PLAYERS,
+        help=f"시세를 갱신할 '많이 쓰는 선수' 수 (기본 {DEFAULT_PLAYERS}, 0이면 생략, 선수당 2초)",
+    )  # fmt: skip
     common.add_argument("-v", "--verbose", action="store_true")
     parser = argparse.ArgumentParser(prog="python -m fco_meta.daily")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -227,7 +248,10 @@ def main(argv: list[str] | None = None) -> int:
 
     def once() -> int:
         try:
-            report = run_daily(args.db, top=args.top, wait_lag=not args.no_wait, daily_limit=args.daily_limit)
+            report = run_daily(
+                args.db, top=args.top, wait_lag=not args.no_wait, daily_limit=args.daily_limit,
+                price_players=args.price_players,
+            )  # fmt: skip
         except ValueError as exc:  # NEXON_API_KEY 없음 등
             print(f"실패: {exc}", file=sys.stderr)
             return 2

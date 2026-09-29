@@ -3,6 +3,20 @@
 FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프로젝트입니다.
 계획: [`docs/PLAN.md`](docs/PLAN.md) · 조사 결과: [`docs/RESEARCH.md`](docs/RESEARCH.md)
 
+## 더블클릭 실행 (Mac)
+
+설치(아래)를 한 번 마친 뒤에는 Finder에서 저장소 폴더의 파일을 더블클릭하면 됩니다.
+
+| 파일 | 하는 일 |
+|---|---|
+| `start_web.command` | 웹 서버를 켜고 브라우저를 엶. 창을 닫으면 종료 |
+| `run_daily.command` | 오늘 수집(랭킹 → 스쿼드 → 집계 → 시세)을 한 번 실행하고 상태 표시 |
+
+- conda 환경 `fco-meta`의 파이썬을 자동으로 찾습니다 (`~/anaconda3`, `/opt/anaconda3`, miniconda·miniforge, `.venv` 순).
+  다른 파이썬을 쓰려면 `FCO_PYTHON=/경로/python`, 다른 conda 환경 이름은 `FCO_CONDA_ENV=이름`.
+- 처음 더블클릭할 때 macOS가 "확인되지 않은 개발자"라며 막으면: 파일을 **우클릭 → 열기**로 한 번 열어 주세요.
+- 포트를 바꾸려면 `FCO_PORT=8080`.
+
 ## 설치
 
 ```bash
@@ -71,6 +85,9 @@ python -m fco_meta.daily status                      # 수집 상태 (스냅샷,
    matchId에 들어 있는 경기 시작 시각이 스냅샷 이후인 경기는 상세를 받지 않고 건너뜀
 5. 이름을 모르는 새 카드가 있으면 메타데이터 갱신 (3회 예비)
 6. 이 스냅샷의 집계(usage_stats) 재계산: 팀컬러별 + **전체 랭커**(팀컬러 무관)
+7. **많이 쓰이는 선수 시세 갱신**: 집계에서 사용 랭커가 많은 선수 150명(`--price-players`, 0이면 생략)을 이름으로 검색해
+   모든 시즌 카드의 1~13강 시세 저장 — 선수당 요청 1번(2초 간격, 약 5분), 20시간 안에 받은 선수는 건너뜀.
+   따로 실행: `python -m fco_meta.market used --limit 150`
 
 - 서버나 PC를 켜 두기 어렵다면 cron / 작업 스케줄러로 `run`을 부르면 됩니다: `5 0 * * * cd /path/fco-meta && .venv/bin/python -m fco_meta.daily run`
 - 팀컬러를 말하지 않은 질문("4-2-3-1 볼란치 추천")은 전체 랭커 기준으로 답합니다. 상위 330명을 팀컬러별로 나누면 표본이 작으므로 답에 표본 수가 함께 나옵니다.
