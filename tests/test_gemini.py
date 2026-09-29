@@ -106,10 +106,18 @@ def test_empty_candidate_and_tool_limit(toolbox):
     blocked = types.GenerateContentResponse.model_validate({"prompt_feedback": {"block_reason": "SAFETY"}})
     assert "응답을 받지 못했습니다" in GeminiChat(FakeClient([blocked]), toolbox).ask("?").text
 
-    loop = response([{"function_call": {"name": "list_available_data", "args": {}}}])
-    turn = GeminiChat(FakeClient([loop] * 8), toolbox).ask("계속")
-    assert turn.finish_reason == "tool_limit" and len(turn.tool_calls) == 8
-    assert json.loads(Toolbox.run(toolbox, "list_available_data", {})[0])["combos"]
+    # 도구 호출 한도 → 도구를 끈 마지막 요청으로 답을 받는다
+    from fco_meta.chatbot.gemini import MAX_TOOL_ROUNDS
+
+    calls = [
+        response([{"function_call": {"name": "list_formations", "args": {"team_color": f"팀{i}"}}}]) for i in range(MAX_TOOL_ROUNDS)
+    ]
+    client = FakeClient(calls + [response([{"text": "지금까지 결과로 답합니다."}])])
+    turn = GeminiChat(client, toolbox).ask("계속")
+    assert turn.text == "지금까지 결과로 답합니다." and len(turn.tool_calls) == MAX_TOOL_ROUNDS
+    last = client.models.requests[-1]["config"]
+    assert last.tool_config.function_calling_config.mode.value == "NONE"
+    assert client.models.requests[0]["config"].tool_config is None
 
 
 def test_failed_turn_is_rolled_back(toolbox):
@@ -344,3 +352,23 @@ def test_quota_retried_only_once(toolbox):
 def test_quota_error_text():
     assert "약 37초 후 다시 시도" in describe_error(_quota(delay=37))
     assert "오늘 무료 사용량 소진" in describe_error(_quota(daily=True))
+
+
+
+def test_repeated_identical_calls_are_not_executed(toolbox):
+    same = {"function_call": {"name": "list_available_data", "args": {}}}
+    client = FakeClient([response([same]), response([same]), response([{"text": "끝"}])])
+    runs = []
+    chat = GeminiChat(client, toolbox, on_tool_call=lambda n, a: runs.append(n))
+    turn = chat.ask("데이터?")
+    assert turn.text == "끝" and runs == ["list_available_data"]  # 두 번째는 실행하지 않음
+    repeated = client.models.requests[2]["contents"][-1].parts[0].function_response.response
+    assert "이미 호출했습니다" in repeated["result"]["note"]
+
+
+def test_final_round_without_text(toolbox):
+    from fco_meta.chatbot.gemini import MAX_TOOL_ROUNDS
+
+    loop = response([{"function_call": {"name": "list_formations", "args": {"team_color": "x"}}}])
+    turn = GeminiChat(FakeClient([loop] * (MAX_TOOL_ROUNDS + 1)), toolbox).ask("?")
+    assert turn.finish_reason == "tool_limit" and "답을 만들지 못했습니다" in turn.text

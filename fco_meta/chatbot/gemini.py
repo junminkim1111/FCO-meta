@@ -28,7 +28,7 @@ _NOT_CHAT = ("image", "tts", "audio", "live", "embedding", "embed", "veo", "imag
 RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
 MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
-MAX_TOOL_ROUNDS = 8
+MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
 
 
 @dataclass
@@ -195,8 +195,12 @@ class GeminiChat:
             # 도구는 이 루프에서 직접 실행한다 (SDK 자동 호출 끔)
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
+        # 도구 호출 한도에 닿았을 때: 같은 도구 정의를 두되 호출은 막아, 받은 결과만으로 답을 쓰게 한다
+        self.final_config = self.config.model_copy(
+            update={"tool_config": types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))}
+        )
 
-    def _generate(self) -> Any:
+    def _generate(self, config: Any = None) -> Any:
         """generate_content with retries on overload/quota, then the fallback models in order."""
         from google.genai import errors
 
@@ -205,7 +209,7 @@ class GeminiChat:
         for model in configured:
             for attempt in range(len(RETRY_DELAYS) + 1):
                 try:
-                    response = self.client.models.generate_content(model=model, contents=self.contents, config=self.config)
+                    response = self.client.models.generate_content(model=model, contents=self.contents, config=config or self.config)
                 except errors.APIError as exc:
                     if exc.code in UNAVAILABLE:
                         failures.append((model, exc))
@@ -232,7 +236,7 @@ class GeminiChat:
         # 설정한 모델이 모두 혼잡·사용 불가 → 이 키로 쓸 수 있는 다른 모델을 한 번씩
         for model in self._discover(set(configured)):
             try:
-                response = self.client.models.generate_content(model=model, contents=self.contents, config=self.config)
+                response = self.client.models.generate_content(model=model, contents=self.contents, config=config or self.config)
             except errors.APIError as exc:
                 if exc.code not in RETRYABLE + UNAVAILABLE:
                     raise
@@ -267,8 +271,12 @@ class GeminiChat:
         types = _types()
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
-        for _ in range(MAX_TOOL_ROUNDS):
-            response = self._generate()
+        seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
+        for round_no in range(MAX_TOOL_ROUNDS + 1):
+            final = round_no == MAX_TOOL_ROUNDS
+            if final:
+                log.warning("tool round limit (%d) reached, asking for an answer without tools", MAX_TOOL_ROUNDS)
+            response = self._generate(self.final_config if final else None)
             candidate = response.candidates[0] if response.candidates else None
             finish = str(candidate.finish_reason.value if candidate and candidate.finish_reason else None)
             if candidate is None or candidate.content is None:
@@ -277,30 +285,39 @@ class GeminiChat:
             self.contents.append(candidate.content)
 
             function_calls = response.function_calls or []
-            if not function_calls:
+            if not function_calls or final:
                 text = "".join(p.text for p in candidate.content.parts or [] if p.text and not p.thought).strip()
                 if finish == "MAX_TOKENS":
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
-                return GeminiTurn(text, calls, finish)
+                if not text:  # 도구를 끈 마지막 요청에서도 글이 없으면
+                    return GeminiTurn("답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요.", calls, "tool_limit")
+                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish)
 
             parts = []
             for fc in function_calls:
                 args = dict(fc.args or {})
-                calls.append((fc.name, args))
-                if self.on_tool_call:
-                    self.on_tool_call(fc.name, args)
-                content, is_error = self.toolbox.run(fc.name, args)
-                if is_error:
-                    log.warning("tool %s(%s) → error: %s", fc.name, args, json.loads(content).get("error"))
+                key = json.dumps([fc.name, args], sort_keys=True, ensure_ascii=False)
+                if key in seen:
+                    # 같은 호출 반복 → 실행하지 않고 앞 결과를 쓰라고 알린다 (반복 루프 방지)
+                    log.warning("tool %s(%s) repeated, not executed", fc.name, args)
+                    payload: dict[str, Any] = {"result": {"note": "같은 도구를 같은 인자로 이미 호출했습니다. 앞서 받은 결과로 답하세요."}}
                 else:
-                    log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
-                payload = json.loads(content)
-                part = types.Part.from_function_response(
-                    name=fc.name, response={"error": payload["error"]} if is_error else {"result": payload}
-                )
+                    seen.add(key)
+                    calls.append((fc.name, args))
+                    if self.on_tool_call:
+                        self.on_tool_call(fc.name, args)
+                    content, is_error = self.toolbox.run(fc.name, args)
+                    result = json.loads(content)
+                    if is_error:
+                        log.warning("tool %s(%s) → error: %s", fc.name, args, result.get("error"))
+                        payload = {"error": result["error"]}
+                    else:
+                        log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
+                        payload = {"result": result}
+                part = types.Part.from_function_response(name=fc.name, response=payload)
                 if fc.id:
                     part.function_response.id = fc.id
                 parts.append(part)
             # 병렬 호출 결과는 한 번에 돌려준다
             self.contents.append(types.Content(role="user", parts=parts))
-        return GeminiTurn("도구 호출이 너무 많아 중단했습니다. 질문을 좁혀 주세요.", calls, "tool_limit")
+        raise AssertionError("unreachable")
