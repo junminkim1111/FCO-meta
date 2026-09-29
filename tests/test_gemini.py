@@ -302,3 +302,45 @@ def test_model_list_failure_keeps_original_errors(toolbox):
     with pytest.raises(GeminiUnavailable) as info:
         chat.ask("질문")
     assert [m for m, _ in info.value.failures] == ["a"]
+
+
+def _quota(delay=None, daily=False):
+    from google.genai import errors
+
+    details = [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{
+        "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier" if daily else "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+    }]}]  # fmt: skip
+    if delay is not None:
+        details.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": f"{delay}s"})
+    return errors.ClientError(429, {"error": {"code": 429, "message": "Resource exhausted.", "status": "RESOURCE_EXHAUSTED", "details": details}})
+
+
+def test_quota_short_delay_waits_once_then_retries(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"a": [_quota(delay=7), response([{"text": "답"}])]})
+    slept = []
+    chat = GeminiChat(client, toolbox, model="a", fallback_models=["b"], sleep=slept.append)
+    assert chat.ask("질문").text == "답" and slept == [7.0]
+
+
+def test_quota_long_delay_or_daily_moves_to_next_model_without_waiting(toolbox):
+    for err in (_quota(delay=40), _quota(daily=True), _quota()):
+        client = FakeClient([])
+        client.models = ByModel({"a": [err], "b": [response([{"text": "b 답"}])]})
+        slept = []
+        chat = GeminiChat(client, toolbox, model="a", fallback_models=["b"], sleep=slept.append)
+        assert chat.ask("질문").text == "b 답" and slept == []
+        assert [r["model"] for r in client.models.requests] == ["a", "b"]  # 한도 걸린 모델은 다시 부르지 않음
+
+
+def test_quota_retried_only_once(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"a": [_quota(delay=5), _quota(delay=5)], "b": [response([{"text": "b 답"}])]})
+    slept = []
+    chat = GeminiChat(client, toolbox, model="a", fallback_models=["b"], sleep=slept.append)
+    assert chat.ask("질문").text == "b 답" and slept == [5.0]
+
+
+def test_quota_error_text():
+    assert "약 37초 후 다시 시도" in describe_error(_quota(delay=37))
+    assert "오늘 무료 사용량 소진" in describe_error(_quota(daily=True))

@@ -27,6 +27,7 @@ MAX_DISCOVERED = 3  # 설정한 모델이 모두 실패하면 키로 쓸 수 있
 _NOT_CHAT = ("image", "tts", "audio", "live", "embedding", "embed", "veo", "imagen", "robotics", "computer-use", "aqa", "gemma", "learnlm", "native")
 RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
+MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
 MAX_TOOL_ROUNDS = 8
 
 
@@ -75,8 +76,23 @@ _HINTS = {
 }
 
 
+def quota_info(exc: Any) -> tuple[float | None, bool]:
+    """(구글이 알려 준 재시도 대기 초, 일일 한도 여부) from a 429 error body."""
+    import re
+
+    text = json.dumps(getattr(exc, "details", None) or {}, ensure_ascii=False)
+    m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', text)
+    return (float(m.group(1)) if m else None), ("PerDay" in text)
+
+
 def _api_error_text(exc: Any) -> str:
     hint = _HINTS.get(exc.code, "Gemini 서버 오류" if (exc.code or 0) >= 500 else "")
+    if exc.code == 429:
+        delay, daily = quota_info(exc)
+        if daily:
+            hint = "오늘 무료 사용량 소진 (내일 다시 시도하거나 .env의 GEMINI_MODEL로 다른 모델 지정)"
+        elif delay is not None:
+            hint = f"분당 사용량 한도 초과 (약 {delay:.0f}초 후 다시 시도)"
     message = (exc.message or "").split(". ")[0]  # 긴 안내문은 첫 문장만
     return f"{exc.code} {exc.status or ''}: {message}" + (f" — {hint}" if hint else "")
 
@@ -197,11 +213,17 @@ class GeminiChat:
                         break
                     if exc.code not in RETRYABLE:
                         raise
-                    if attempt == len(RETRY_DELAYS):
+                    wait = RETRY_DELAYS[attempt] if attempt < len(RETRY_DELAYS) else None
+                    if exc.code == 429:
+                        # 한도: 같은 모델을 곧바로 다시 부르면 한도만 더 쓴다. 구글이 알려 준 대기 시간이 짧을 때만 한 번 기다림
+                        delay, daily = quota_info(exc)
+                        wait = delay if (attempt == 0 and not daily and delay is not None and delay <= MAX_QUOTA_WAIT) else None
+                    if wait is None:
                         failures.append((model, exc))
-                    else:
-                        log.warning("%s: %s %s, retrying in %.0fs", model, exc.code, exc.status, RETRY_DELAYS[attempt])
-                        self.sleep(RETRY_DELAYS[attempt])
+                        log.warning("%s: %s %s, trying next model", model, exc.code, exc.status)
+                        break
+                    log.warning("%s: %s %s, retrying in %.0fs", model, exc.code, exc.status, wait)
+                    self.sleep(wait)
                     continue
                 if model != self.model:
                     log.warning("answered by fallback model %s", model)
