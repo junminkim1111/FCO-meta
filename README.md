@@ -11,6 +11,16 @@ FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프�
 |---|---|
 | `start_web.command` | 웹 서버를 켜고 브라우저를 엶. 창을 닫으면 종료 |
 | `run_daily.command` | 오늘 수집(랭킹 → 스쿼드 → 집계 → 시세)을 한 번 실행하고 상태 표시 |
+| `start_share.command` | 웹 서버를 켜고 Cloudflare 임시 터널로 공유 주소(`https://….trycloudflare.com`)를 만듦 (지인 베타). 창을 닫으면 종료 |
+
+### 지인에게 공유하기 (베타)
+
+- 처음 한 번 `brew install cloudflared`. 계정·도메인 없이 임시 주소가 생기며, **켤 때마다 주소가 바뀝니다**. 맥이 켜져 있을 때만 열립니다.
+- 웹 서버는 이 맥 안(127.0.0.1)에서만 열리고 밖에서는 터널로만 들어옵니다. 방문자 IP는 터널이 넘겨주는 `CF-Connecting-IP`로 셉니다.
+- 질문 수 제한(`web/app.py`의 `RateLimit`): 한 사람(IP)당 1분 6개 · 하루 60개, 서비스 전체 하루 300개(한국 시간 자정 초기화). 넘으면 429와 안내 문구.
+- 화면 아래 `Data based on NEXON Open API` 표기는 넥슨 Open API 이용 조건입니다(지우지 마세요).
+- 무료 Gemini 등급은 입력이 구글 제품 개선에 쓰일 수 있어, 화면에 "질문은 Google Gemini로 처리됩니다"를 적어 두었습니다.
+  공개 서비스로 넓힐 때는 유료 등급, 넥슨 서비스 단계 키(유효한 서비스 URL 필요), 상시 서버를 준비합니다.
 
 - conda 환경 `fco-meta`의 파이썬을 자동으로 찾습니다 (`~/anaconda3`, `/opt/anaconda3`, miniconda·miniforge, `.venv` 순).
   다른 파이썬을 쓰려면 `FCO_PYTHON=/경로/python`, 다른 conda 환경 이름은 `FCO_CONDA_ENV=이름`.

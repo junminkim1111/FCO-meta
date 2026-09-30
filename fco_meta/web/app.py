@@ -6,12 +6,15 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -26,6 +29,41 @@ STATIC_DIR = Path(__file__).parent / "static"
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
+KST = timezone(timedelta(hours=9))
+
+
+class RateLimit:
+    """Questions per person per minute and per day, and for the whole service per day — the Gemini quota
+    is shared by everyone. A person is the visitor's IP (Cloudflare Tunnel passes it in CF-Connecting-IP)."""
+
+    def __init__(self, per_minute: int = 6, per_day: int = 60, total_per_day: int = 300, now: Callable[[], float] = time.time):
+        self.per_minute, self.per_day, self.total_per_day, self.now = per_minute, per_day, total_per_day, now
+        self.recent: dict[str, deque[float]] = {}
+        self.today: dict[str, int] = {}
+        self.total, self.day = 0, None
+        self.lock = threading.Lock()
+
+    def check(self, who: str) -> str | None:
+        """Counts one question; returns why it is refused instead (nothing is counted then)."""
+        with self.lock:
+            now = self.now()
+            day = datetime.fromtimestamp(now, KST).date()
+            if day != self.day:  # 한국 시간 자정에 하루 횟수를 비운다
+                self.today.clear()
+                self.total, self.day = 0, day
+            recent = self.recent.setdefault(who, deque())
+            while recent and recent[0] <= now - 60:
+                recent.popleft()
+            if self.total >= self.total_per_day:
+                return "오늘 서비스 전체 질문 수가 다 찼어요. 내일 다시 물어봐 주세요."
+            if self.today.get(who, 0) >= self.per_day:
+                return f"하루 질문 수({self.per_day}개)를 다 썼어요. 내일 다시 물어봐 주세요."
+            if len(recent) >= self.per_minute:
+                return f"질문이 너무 빨라요. 1분에 {self.per_minute}개까지 물어볼 수 있어요. 잠시 후 다시 물어봐 주세요."
+            recent.append(now)
+            self.today[who] = self.today.get(who, 0) + 1
+            self.total += 1
+            return None
 
 
 def _event(**fields: Any) -> str:
@@ -83,8 +121,11 @@ def _open_readonly(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
 
 
-def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str | None = None) -> FastAPI:
+def create_app(
+    db_path: Path | str, *, backend: str = "rules", gemini_model: str | None = None, limit: RateLimit | None = None
+) -> FastAPI:
     db_path = Path(db_path)
+    limit = limit or RateLimit()
     if not db_path.exists():
         raise FileNotFoundError(db_path)
     conn = _open_readonly(db_path)
@@ -134,9 +175,13 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
         return tool("get_formation_overview", {"formation": name})
 
     @app.post("/api/chat")
-    def chat(req: ChatRequest) -> StreamingResponse:
+    def chat(req: ChatRequest, request: Request) -> StreamingResponse:
         """답을 한 줄에 하나씩 JSON 이벤트로 흘려보낸다: start(session_id) → delta(text)… → done.
-        reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args)."""
+        reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args).
+        질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
+        who = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+        if refused := limit.check(who):
+            raise HTTPException(status_code=429, detail=refused)
         if backend != "gemini":
             with lock:
                 answer = rules.ask(req.message)

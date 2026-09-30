@@ -199,3 +199,30 @@ def test_repeated_first_question_is_answered_from_cache(db, tmp_path, monkeypatc
     fresh, done = ask(client, "레알 5억 미만 공격수 추천해줘")
     assert fresh == "답 3" and not done.get("cached")
 
+
+
+def test_rate_limit_per_person_and_service():
+    from fco_meta.web.app import RateLimit
+
+    clock = [1_790_000_000.0]
+    limit = RateLimit(per_minute=2, per_day=3, total_per_day=4, now=lambda: clock[0])
+    assert limit.check("a") is None and limit.check("a") is None
+    assert "1분에 2개" in limit.check("a")  # 분당 제한
+    clock[0] += 61
+    assert limit.check("a") is None
+    assert "하루 질문 수(3개)" in limit.check("a")  # 하루 제한
+    assert limit.check("b") is None
+    assert "서비스 전체" in limit.check("c")  # 서비스 전체 하루 상한 (거절은 세지 않음)
+    clock[0] += 24 * 3600  # 한국 시간 자정이 지나면 다시
+    assert limit.check("a") is None and limit.check("c") is None
+
+
+def test_chat_over_the_limit_gets_429(db, tmp_path):  # noqa: F811
+    from fco_meta.web.app import RateLimit
+
+    client = TestClient(create_app(tmp_path / "db.sqlite", limit=RateLimit(per_minute=1)))
+    assert ask(client, "아스날 볼란치 1명 추천")[0]
+    res = client.post("/api/chat", json={"message": "또"}, headers={"CF-Connecting-IP": "1.2.3.4"})
+    assert res.status_code == 200  # 다른 사람(터널이 넘겨준 IP)은 따로 센다
+    res = client.post("/api/chat", json={"message": "또"})
+    assert res.status_code == 429 and "1분에 1개" in res.json()["detail"]
