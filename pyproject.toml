@@ -17,6 +17,7 @@ dependencies = [
 dev = ["pytest>=8"]
 gemini = []  # 호환용: google-genai는 기본 의존성
 web = ["fastapi>=0.115", "uvicorn>=0.30"]
+cloud = ["huggingface_hub>=0.30"]  # Render 배포: DB를 비공개 HF 데이터셋에 둔다 (python -m fco_meta.cloud)
 
 [tool.setuptools.packages.find]
 include = ["fco_meta*"]

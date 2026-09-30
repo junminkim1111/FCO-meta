@@ -34,7 +34,7 @@ KST = timezone(timedelta(hours=9))
 
 class RateLimit:
     """Questions per person per minute and per day, and for the whole service per day — the Gemini quota
-    is shared by everyone. A person is the visitor's IP (Cloudflare Tunnel passes it in CF-Connecting-IP)."""
+    is shared by everyone. A person is the visitor's IP as the tunnel or proxy passes it (see chat())."""
 
     def __init__(self, per_minute: int = 6, per_day: int = 60, total_per_day: int = 300, now: Callable[[], float] = time.time):
         self.per_minute, self.per_day, self.total_per_day, self.now = per_minute, per_day, total_per_day, now
@@ -179,7 +179,9 @@ def create_app(
         """답을 한 줄에 하나씩 JSON 이벤트로 흘려보낸다: start(session_id) → delta(text)… → done.
         reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args).
         질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
-        who = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+        # 방문자: Cloudflare 터널은 CF-Connecting-IP, Hugging Face 등 프록시는 X-Forwarded-For의 첫 주소
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        who = request.headers.get("cf-connecting-ip") or forwarded or (request.client.host if request.client else "?")
         if refused := limit.check(who):
             raise HTTPException(status_code=429, detail=refused)
         if backend != "gemini":

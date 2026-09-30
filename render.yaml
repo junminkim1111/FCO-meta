@@ -1,0 +1,18 @@
+# Render Blueprint — 무료 웹 서비스 하나 (15분 방문이 없으면 잠들고, 다음 방문 때 약 1분 걸려 다시 켜짐)
+# 디스크가 없어 켜질 때마다 비공개 Hugging Face 데이터셋에서 DB를 받는다 (fco_meta/cloud.py).
+services:
+  - type: web
+    name: fclm
+    runtime: python
+    plan: free
+    branch: claude/fco-ranker-chatbot-plan-tyzgns
+    buildCommand: pip install ".[web,cloud]"
+    startCommand: python -m fco_meta.cloud serve
+    healthCheckPath: /api/meta
+    envVars:  # sync: false = Render 화면에서 값을 직접 넣는다 (저장소에는 값이 없음)
+      - key: HF_DATA_REPO   # 예: 계정/fclm-data
+        sync: false
+      - key: HF_TOKEN       # 데이터셋 읽기 권한 토큰
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

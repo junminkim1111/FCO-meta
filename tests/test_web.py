@@ -224,5 +224,7 @@ def test_chat_over_the_limit_gets_429(db, tmp_path):  # noqa: F811
     assert ask(client, "아스날 볼란치 1명 추천")[0]
     res = client.post("/api/chat", json={"message": "또"}, headers={"CF-Connecting-IP": "1.2.3.4"})
     assert res.status_code == 200  # 다른 사람(터널이 넘겨준 IP)은 따로 센다
+    res = client.post("/api/chat", json={"message": "또"}, headers={"X-Forwarded-For": "5.6.7.8, 10.0.0.1"})
+    assert res.status_code == 200  # Hugging Face 등 프록시 뒤: 첫 주소가 방문자
     res = client.post("/api/chat", json={"message": "또"})
     assert res.status_code == 429 and "1분에 1개" in res.json()["detail"]

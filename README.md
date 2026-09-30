@@ -13,6 +13,21 @@ FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프�
 | `run_daily.command` | 오늘 수집(랭킹 → 스쿼드 → 집계 → 시세)을 한 번 실행하고 상태 표시 |
 | `start_share.command` | 웹 서버를 켜고 Cloudflare 임시 터널로 공유 주소(`https://….trycloudflare.com`)를 만듦 (지인 베타). 창을 닫으면 종료 |
 
+### Render에 올리기 (무료 호스팅)
+
+Render 무료 웹 서비스가 GitHub 코드로 빌드하고(`render.yaml`), 켜질 때 **비공개 Hugging Face 데이터셋**에서 DB를 받아 웹을 엽니다.
+매일 수집은 맥에서 하고 DB만 올립니다. 무료 서비스는 15분 방문이 없으면 잠들고, 다음 방문 때 약 1분 걸려 다시 켜집니다.
+(Hugging Face Space는 Docker 실행에 PRO 구독이 필요해졌고, Google Cloud e2-micro는 외부 IPv4가 월 약 3.7달러라 쓰지 않았습니다.)
+
+```bash
+pip install -e ".[cloud]"
+python -m fco_meta.cloud push-db   # 매일 수집 뒤: DB를 데이터셋에 올리고(.env의 HF_TOKEN, 쓰기) Render에 재배포 요청
+```
+
+- Render에서 **New → Blueprint**로 이 저장소를 고르면 `render.yaml`대로 만들어지고, `HF_DATA_REPO`·`HF_TOKEN`(데이터셋 **읽기** 토큰)·`GEMINI_API_KEY`를 묻습니다.
+- 만든 뒤 서비스 Settings의 **Deploy Hook** 주소를 맥 `.env`의 `RENDER_DEPLOY_HOOK`에 넣으면 push-db가 재배포까지 요청합니다.
+- 코드는 GitHub에 푸시하면 Render가 자동으로 다시 빌드합니다. 질문 수 제한은 프록시가 넘겨주는 `X-Forwarded-For`의 첫 주소로 셉니다.
+
 ### 지인에게 공유하기 (베타)
 
 - 처음 한 번 `brew install cloudflared`. 계정·도메인 없이 임시 주소가 생기며, **켤 때마다 주소가 바뀝니다**. 맥이 켜져 있을 때만 열립니다.
