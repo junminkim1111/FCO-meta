@@ -82,22 +82,21 @@ def test_missing_db(tmp_path):
         create_app(tmp_path / "missing.sqlite")
 
 
-def test_gemini_errors_are_shown_and_answered_by_rules(db, tmp_path, monkeypatch):  # noqa: F811
+def test_gemini_errors_show_only_a_busy_notice(db, tmp_path, monkeypatch):  # noqa: F811
     from google.genai import errors
 
     import fco_meta.web.app as web_app
 
     class Broken:
         def ask_stream(self, message):
-            yield "쓰다가 "  # 도중에 실패해도 쓰던 글은 지우고 규칙 기반 답으로 바꾼다
+            yield "쓰다가 "  # 도중에 실패해도 쓰던 글은 지우고 안내로 바꾼다
             raise errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
 
     monkeypatch.setattr(web_app, "_gemini_chat", lambda toolbox, model: Broken())
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
     answer, done = ask(client, "아스날 볼란치 1명 추천")
-    assert answer.startswith("⚠ Gemini API 오류 404") and "이 키로 쓸 수 없는 모델" in answer
-    assert "볼란치R" in answer  # 규칙 기반 답변이 이어서 나옴
-    assert done["error"].startswith("Gemini API 오류 404")
+    assert answer == web_app.BUSY_MESSAGE  # 오류 원인·규칙 기반 답 없이 혼잡 안내만 (원인은 서버 로그)
+    assert done["error"] == "unavailable"
 
 
 def test_gemini_answer_hides_evidence_and_fallback_model(db, tmp_path, monkeypatch):  # noqa: F811

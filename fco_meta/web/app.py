@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_SESSIONS = 200
+BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 
 
 def _event(**fields: Any) -> str:
@@ -129,14 +130,11 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
                             yield _event(type="tool", name=piece.name, args=piece.args)
                         else:
                             yield _event(type="delta", text=piece)
-                except Exception as exc:  # Gemini 실패 → 원인을 알리고 규칙 기반으로 대신 답한다
-                    log.exception("gemini chat failed")
-                    reason = describe_error(exc)
-                    with lock:
-                        answer = rules.ask(req.message)
+                except Exception as exc:  # Gemini 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
+                    log.exception("gemini chat failed: %s", describe_error(exc))
                     yield _event(type="reset")
-                    yield _event(type="delta", text=f"⚠ {reason}\n(이번 질문은 규칙 기반으로 답합니다)\n\n{answer.text}")
-                    yield _event(type="done", tool_calls=[answer.tool] if answer.tool else [], error=reason)
+                    yield _event(type="delta", text=BUSY_MESSAGE)
+                    yield _event(type="done", tool_calls=[], error="unavailable")
                     return
                 finally:  # 정지로 끊겨도 잠금을 풀기 전에 닫아, 그 질문을 기록에서 빼는 일이 다음 질문보다 먼저 끝나게 한다
                     stream.close()
