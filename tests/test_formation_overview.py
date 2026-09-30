@@ -38,3 +38,27 @@ def test_overview_ranking_squads_and_matchups(tmp_path, fixture_html):
     content, _ = Toolbox(storage.conn).run("get_formation_overview", {"formation": "4-4-2"})
     losses = next(o for o in json.loads(content)["matchups"]["opponents"] if o["opponent"] == "4-2-3-1")
     assert losses["losses"] >= squads  # 같은 경기를 상대 쪽에서 본 결과
+
+
+def test_team_color_overview_uses_that_team_colors_rankers(tmp_path, fixture_html):
+    storage, as_of, targets = setup(tmp_path, fixture_html, top=10)
+    tb = Toolbox(storage.conn)
+    marks = ",".join(str(t.rank) for t in targets)  # 스쿼드를 받은 랭커가 가장 많은 팀컬러
+    (tc_id,) = storage.conn.execute(
+        f"SELECT team_color_id FROM ranker_team_color WHERE data_as_of = ? AND rank IN ({marks}) GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1",
+        (as_of,),
+    ).fetchone()
+    (n,) = storage.conn.execute("SELECT COUNT(*) FROM ranker_team_color WHERE data_as_of = ? AND team_color_id = ?", (as_of, tc_id)).fetchone()
+    name = tb._scope_name(tc_id)
+    d = json.loads(tb.run("get_team_color_overview", {"team_color": name})[0])
+    assert d["team_color"] == name and d["ranking"]["rankers"] == n and d["ranking"]["usage_rank"] >= 1
+    assert d["formations"] and d["rank_bands"][0]["rank_band"].startswith("1~") and d["all_rankers_win_rate"] is not None
+
+    members = {r for (r,) in storage.conn.execute("SELECT rank FROM ranker_team_color WHERE data_as_of = ? AND team_color_id = ?", (as_of, tc_id))}
+    with_squads = members & {t.rank for t in targets}
+    top = d["top_ranker_squad"]  # 이 팀컬러에서 가장 높은 순위 (포메이션과 무관)
+    assert top["rank"] == min(with_squads) and len(top["players"]) == 11
+    assert d["best_eleven"]["squads"] == len(with_squads) and len(d["best_eleven"]["players"]) == 11
+
+    _, is_error = tb.run("get_team_color_overview", {"team_color": "전체 랭커"})
+    assert is_error  # 팀컬러를 골라야 한다

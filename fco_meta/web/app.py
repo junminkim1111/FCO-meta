@@ -174,6 +174,16 @@ def create_app(
         """포메이션 하나의 종합 정보 (사용률·승률·팀컬러·순위 구간·최상위 랭커 스쿼드·베스트 11·상대 전적)."""
         return tool("get_formation_overview", {"formation": name})
 
+    @app.get("/api/teamcolors")
+    def teamcolors() -> dict[str, Any]:
+        """팀컬러 분포 (랭킹 상위 10,000명, 랭커 많은 순 30개; groups = 전체 팀컬러 수)."""
+        return tool("query_rankers", {"group_by": "team_color", "limit": 30})
+
+    @app.get("/api/teamcolor")
+    def teamcolor(name: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:
+        """팀컬러 하나의 종합 정보 (사용률·승률·포메이션·순위 구간·최상위 랭커 스쿼드·베스트 11)."""
+        return tool("get_team_color_overview", {"team_color": name})
+
     @app.post("/api/chat")
     def chat(req: ChatRequest, request: Request) -> StreamingResponse:
         """답을 한 줄에 하나씩 JSON 이벤트로 흘려보낸다: start(session_id) → delta(text)… → done.

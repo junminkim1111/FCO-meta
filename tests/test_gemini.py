@@ -55,7 +55,7 @@ def test_function_declarations_accepted_by_sdk():
     decls = {d.name: d for d in function_declarations()}
     assert set(decls) == {
         "resolve_terms", "list_available_data", "list_formations", "recommend_players", "recommend_squad",
-        "get_player_detail", "get_meta_trends", "query_squads", "query_rankers", "get_formation_overview",
+        "get_player_detail", "get_meta_trends", "query_squads", "query_rankers", "get_formation_overview", "get_team_color_overview",
     }  # fmt: skip
     assert decls["recommend_players"].parameters_json_schema["required"] == ["role"]  # 팀컬러 생략 = 전체 랭커
 

@@ -228,3 +228,11 @@ def test_chat_over_the_limit_gets_429(db, tmp_path):  # noqa: F811
     assert res.status_code == 200  # Hugging Face 등 프록시 뒤: 첫 주소가 방문자
     res = client.post("/api/chat", json={"message": "또"})
     assert res.status_code == 429 and "1분에 1개" in res.json()["detail"]
+
+
+def test_team_color_endpoints(client):
+    d = client.get("/api/teamcolors").json()
+    assert d["rows"] == [] and "note" in d  # 이 픽스처에는 필터 없는 랭킹이 없다
+    detail = client.get("/api/teamcolor", params={"name": "아스날"})
+    assert detail.status_code == 200 and detail.json()["team_color"] == "아스널"
+    assert client.get("/api/teamcolor", params={"name": ""}).status_code == 422

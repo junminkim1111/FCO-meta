@@ -384,6 +384,15 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": _schema({"formation": {"type": "string", "description": "포메이션 (예: 4-2-3-1, 4231)"}}, ["formation"]),
     },
     {
+        "name": "get_team_color_overview",
+        "description": (
+            "팀컬러 하나의 종합 정보: 랭킹 상위 10,000명 중 사용 순위·비율·시즌 승률(전체 평균 대비)·평균 ELO·구단가치·최고 순위, "
+            "그 팀컬러 랭커들이 많이 쓰는 포메이션, 순위 구간별 비율, 그 팀컬러 최상위 랭커의 실제 선발 11명, 랭커들의 베스트 11(자리별 최다 사용). "
+            "'레알 팀컬러 어때?', '아스널 쓰는 랭커들은 누구를 써?' 같은 질문에 쓴다."
+        ),
+        "input_schema": _schema({"team_color": {"type": "string", "description": "팀컬러 (별칭 가능, 예: 레알, AC밀란)"}}, ["team_color"]),
+    },
+    {
         "name": "get_meta_trends",
         "description": (
             "랭커 메타 동향: 많이 쓰는 팀컬러(전체 랭커일 때)·포메이션 비율, 가장 많이 쓰인 선수, "
@@ -425,6 +434,7 @@ class Toolbox:
             "query_squads": self.query_squads,
             "query_rankers": self.query_rankers,
             "get_formation_overview": self.get_formation_overview,
+            "get_team_color_overview": self.get_team_color_overview,
         }
 
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
@@ -1420,6 +1430,7 @@ class Toolbox:
         return {
             "scope": {"description": " · ".join(parts), "data_as_of": res["data_as_of"]},
             "rankers": res["rankers"],
+            "groups": res["total_groups"],
             "group_by": group_by,
             "sort_by": sort_by,
             "rows": rows,
@@ -1466,13 +1477,7 @@ class Toolbox:
             out["team_colors"] = [
                 {"team_color": self._scope_name(r["key"]), "rankers": r["rankers"], "share": r["share"]} for r in teams["rows"]
             ]
-            band = 2000
-            bands = query_rankers(self.conn, "rank_band", formation=name, band=band, limit=30)
-            out["rank_bands"] = [
-                {"rank_band": f"{r['key']}~{min(r['key'] + band - 1, everyone['covered'])}위", "rankers": r["rankers"],
-                 "share_of_band": round(r["rankers"] / (min(r["key"] + band - 1, everyone["covered"]) - r["key"] + 1), 4)}
-                for r in bands["rows"]
-            ]  # fmt: skip
+            out["rank_bands"] = self._rank_bands(everyone["covered"], formation=name)
         out["top_ranker_squad"] = top_ranker_squad(self.conn, name)
         out["best_eleven"] = best_eleven(self.conn, name)
         out["matchups"] = formation_matchups(self.conn, name)
@@ -1483,6 +1488,58 @@ class Toolbox:
             "matchups": "수집된 공식경기 중 양쪽 선발을 아는 경기의 상대 포메이션별 결과 (포메이션은 배치로 추론, 표본 작으면 참고용)",
         }
         return out
+
+    def get_team_color_overview(self, team_color: str) -> dict[str, Any]:
+        tc_id, tc_name = self._scope(team_color)
+        if tc_id == ALL_RANKERS:
+            raise ToolError("team_color가 필요합니다 (예: 레알 마드리드, 아스널)")
+        everyone = query_rankers(self.conn, "team_color", limit=1000)
+        if everyone["data_as_of"] is None:
+            return {"team_color": tc_name, "note": "필터 없이 수집한 랭킹이 없음"}
+        ranked = everyone["rows"]  # 랭커 많은 순 (랭커 한 명이 팀컬러 여럿일 수 있음)
+        row = next((r for r in ranked if r["key"] == tc_id), None)
+        overall = query_rankers(self.conn, "rank_band", band=everyone["covered"], limit=1)["rows"]  # 랭커 전체 한 묶음
+        out: dict[str, Any] = {
+            "team_color": tc_name,
+            "data_as_of": everyone["data_as_of"],
+            "ranking_scope": everyone["covered"],
+            "all_rankers_win_rate": overall[0]["season_win_rate"] if overall else None,
+        }
+        if row is None:
+            out["note"] = f"랭킹 상위 {everyone['covered']}명 중 {tc_name} 팀컬러 랭커가 없음"
+        else:
+            best = self.conn.execute(
+                "SELECT MIN(rank) FROM ranker_team_color WHERE data_as_of = ? AND mode = '1vs1' AND team_color_id = ?",
+                (everyone["data_as_of"], tc_id),
+            ).fetchone()[0]
+            value = row["avg_squad_value"]
+            out["ranking"] = {
+                "usage_rank": ranked.index(row) + 1, "team_colors": len(ranked), "rankers": row["rankers"], "share": row["share"],
+                "season_win_rate": row["season_win_rate"], "season_games": row["season_games"], "avg_elo": row["avg_elo"],
+                "avg_squad_value": format_bp(int(value)) if value is not None else None, "best_rank": best,
+            }  # fmt: skip
+            forms = query_rankers(self.conn, "formation", team_color_id=tc_id, limit=5)
+            out["formations"] = [{"formation": r["key"], "rankers": r["rankers"], "share": r["share"]} for r in forms["rows"]]
+            out["rank_bands"] = self._rank_bands(everyone["covered"], team_color_id=tc_id)
+        out["top_ranker_squad"] = top_ranker_squad(self.conn, team_color_id=tc_id)
+        out["best_eleven"] = best_eleven(self.conn, team_color_id=tc_id)
+        out["definitions"] = {
+            "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 팀컬러 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
+            "formations": "그 팀컬러 랭커들이 랭킹 화면에서 쓰는 포메이션",
+            "top_ranker_squad": "스쿼드 수집 랭커 중 이 팀컬러의 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외)",
+            "best_eleven": "이 팀컬러 랭커들의 스쿼드(포메이션 무관)에서 가장 흔한 배치의 자리마다 가장 많이 쓰인 선수",
+        }
+        return out
+
+    def _rank_bands(self, covered: int, **scope: Any) -> list[dict[str, Any]]:
+        """Share of each 2,000-rank band (formation or team_color_id scope)."""
+        band = 2000
+        rows = query_rankers(self.conn, "rank_band", band=band, limit=30, **scope)["rows"]
+        return [
+            {"rank_band": f"{r['key']}~{min(r['key'] + band - 1, covered)}위", "rankers": r["rankers"],
+             "share_of_band": round(r["rankers"] / (min(r["key"] + band - 1, covered) - r["key"] + 1), 4)}
+            for r in rows
+        ]  # fmt: skip
 
     def _query_row(self, group_by: str, r: dict[str, Any]) -> dict[str, Any]:
         key = r["key"]

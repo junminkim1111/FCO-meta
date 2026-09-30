@@ -49,6 +49,8 @@ SYSTEM_PROMPT = """\
   "+2.1%p"처럼 %p로 씁니다. compared_with가 없으면 비교할 이전 데이터가 아직 없다고 말합니다.
 - 선수 한 명의 현황("라이스 사용률"): get_player_detail. usage_history가 있으면 추이를 한 줄로 요약합니다.
 - 포메이션 분포: list_formations. 수집 범위: list_available_data.
+- 포메이션 하나("4-2-3-1 어때?")는 get_formation_overview, 팀컬러 하나("레알 팀컬러 어때?", "아스널 랭커들 스쿼드")는
+  get_team_color_overview (사용 순위·시즌 승률·많이 쓰는 포메이션·최상위 랭커 스쿼드·베스트 11).
 - 선수가 필요 없는 랭커 질문("10,000명 중 많이 쓰는 팀컬러", "승률 높은 포메이션", "1,000~2,000위는 뭐 써", "순위대별 구단가치"):
   query_rankers (랭킹 상위 10,000명, 시즌 전적 기준 승률).
 - 승률 질문은 랭커들의 시즌 전적 승률(query_squads의 season_win_rate, recommend_players의 avg_season_win_rate_of_users)로

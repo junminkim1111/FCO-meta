@@ -1,5 +1,5 @@
-"""What the web page shows for one formation: a top ranker's squad, the rankers' best XI and the
-results against each opponent formation."""
+"""What the web page shows for one formation or one team color: a top ranker's squad, the rankers'
+best XI and (formations) the results against each opponent formation."""
 
 from __future__ import annotations
 
@@ -42,8 +42,24 @@ def _score(conn: sqlite3.Connection, match_id: str, ouid: str) -> str | None:
     return f"{mine}:{theirs}" if mine is not None and theirs is not None else None
 
 
-def top_ranker_squad(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> dict[str, Any] | None:
-    """Highest-ranked ranker of the latest squad snapshot who plays `formation` (actual line-up first)."""
+# 스쿼드 스냅샷의 랭커를 포메이션(표시) 또는 팀컬러로 거르는 조건 (q = ranker_squad, s = ranker_snapshot)
+_BY_TEAM_COLOR = (
+    "EXISTS (SELECT 1 FROM ranker_team_color c WHERE c.data_as_of = q.data_as_of AND c.mode = q.mode"
+    " AND c.rank = q.rank AND c.team_color_id = ?)"
+)
+
+
+def _scope(formation: str | None, team_color_id: int | None) -> tuple[str, tuple]:
+    if team_color_id is not None:
+        return _BY_TEAM_COLOR, (team_color_id,)
+    return "q.formation_match = 1 AND s.formation = ?", (formation,)
+
+
+def top_ranker_squad(
+    conn: sqlite3.Connection, formation: str | None = None, mode: str = "1vs1", *, team_color_id: int | None = None
+) -> dict[str, Any] | None:
+    """Highest-ranked ranker of the latest squad snapshot who plays `formation` (actual line-up first),
+    or who has `team_color_id`."""
     as_of = squad_snapshot(conn, mode=mode)
     if as_of is None:
         return None
@@ -55,9 +71,11 @@ def top_ranker_squad(conn: sqlite3.Connection, formation: str, mode: str = "1vs1
         " FROM ranker_squad q JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
         " LEFT JOIN match_team t ON t.match_id = q.match_id AND t.ouid = q.ouid"
         " LEFT JOIN match m ON m.match_id = q.match_id"
-        " WHERE q.data_as_of = ? AND q.mode = ? AND q.match_order = 0 AND q.accepted = 1 AND s.formation = ?"
-        " ORDER BY q.formation_match DESC, q.rank LIMIT 1",
-        (as_of, mode, formation),
+        " WHERE q.data_as_of = ? AND q.mode = ? AND q.match_order = 0 AND q.accepted = 1 AND "
+        + (_BY_TEAM_COLOR if team_color_id is not None else "s.formation = ?")
+        # 포메이션: 실제 배치가 맞는 랭커 먼저 / 팀컬러: 순위만
+        + (" ORDER BY q.rank LIMIT 1" if team_color_id is not None else " ORDER BY q.formation_match DESC, q.rank LIMIT 1"),
+        (as_of, mode, team_color_id if team_color_id is not None else formation),
     ).fetchone()
     if r is None:
         return None
@@ -70,21 +88,24 @@ def top_ranker_squad(conn: sqlite3.Connection, formation: str, mode: str = "1vs1
     }  # fmt: skip
 
 
-def best_eleven(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> dict[str, Any] | None:
+def best_eleven(
+    conn: sqlite3.Connection, formation: str | None = None, mode: str = "1vs1", *, team_color_id: int | None = None
+) -> dict[str, Any] | None:
     """Most used player at each position of the most common layout, over the latest snapshot's squads
-    that actually played `formation`. Counted per player and card regardless of grade (no grade shown)."""
+    that actually played `formation` (or of rankers with `team_color_id`, any formation).
+    Counted per player and card regardless of grade (no grade shown)."""
     as_of = squad_snapshot(conn, mode=mode)
     if as_of is None:
         return None
     cur = conn.cursor()
     cur.row_factory = sqlite3.Row
+    where, args = _scope(formation, team_color_id)
     rows = cur.execute(
         "SELECT q.rank, p.sp_position, p.pid, p.sp_id FROM ranker_squad q"
         " JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
         " JOIN match_player p ON p.match_id = q.match_id AND p.ouid = q.ouid AND p.starter = 1"
-        " WHERE q.data_as_of = ? AND q.mode = ? AND q.match_order = 0 AND q.accepted = 1 AND q.formation_match = 1"
-        " AND s.formation = ?",
-        (as_of, mode, formation),
+        " WHERE q.data_as_of = ? AND q.mode = ? AND q.match_order = 0 AND q.accepted = 1 AND " + where,
+        (as_of, mode, *args),
     ).fetchall()
     squads: dict[int, list[int]] = defaultdict(list)
     at: dict[int, Counter[int]] = defaultdict(Counter)  # 포지션 → 선수(pid)별 사용 수

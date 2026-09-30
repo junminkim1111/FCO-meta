@@ -314,9 +314,13 @@ python -m fco_meta.web --host 0.0.0.0 --port 8080
   - **스쿼드** 경기장 그림: 최상위 랭커 스쿼드(닉네임 없이 순위만) / 랭커 베스트 11(자리별 최다 사용), 선수 사진·시즌 아이콘·강화
   - **상대 포메이션별 전적**: 수집된 경기의 양쪽 선발 배치로 상대 포메이션을 추론한 승·무·패 (경기가 쌓일수록 정확)
   - 많이 쓰는 팀컬러, 순위 구간별 사용 비율
+- **팀컬러 분포**: 위 전환 버튼(React Bits Rubber Segment를 옮긴 `static/segment.js`)으로 포메이션 분포와 바꿔 봄. 팀컬러 상위 8개 막대,
+  누르면 같은 모양의 팀컬러 정보(`get_team_color_overview`): 사용률·시즌 승률·ELO·구단가치·최고 순위, 그 팀컬러 최상위 랭커 스쿼드 /
+  베스트 11(포메이션 무관), 많이 쓰는 포메이션, 순위 구간별 비율. 랭커 한 명이 팀컬러 여럿일 수 있어 비율 합은 100%를 넘음
 - **챗봇**: 자연어 질문. 답을 만드는 동안에도 포메이션을 둘러볼 수 있고, 넓은 화면에서는 챗봇이 화면에 고정됨
 - 라이트/다크 모드, 모바일 폭 대응
-- JSON API: `/api/meta`(수집 범위), `/api/formations`, `/api/formation?name=4-2-3-1`, `POST /api/chat` (문서: `/api/docs`)
+- JSON API: `/api/meta`(수집 범위), `/api/formations`, `/api/formation?name=4-2-3-1`, `/api/teamcolors`, `/api/teamcolor?name=레알`,
+  `POST /api/chat` (문서: `/api/docs`)
 
 ## 테스트
 

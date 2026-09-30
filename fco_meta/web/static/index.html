@@ -74,6 +74,31 @@
   .tile .val { font-size: clamp(14px, 3cqi, 20px); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; } /* 타일 폭에 맞춰 한 줄로 */
   .tile .sub { font-size: 11px; color: var(--faint); }
   h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; margin: 22px 0 10px; }
+  /* 분포 전환 (static/segment.js — React Bits Rubber Segment, MIT + Commons Clause © David Haz) */
+  .dist-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .rubber-segment { --rs-track: rgba(255, 255, 255, .06); --rs-thumb: var(--text); --rs-ink: var(--text); --rs-ink-active: #0b0b0d;
+    --rs-radius: 10px; --rs-inset: 3px; --rs-thumb-radius: 7px; --rs-h: 34px; --rs-font: 13px; --rs-pad: 14px; --rs-min: 44px;
+    --rs-idle: .7; --rs-hover: .9; --rs-ease-out: cubic-bezier(.23, 1, .32, 1);
+    position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); vertical-align: middle;
+    padding: var(--rs-inset); border-radius: var(--rs-radius); background: var(--rs-track); border: 1px solid var(--line);
+    touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  .rubber-segment__item { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: calc(var(--rs-h) - var(--rs-inset) * 2); min-width: var(--rs-min); margin: 0; padding: 0 var(--rs-pad); border: 0;
+    border-radius: var(--rs-thumb-radius); background: none; color: var(--rs-ink); opacity: var(--rs-idle); font: inherit;
+    font-size: var(--rs-font); font-weight: 600; line-height: 1; white-space: nowrap; cursor: pointer; outline: none;
+    transition: opacity 160ms ease, transform 160ms var(--rs-ease-out); }
+  .rubber-segment__item:hover { opacity: var(--rs-idle); }
+  .rubber-segment__item[aria-checked='true'] { cursor: default; }
+  .rubber-segment[data-draggable] .rubber-segment__item[aria-checked='true'] { cursor: grab; }
+  .rubber-segment[data-held], .rubber-segment[data-held] .rubber-segment__item { cursor: grabbing; }
+  .rubber-segment__item[data-pressed] { transform: scale(.96); }
+  .rubber-segment__item:focus-visible { outline: 2px solid var(--rs-thumb); outline-offset: 3px; }
+  @media (hover: hover) and (pointer: fine) { .rubber-segment__item[aria-checked='false']:hover { opacity: var(--rs-hover); } }
+  .rubber-segment__thumb { position: absolute; inset: var(--rs-inset); display: grid; grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr); background: var(--rs-thumb); color: var(--rs-ink-active); pointer-events: none;
+    border-radius: var(--rs-thumb-radius); }
+  .rubber-segment__copy { color: inherit; opacity: 1; cursor: default; }
+  @media (prefers-reduced-motion: reduce) { .rubber-segment__item { transition: opacity 160ms ease; } }
   .seg { display: inline-flex; background: rgba(0, 0, 0, .35); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
   .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 5px 14px; }
   .seg button.on { background: var(--panel-strong); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -205,13 +230,13 @@
       </svg></h1>
     </div>
   </header>
-  <section aria-labelledby="form-title">
-    <h2 id="form-title">포메이션 분포 <span id="form-scope" class="stat"></span></h2>
+  <section aria-label="랭커 분포">
+    <div class="dist-head"><div id="dist-mode"></div><span id="form-scope" class="stat"></span></div>
     <div id="fchart" class="fchart"></div>
   </section>
 
   <section id="fdetail" aria-live="polite">
-    <p class="stat">포메이션 막대를 누르면 여기에 그 포메이션 정보가 나옵니다.</p>
+    <p class="stat">막대를 누르면 여기에 그 포메이션·팀컬러 정보가 나옵니다.</p>
   </section>
   <!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
   <footer class="foot">Data based on NEXON Open API · 시세·선수 정보: FC온라인 데이터센터 · 질문은 Google Gemini로 처리됩니다</footer>
@@ -235,6 +260,7 @@ import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
 import { mountMetal } from "/static/metal.js"; // 보내기 버튼의 금속 링
+import { mountSegment } from "/static/segment.js"; // 포메이션 분포 / 팀컬러 분포 전환
 const $ = (id) => document.getElementById(id);
 const beam = mountBeam($("msg-beam"));
 const SEND_ICON = $("send").innerHTML; // 위쪽 화살표 (답을 기다리는 동안은 ■)
@@ -289,42 +315,58 @@ const hover = (node, text) => {
   return node;
 };
 
-// --- formation distribution ---
+// --- 분포: 포메이션 / 팀컬러 (위 전환 버튼) ---
 const MAX_BARS = 8;
+const MODES = {
+  formation: {
+    list: "/api/formations", rows: (d) => d.formations || [], key: (r) => r.formation,
+    scope: (d) => "· " + d.team_color,
+    rest: (d) => {
+      const rest = (d.formations || []).slice(MAX_BARS);
+      return rest.length ? `그 외 ${rest.length}개 포메이션 ${rest.reduce((n, f) => n + f.rankers, 0)}명` : "";
+    },
+    detail: (name) => "/api/formation?" + new URLSearchParams({ name }),
+  },
+  team: {
+    list: "/api/teamcolors", rows: (d) => d.rows || [], key: (r) => r.team_color,
+    scope: (d) => "· " + ((d.scope && d.scope.description) || "랭킹"),
+    rest: (d) => (d.groups > MAX_BARS ? `그 외 ${d.groups - MAX_BARS}개 팀컬러 · 랭커 한 명이 팀컬러 여럿일 수 있어 합이 100%를 넘습니다` : ""),
+    detail: (name) => "/api/teamcolor?" + new URLSearchParams({ name }),
+  },
+};
+let mode = "formation";
 let selected = null;
 
 function markSelected() {
-  for (const b of $("fchart").querySelectorAll(".track")) b.classList.toggle("sel", b.dataset.formation === selected);
+  for (const b of $("fchart").querySelectorAll(".track")) b.classList.toggle("sel", b.dataset.key === selected);
 }
 
-async function loadFormations() {
-  const box = $("fchart");
+async function loadChart() {
+  const m = MODES[mode], want = mode, box = $("fchart");
   try {
-    const d = await api("/api/formations");
-    $("form-scope").textContent = "· " + d.team_color;
-    const forms = d.formations || [];
-    if (!forms.length) {
+    const d = await api(m.list);
+    if (mode !== want) return;  // 그사이 전환했으면 버린다
+    $("form-scope").textContent = m.scope(d);
+    const all = m.rows(d);
+    if (!all.length) {
       box.replaceChildren(el("p", { class: "stat", text: d.note || "랭킹 스냅샷이 없습니다." }));
       return;
     }
-    const shown = forms.slice(0, MAX_BARS);
-    const rest = forms.slice(MAX_BARS);
+    const shown = all.slice(0, MAX_BARS);
     const max = shown[0].share || 1;
     const rows = [];
-    for (const f of shown) {
-      const detail = `${f.formation}\n랭커 ${f.rankers}명 (${pct(f.share)})`;
-      const bar = hover(el("button", { type: "button", class: "track", ariaLabel: `${f.formation}, 랭커 ${f.rankers}명 — 누르면 상세` },
-        el("span", { style: `width:${(f.share / max) * 100}%` })), detail);
-      bar.dataset.formation = f.formation;
-      bar.addEventListener("click", () => { hideTip(); showFormation(f.formation); });
-      rows.push(el("span", { class: "f", text: f.formation }), bar, el("span", { class: "v", text: `${f.rankers}명 · ${pct(f.share)}` }));
+    for (const r of shown) {
+      const key = m.key(r);
+      const bar = hover(el("button", { type: "button", class: "track", ariaLabel: `${key}, 랭커 ${r.rankers}명 — 누르면 상세` },
+        el("span", { style: `width:${(r.share / max) * 100}%` })), `${key}\n랭커 ${r.rankers}명 (${pct(r.share)})`);
+      bar.dataset.key = key;
+      bar.addEventListener("click", () => { hideTip(); showDetail(key); });
+      rows.push(el("span", { class: "f", text: key }), bar, el("span", { class: "v", text: `${r.rankers}명 · ${pct(r.share)}` }));
     }
-    if (rest.length) {
-      const n = rest.reduce((s, f) => s + f.rankers, 0);
-      rows.push(el("span", { class: "other", text: `그 외 ${rest.length}개 포메이션 ${n}명` }));
-    }
+    const rest = m.rest(d);
+    if (rest) rows.push(el("span", { class: "other", text: rest }));
     box.replaceChildren(...rows);
-    showFormation(shown[0].formation);
+    showDetail(m.key(shown[0]));
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
   }
@@ -384,18 +426,21 @@ function tile(k, val, sub) {
 function renderPitchArea(d) {
   const area = el("div");
   const top = d.top_ranker_squad, best = d.best_eleven;
+  const what = d.formation ? "이 포메이션을 쓰는" : "이 팀컬러";
   const views = {
     top: () => {
-      if (!top) return [el("p", { class: "caption", text: "스쿼드 수집 랭커 중 이 포메이션을 쓰는 랭커가 아직 없습니다." }),
+      if (!top) return [el("p", { class: "caption", text: `스쿼드 수집 랭커 중 ${what} 랭커가 아직 없습니다.` }),
                         pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
-      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${top.team_color || "팀컬러 미상"} · ELO ${Math.round(top.elo)}` })];
-      if (!top.formation_match)
+      // 포메이션 보기는 팀컬러를, 팀컬러 보기는 그 경기 배치를 함께 보여 준다
+      const side = d.formation ? top.team_color || "팀컬러 미상" : top.played_formation || "배치 미상";
+      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${side} · ELO ${Math.round(top.elo)}` })];
+      if (d.formation && !top.formation_match)
         out.push(el("div", { class: "notice", text: `이 경기 실제 배치는 ${top.played_formation || "알 수 없음"}입니다 (랭킹 표시는 ${d.formation}).` }));
       out.push(pitch(top.players, "", (p) => (p.rating != null ? ` · 평점 ${p.rating}` : "")));
       return out;
     },
     best: () => {
-      if (!best) return [el("p", { class: "caption", text: "이 포메이션으로 실제 경기한 스쿼드가 아직 없습니다." }),
+      if (!best) return [el("p", { class: "caption", text: d.formation ? "이 포메이션으로 실제 경기한 스쿼드가 아직 없습니다." : "스쿼드 수집 랭커 중 이 팀컬러 랭커가 아직 없습니다." }),
                          pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
       return [pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
     },
@@ -437,19 +482,22 @@ function renderMatchups(m) {
   ];
 }
 
-async function showFormation(name) {
+async function showDetail(name) {
   selected = name;
   markSelected();
+  const want = mode, isForm = mode === "formation";
   const box = $("fdetail");
   box.replaceChildren(el("p", { class: "stat", text: `${name} 불러오는 중…` }));
   try {
-    const d = await api("/api/formation?" + new URLSearchParams({ name }));
-    if (selected !== name) return;  // 그사이 다른 포메이션을 눌렀으면 버린다
+    const d = await api(MODES[mode].detail(name));
+    if (selected !== name || mode !== want) return;  // 그사이 다른 막대를 눌렀거나 전환했으면 버린다
     const r = d.ranking;
-    const out = [el("div", { class: "fd-head" }, el("h2", { text: name }),
-      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${r.formations}개 · 랭킹 상위 ${d.ranking_scope}명 중 ${pct(r.share)}` : (d.note || "") }))];
+    const groups = r ? (isForm ? r.formations : r.team_colors) : 0;
+    const out = [el("div", { class: "fd-head" }, el("h2", { text: isForm ? name : d.team_color }),
+      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${groups}개 · 랭킹 상위 ${d.ranking_scope}명 중 ${pct(r.share)}` : (d.note || "") }))];
     if (r) {
-      const diff = d.all_formations_win_rate != null ? (r.season_win_rate - d.all_formations_win_rate) * 100 : null;
+      const avg = isForm ? d.all_formations_win_rate : d.all_rankers_win_rate;
+      const diff = avg != null ? (r.season_win_rate - avg) * 100 : null;
       out.push(el("div", { class: "tiles" },
         tile("시즌 승률", pct(r.season_win_rate), diff != null ? `전체 평균 대비 ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}%p` : ""),
         tile("평균 ELO", String(Math.round(r.avg_elo)), `${r.rankers.toLocaleString()}명`),
@@ -457,10 +505,13 @@ async function showFormation(name) {
         tile("최고 순위", `${r.best_rank}위`, "")));
     }
     out.push(el("h3", { text: "스쿼드" }), renderPitchArea(d));
-    out.push(el("h3", { text: "상대 포메이션별 전적" }), ...renderMatchups(d.matchups));
+    if (isForm) out.push(el("h3", { text: "상대 포메이션별 전적" }), ...renderMatchups(d.matchups));
     if (r) {
-      const teams = el("div", { class: "rows" }, ...d.team_colors.flatMap((t) =>
-        [el("span", { text: t.team_color }), el("span", { class: "v", text: `${t.rankers}명 · ${pct(t.share)}` })]));
+      // 포메이션 보기: 그 포메이션을 쓰는 팀컬러 / 팀컬러 보기: 그 팀컬러가 쓰는 포메이션
+      const [title, list] = isForm ? ["많이 쓰는 팀컬러", d.team_colors.map((t) => [t.team_color, t])]
+                                   : ["많이 쓰는 포메이션", d.formations.map((f) => [f.formation, f])];
+      const top5 = el("div", { class: "rows" }, ...list.flatMap(([label, t]) =>
+        [el("span", { text: label }), el("span", { class: "v", text: `${t.rankers}명 · ${pct(t.share)}` })]));
       const maxBand = Math.max(...d.rank_bands.map((b) => b.share_of_band), 0.0001);
       const bands = el("div", { class: "band" }, ...d.rank_bands.flatMap((b) => [
         el("span", { text: b.rank_band }),
@@ -468,7 +519,7 @@ async function showFormation(name) {
               `${b.rank_band}\n${b.rankers}명 (구간의 ${pct(b.share_of_band)})`),
         el("span", { class: "v", text: pct(b.share_of_band) })]));
       out.push(el("div", { class: "two" },
-        el("div", {}, el("h3", { text: "많이 쓰는 팀컬러" }), teams),
+        el("div", {}, el("h3", { text: title }), top5),
         el("div", {}, el("h3", { text: "순위 구간별 사용 비율" }), bands)));
     }
     box.replaceChildren(...out);
@@ -498,6 +549,7 @@ const TOOL_STATUS = {
   query_squads: () => "랭커 스쿼드를 조건대로 집계하고 있어요...",
   query_rankers: () => "상위 10,000명 랭킹을 집계하고 있어요...",
   get_formation_overview: (a) => `${a.formation || "포메이션"} 전적을 살펴보고 있어요...`,
+  get_team_color_overview: (a) => `${a.team_color || "팀컬러"} 랭커들을 살펴보고 있어요...`,
   get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
   check_numbers: () => "수치를 다시 확인하고 있어요...", // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
 };
@@ -607,7 +659,11 @@ say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이�
 
 mountOrb($("brand-orb"), "solving", 32);
 loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
-loadFormations();
+mountSegment($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
+  ariaLabel: "분포 보기 전환",
+  onChange: (v) => { mode = v; selected = null; loadChart(); },
+});
+loadChart();
 </script>
 </body>
 </html>
