@@ -10,7 +10,7 @@ FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프�
 | 파일 | 하는 일 |
 |---|---|
 | `start_web.command` | 웹 서버를 켜고 브라우저를 엶. 창을 닫으면 종료 |
-| `run_daily.command` | 오늘 수집(랭킹 → 스쿼드 → 집계 → 시세)을 한 번 실행하고 상태 표시 |
+| `run_daily.command` | 오늘 수집(랭킹 → 스쿼드 → 집계 → 시세)을 한 번 실행하고 상태 표시. `.env`에 `HF_TOKEN`이 있으면 끝나고 배포한 웹(Render)에 새 DB를 올림 |
 | `start_share.command` | 웹 서버를 켜고 Cloudflare 임시 터널로 공유 주소(`https://….trycloudflare.com`)를 만듦 (지인 베타). 창을 닫으면 종료 |
 
 ### Render에 올리기 (무료 호스팅)
@@ -21,7 +21,7 @@ Render 무료 웹 서비스가 GitHub 코드로 빌드하고(`render.yaml`), 켜
 
 ```bash
 pip install -e ".[cloud]"
-python -m fco_meta.cloud push-db   # 매일 수집 뒤: DB를 데이터셋에 올리고(.env의 HF_TOKEN, 쓰기) Render에 재배포 요청
+python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_TOKEN, 쓰기) Render에 재배포 요청 (run_daily.command가 수집 뒤 자동 실행)
 ```
 
 - Render에서 **New → Blueprint**로 이 저장소를 고르면 `render.yaml`대로 만들어지고, `HF_DATA_REPO`·`HF_TOKEN`(데이터셋 **읽기** 토큰)·`GEMINI_API_KEY`를 묻습니다.
