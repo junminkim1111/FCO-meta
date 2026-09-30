@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FCO 랭커 메타</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%23a5b4fc' stroke-width='2'/%3E%3C/svg%3E">
+<title>FCLM</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
 <meta name="theme-color" content="#09090b">
 <style>
   /* 에이전트형 다크 테마: 거의 검은 바탕 + 은은한 빛, 반투명 패널, 얇은 테두리 */
@@ -28,9 +28,10 @@
   header { display: flex; align-items: center; gap: 14px; padding: 28px 16px 12px; max-width: 1640px; margin: 0 auto; }
   header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
                   display: flex; align-items: center; justify-content: center; flex: none; }
-  header h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+  header h1 { margin: 0; line-height: 0; }
+  header h1 svg { height: 26px; width: auto; }
   header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 5fr); gap: 16px; /* 챗봇이 주 기능이라 더 넓게 */
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
          max-width: 1640px; margin: 0 auto; padding: 8px 16px 40px; }
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -144,6 +145,7 @@
   .md th { color: var(--muted); font-weight: 600; border-bottom-color: var(--line-strong); }
   .msg.pending { display: inline-flex; align-items: center; gap: 10px; border-radius: 999px; padding: 8px 16px 8px 10px; }
   .msg.pending canvas { flex: none; }
+  .msg.cancelled { color: var(--muted); font-size: 13px; }
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, #fff 50%, var(--muted) 60%, var(--muted) 100%);
              background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -154,6 +156,7 @@
   .examples button { background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); font-weight: 500; font-size: 12px; padding: 5px 12px; }
   .examples button:hover { border-color: var(--line-strong); opacity: 1; }
   #chat form { display: flex; gap: 8px; }
+  #msg-beam { flex: 1; display: flex; min-width: 0; }
   #chat form input { flex: 1; }
 </style>
 </head>
@@ -161,7 +164,17 @@
 <header>
   <div class="brand"><canvas id="brand-orb" width="32" height="32" aria-hidden="true"></canvas></div>
   <div>
-    <h1>FCO 랭커 메타</h1>
+    <!-- FCLM 로고: 획으로 그린 글자, C는 센터서클과 센터스폿 -->
+    <h1><svg viewBox="0 0 80 24" role="img" aria-label="FCLM"><title>FCLM</title>
+      <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" stop-color="#c7d2fe"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient></defs>
+      <g fill="none" stroke="url(#logo-g)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 22V2h12M2 11.5h9"/>
+        <path d="M36.07 4.93A10 10 0 1 0 36.07 19.07"/>
+        <path d="M42 2v20h11"/>
+        <path d="M59 22V2l9 12 9-12v20"/>
+      </g>
+      <circle cx="29" cy="12" r="2.2" fill="#a5b4fc"/>
+    </svg></h1>
     <p id="asof">데이터 불러오는 중…</p>
   </div>
 </header>
@@ -179,12 +192,12 @@
   </div>
 
   <section id="chat" aria-labelledby="chat-title">
-    <h2 id="chat-title">챗봇 <span id="backend" class="stat"></span></h2>
+    <h2 id="chat-title">FCLM</h2>
     <div id="log" aria-live="polite"></div>
     <div class="examples" id="examples"></div>
     <form id="chat-form">
-      <input id="msg" maxlength="500" placeholder="무엇이든 물어보세요 — 예: 레알 5억 미만 공격수 추천해줘" autocomplete="off">
-      <button type="submit">보내기</button>
+      <div id="msg-beam"><input id="msg" maxlength="500" placeholder="무엇이든 물어보세요 — 예: 레알 5억 미만 공격수 추천해줘" autocomplete="off"></div>
+      <button type="submit" id="send">보내기</button>
     </form>
   </section>
 </main>
@@ -199,6 +212,9 @@ const orb = (canvas, state, size) => (mountOrb ? mountOrb(canvas, state, size) :
 // 답의 마크다운 표시 (static/md.js). 불러오지 못하면 글자 그대로 보여 준다
 let renderMarkdown = null;
 const mdReady = import("/static/md.js").then((m) => { renderMarkdown = m.renderMarkdown; }).catch(() => {});
+// 답을 기다리는 동안 입력창 테두리를 도는 빛 (static/beam.js)
+let beam = null;
+import("/static/beam.js").then((m) => { beam = m.mountBeam($("msg-beam")); }).catch(() => {});
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
@@ -228,7 +244,6 @@ async function loadMeta() {
   $("asof").textContent = scope
     ? `랭킹 상위 ${scope.top_rankers}명 · 스쿼드 ${scope.squads_collected}명 · ${asOf(scope.data_as_of)}`
     : "아직 수집된 랭킹이 없습니다";
-  $("backend").textContent = meta.backend === "gemini" ? "· Gemini" : "· 규칙 기반";
 }
 
 // --- tooltip ---
@@ -452,7 +467,25 @@ const say = (who, text) => {
   return node;
 };
 const THINKING = "랭커데이터를 살펴보고 있어요...";
+// 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
+let inflight = null;
+function setBusy(ctrl) {
+  inflight = ctrl;
+  beam?.set(!!ctrl);
+  $("send").type = ctrl ? "button" : "submit";
+  $("send").textContent = ctrl ? "■ 정지" : "보내기";
+  $("send").setAttribute("aria-label", ctrl ? "답변 정지" : "보내기");
+  for (const b of $("examples").children) b.disabled = !!ctrl;
+}
+$("send").addEventListener("click", (ev) => {
+  if (!inflight) return;
+  ev.preventDefault(); // 취소하면 버튼이 곧바로 '보내기'로 돌아오므로, 이 클릭이 폼 제출까지 되지 않게 막는다
+  inflight.abort();
+});
 async function send(text) {
+  if (inflight) return;
+  const ctrl = new AbortController();
+  setBusy(ctrl);
   say("me", text);
   const canvas = el("canvas", { ariaHidden: "true" });
   const pending = el("div", { class: "msg bot pending", title: "답을 만드는 동안 왼쪽 포메이션을 둘러보세요" },
@@ -464,13 +497,20 @@ async function send(text) {
   let answer;
   try {
     const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ message: text, session_id: sessionId }) });
+                                        body: JSON.stringify({ message: text, session_id: sessionId }), signal: ctrl.signal });
     sessionId = r.session_id;
     answer = r.answer;
   } catch (e) {
     answer = "오류: " + e.message;
   }
   stop();
+  setBusy(null);
+  if (ctrl.signal.aborted) {
+    pending.className = "msg bot cancelled";
+    pending.removeAttribute("title");
+    pending.textContent = "답변을 취소했습니다.";
+    return;
+  }
   pending.className = "msg bot";
   pending.removeAttribute("title");
   await mdReady;
@@ -480,7 +520,7 @@ async function send(text) {
 $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
-  if (!text) return;
+  if (!text || inflight) return; // 답을 기다리는 중에는 입력한 글을 그대로 둔다
   $("msg").value = "";
   send(text);
 });
@@ -492,7 +532,7 @@ for (const q of ["4-2-3-1 쓰는 랭커들 베스트 11 알려줘", "레알 5억
 }
 say("bot", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
-orbReady.then(() => orb($("brand-orb"), "connecting", 32));
+orbReady.then(() => orb($("brand-orb"), "solving", 32));
 loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
 loadFormations();
 </script>

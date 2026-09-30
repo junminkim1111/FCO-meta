@@ -21,7 +21,7 @@ def client(db, tmp_path):  # noqa: F811
 
 def test_index_and_static(client):
     res = client.get("/")
-    assert res.status_code == 200 and "FCO 랭커 메타" in res.text and "/api/formation?" in res.text
+    assert res.status_code == 200 and "<title>FCLM</title>" in res.text and "/api/formation?" in res.text
     assert res.headers["cache-control"] == "no-cache"  # 수정한 화면이 바로 보이게
     assert client.get("/static/orb.js").headers["cache-control"] == "no-cache"
 
