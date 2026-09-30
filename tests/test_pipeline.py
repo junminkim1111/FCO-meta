@@ -61,7 +61,7 @@ class FakeApi:
         if path == "/fconline/v1/ranker-stats":
             players = json.loads(q["players"])
             return httpx.Response(200, json=[
-                {"spId": p["id"], "spPosition": p["po"], "createDate": "2026-09-28T01:00:00",
+                {"spid": p["id"], "spPosition": p["po"], "createDate": "2026-09-28T01:00:00",  # 실제 응답 키는 spid
                  "status": {"goal": 0.5, "assist": 0.25, "shoot": 2.0, "passTry": 30.0, "passSuccess": 27.0, "matchCount": 20}}
                 for p in players
             ])  # fmt: skip

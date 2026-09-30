@@ -28,7 +28,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS ranker_stats (
     sp_id       INTEGER NOT NULL,
     sp_position INTEGER NOT NULL,
-    match_count INTEGER,            -- 그 랭커들이 이 카드를 이 포지션으로 뛴 경기 수 (0/NULL = 데이터 없음)
+    match_count INTEGER,            -- 집계에 쓴 경기 수 (최근 20경기 기준이라 보통 20, 0/NULL = 데이터 없음)
     stats       TEXT,               -- status JSON: 경기당 평균 shoot·effectiveShoot·assist·goal·dribble·passTry …
     created_at  TEXT,               -- 넥슨 집계 시각 (UTC)
     fetched_at  TEXT NOT NULL,
@@ -94,7 +94,8 @@ def collect_ranker_stats(
             result.calls += 1
             continue
         result.calls += 1
-        returned = {(int(r["spId"]), int(r["spPosition"])): r for r in rows or []}
+        # 스펙은 spId지만 실제 응답은 spid (2026-09-30 확인) — 둘 다 받는다
+        returned = {(int(r.get("spid", r.get("spId"))), int(r["spPosition"])): r for r in rows or []}
         for pair in chunk:
             r = returned.get(pair)
             status = (r or {}).get("status") or {}

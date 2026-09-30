@@ -1036,7 +1036,7 @@ class Toolbox:
         if players:
             out["definitions"] = {
                 "roles": "범위 안 우리 랭커들의 사용 현황 (rank_in_role = 그 역할에서 사용 랭커 수 순위)",
-                "top10000_stats": "이 선수 카드들을 그 역할 포지션으로 쓴 TOP 10,000 랭커 최근 20경기의 경기당 평균 (matches = 경기 수, 비율은 성공/시도)",
+                "top10000_stats": "이 선수 카드들을 그 역할 포지션으로 쓴 TOP 10,000 랭커 최근 20경기의 경기당 평균 (matches = 합친 기록의 경기 수, 카드·포지션마다 최근 20경기. 비율은 성공/시도)",
                 "card_profiles": "많이 쓰인 카드의 능력치·신체·특성 (1강 기준)",
             }
         if len(names) > 1:
@@ -1351,7 +1351,7 @@ class Toolbox:
                 "avg_price·avg_salary": "해당 선발 출전들의 카드 시세(그 강화)·급여 평균. coverage = 값이 수집된 비율",
                 "stat": "해당 선발 출전 카드들의 그 능력치 평균 (1강 기준, 강화 보너스 미포함). stat_coverage = 상세가 수집된 비율",
                 "match_stat": (
-                    "top10000: 그 카드·포지션을 쓴 TOP 10,000 랭커 최근 20경기의 경기당 평균(비율은 성공/시도), match_stat_matches = 그 경기 수. "
+                    "top10000: 그 카드·포지션을 쓴 TOP 10,000 랭커 최근 20경기의 경기당 평균(비율은 성공/시도), match_stat_matches = 합친 기록의 경기 수(카드·포지션마다 최근 20경기). "
                     "rankers: 우리 랭커들의 기준 경기 1경기 기록 평균, match_stat_matches = 기록이 있는 출전 수. coverage = 값이 있는 출전 비율"
                 ),
                 "avg_elo": "그 랭커들의 평균 랭킹 점수",

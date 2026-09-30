@@ -20,7 +20,7 @@ class StubApi:
             raise BudgetExceededError("daily budget exhausted")
         self.calls.append(list(players))
         return [
-            {"spId": sp, "spPosition": po, "createDate": "2026-09-29T01:00:00", "status": {"goal": 0.4, "matchCount": 12}}
+            {"spid": sp, "spPosition": po, "createDate": "2026-09-29T01:00:00", "status": {"goal": 0.4, "matchCount": 12}}
             for sp, po in players if (sp, po) not in self.missing
         ]  # fmt: skip
 
