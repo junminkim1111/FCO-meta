@@ -83,3 +83,20 @@ def test_gemini_errors_are_shown_and_answered_by_rules(db, tmp_path, monkeypatch
     assert "Gemini API 오류 404" in body["answer"] and "이 키로 쓸 수 없는 모델" in body["answer"]
     assert "볼란치R" in body["answer"]  # 규칙 기반 답변이 이어서 나옴
     assert body["error"].startswith("Gemini API 오류 404")
+
+
+def test_gemini_answer_hides_evidence_and_fallback_model(db, tmp_path, monkeypatch):  # noqa: F811
+    import fco_meta.web.app as web_app
+    from fco_meta.chatbot.gemini import GeminiTurn
+
+    class Bot:
+        model, last_model = "gemini-a", "gemini-b"  # 대체 모델로 답한 경우
+
+        def ask(self, message):
+            return GeminiTurn("라이스가 1순위입니다.", [("recommend_players", {})], "STOP", ["아스널 DM — 랭커 3명"])
+
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda toolbox, model: Bot())
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
+    body = client.post("/api/chat", json={"message": "아스날 볼란치"}).json()
+    assert body["answer"] == "라이스가 1순위입니다."
+    assert body["model"] == "gemini-b"

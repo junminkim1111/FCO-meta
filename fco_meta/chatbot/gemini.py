@@ -10,7 +10,9 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .prompt import SYSTEM_PROMPT
 from .tools import TOOLS, Toolbox
@@ -20,16 +22,41 @@ log = logging.getLogger(__name__)
 # 2026-09 기준: gemini-2.5-flash는 신규 사용자에게 404, API가 gemini-3.8-flash를 권장
 DEFAULT_MODEL = "gemini-3.8-flash"
 # 기본 모델이 과부하(503)·한도(429)로 계속 실패하거나 사용 불가(404)면 차례로 시도할 모델
-DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash",)
+# 무료 한도는 모델마다 따로라 여러 개를 차례로 쓴다 (--list-models로 확인한 이 키의 모델, 2026-09-30)
+DEFAULT_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite")
 UNAVAILABLE = (404,)  # 이 모델을 쓸 수 없음 → 재시도 없이 다음 모델
 MAX_DISCOVERED = 3  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 추가로 시도할 수
 # 채팅·도구 호출에 맞지 않는 모델 (이미지·음성·임베딩 등)
-_NOT_CHAT = ("image", "tts", "audio", "live", "embedding", "embed", "veo", "imagen", "robotics", "computer-use", "aqa", "gemma", "learnlm", "native")
+_NOT_CHAT = (
+    "image", "tts", "audio", "live", "embedding", "embed", "veo", "imagen", "robotics", "computer-use", "aqa", "gemma",
+    "learnlm", "native", "transcribe",
+)  # fmt: skip
+OVERLOAD_COOLDOWN = 120.0  # 재시도해도 혼잡(5xx)이던 모델은 잠시 건너뜀 (초)
+QUOTA_RESET_TZ = ZoneInfo("America/Los_Angeles")  # Gemini API 하루 한도는 태평양 시간 자정에 초기화
+KST = timezone(timedelta(hours=9))
+# 모델 → 이 시각(epoch 초)까지 건너뜀. 한도 소진·사용 불가 모델을 도구 호출마다 다시 부르지 않도록 프로세스 전체가 공유한다
+_COOLDOWN: dict[str, float] = {}
+
+
+class CoolingDown(Exception):
+    """A model skipped because it recently ran out of quota or was unavailable."""
+
+
+def _cooldown_until(exc: Any, now: float) -> float:
+    if exc.code in UNAVAILABLE:
+        return now + 24 * 3600
+    if exc.code == 429:
+        delay, daily = quota_info(exc)
+        if daily:
+            local = datetime.fromtimestamp(now, QUOTA_RESET_TZ)
+            return (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        return now + max(delay or 60.0, 60.0)
+    return now + OVERLOAD_COOLDOWN
 RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
 MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
-MAX_EVIDENCE = 4  # 답 끝에 붙이는 [근거] 줄 수
+MAX_EVIDENCE = 4  # GeminiTurn.evidence 줄 수
 
 
 @dataclass
@@ -37,6 +64,7 @@ class GeminiTurn:
     text: str
     tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     finish_reason: str | None = None
+    evidence: list[str] = field(default_factory=list)  # 도구 결과로 만든 근거 줄 (답 본문에는 넣지 않는다)
 
 
 def unavailable_reason() -> str | None:
@@ -178,6 +206,7 @@ class GeminiChat:
         fallback_models: tuple[str, ...] | list[str] = DEFAULT_FALLBACK_MODELS,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        now: Callable[[], float] = time.time,
     ):
         types = _types()
         self.client = client
@@ -186,6 +215,7 @@ class GeminiChat:
         self.fallback_models = [m for m in fallback_models if m and m != model]
         self.on_tool_call = on_tool_call
         self.sleep = sleep
+        self.now = now
         self.last_model: str | None = None  # 마지막 응답을 만든 모델 (대체 모델로 바뀌었는지 확인용)
         self.discover = True  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 찾아 시도
         self._discovered: list[str] | None = None
@@ -207,13 +237,28 @@ class GeminiChat:
 
         failures: list[tuple[str, Exception]] = []
         configured = [self.model, *self.fallback_models]
+
+        def fail(model: str, exc: Any) -> None:
+            failures.append((model, exc))
+            _COOLDOWN[model] = _cooldown_until(exc, self.now())
+
+        def cooling(model: str) -> bool:
+            until = _COOLDOWN.get(model, 0.0)
+            if until <= self.now():
+                return False
+            at = datetime.fromtimestamp(until, KST).strftime("%m-%d %H:%M")
+            failures.append((model, CoolingDown(f"최근 한도 소진·혼잡 — {at} KST까지 건너뜀")))
+            return True
+
         for model in configured:
+            if cooling(model):
+                continue
             for attempt in range(len(RETRY_DELAYS) + 1):
                 try:
                     response = self.client.models.generate_content(model=model, contents=self.contents, config=config or self.config)
                 except errors.APIError as exc:
                     if exc.code in UNAVAILABLE:
-                        failures.append((model, exc))
+                        fail(model, exc)
                         log.warning("%s: %s %s, trying next model", model, exc.code, exc.status)
                         break
                     if exc.code not in RETRYABLE:
@@ -224,7 +269,7 @@ class GeminiChat:
                         delay, daily = quota_info(exc)
                         wait = delay if (attempt == 0 and not daily and delay is not None and delay <= MAX_QUOTA_WAIT) else None
                     if wait is None:
-                        failures.append((model, exc))
+                        fail(model, exc)
                         log.warning("%s: %s %s, trying next model", model, exc.code, exc.status)
                         break
                     log.warning("%s: %s %s, retrying in %.0fs", model, exc.code, exc.status, wait)
@@ -236,12 +281,14 @@ class GeminiChat:
                 return response
         # 설정한 모델이 모두 혼잡·사용 불가 → 이 키로 쓸 수 있는 다른 모델을 한 번씩
         for model in self._discover(set(configured)):
+            if cooling(model):
+                continue
             try:
                 response = self.client.models.generate_content(model=model, contents=self.contents, config=config or self.config)
             except errors.APIError as exc:
                 if exc.code not in RETRYABLE + UNAVAILABLE:
                     raise
-                failures.append((model, exc))
+                fail(model, exc)
                 continue
             log.warning("answered by discovered model %s", model)
             self.last_model = model
@@ -273,7 +320,7 @@ class GeminiChat:
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
-        evidence: list[str] = []  # 모델이 아니라 도구 결과로 만든 근거 줄 → 답 끝에 붙인다
+        evidence: list[str] = []  # 모델이 아니라 도구 결과로 만든 근거 줄
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
             if final:
@@ -293,9 +340,7 @@ class GeminiChat:
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
                 if not text:  # 도구를 끈 마지막 요청에서도 글이 없으면
                     return GeminiTurn("답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요.", calls, "tool_limit")
-                if evidence:
-                    text += "\n\n" + "\n".join(f"[근거] {e}" for e in evidence[:MAX_EVIDENCE])
-                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish)
+                return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish, evidence[:MAX_EVIDENCE])
 
             parts = []
             for fc in function_calls:

@@ -86,7 +86,7 @@ fco_meta/
   pipeline/    닉네임→ouid→user/match→match-detail로 스쿼드 수집, 포지션 조합→포메이션 추론
   analytics/   usage.py: usage_sample / usage_stats 집계 (team_color_id 0 = 전체 랭커, formation '*' = 전체)
   chatbot/     tools.py(Toolbox: 도구 5개), rules.py(규칙 기반), gemini.py(Gemini 함수 호출), prompt.py
-  web/         FastAPI + static/index.html (바닐라 JS)
+  web/         FastAPI + static/index.html (바닐라 JS). 외부 라이브러리는 static/vendor/에 복사 (thinking-orbs, marked, DOMPurify)
   daily.py     매일 작업: 크롤→소속→API 지연 대기→스쿼드→메타 갱신→집계→시세
   config.py    load_env(): cwd/.env와 프로젝트 .env 읽기 (기존 환경 변수 우선)
   storage.py   SQLite 스키마, unfiltered_coverage / latest_unfiltered_snapshot
@@ -122,7 +122,8 @@ python -m fco_meta.web [--backend rules] [--port 8000]
   응답에 모든 시즌 카드가 오지만 랭커가 쓴 카드만 저장하고, 20시간 안에 받은 것은 건너뜁니다.
 
 ### Gemini
-- 기본 모델은 `gemini-3.8-flash`, 폴백은 `gemini-3.5-flash`입니다.
+- 기본 모델은 `gemini-3.8-flash`, 폴백은 `3.7-flash → 3.6-flash → 3.5-flash → 3.5-flash-lite`입니다 (무료 한도가 모델별이라 길게).
+  한도 소진·혼잡 모델은 `_COOLDOWN`(프로세스 공유)에 기록해 건너뜁니다: 하루 한도는 태평양 자정까지, 분당·혼잡은 1~2분.
   `gemini-2.5-flash`는 신규 사용자에게 404가 납니다.
   환경 변수 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.
 - 오류 처리:

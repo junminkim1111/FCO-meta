@@ -25,13 +25,13 @@
                      radial-gradient(900px 480px at 100% -8%, var(--glow-b), transparent 60%), var(--bg);
          font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
          -webkit-font-smoothing: antialiased; }
-  header { display: flex; align-items: center; gap: 14px; padding: 28px 16px 12px; max-width: 1240px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 14px; padding: 28px 16px 12px; max-width: 1640px; margin: 0 auto; }
   header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
                   display: flex; align-items: center; justify-content: center; flex: none; }
   header h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
   header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px;
-         max-width: 1240px; margin: 0 auto; padding: 8px 16px 40px; }
+  main { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 5fr); gap: 16px; /* 챗봇이 주 기능이라 더 넓게 */
+         max-width: 1640px; margin: 0 auto; padding: 8px 16px 40px; }
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0;
@@ -64,11 +64,11 @@
   /* formation detail */
   .fd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
   .fd-head h2 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
-  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; container-type: inline-size; }
   @media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .tile { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
   .tile .k { font-size: 12px; color: var(--muted); }
-  .tile .val { font-size: clamp(15px, 1.6vw, 20px); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .val { font-size: clamp(14px, 3cqi, 20px); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; } /* 타일 폭에 맞춰 한 줄로 */
   .tile .sub { font-size: 11px; color: var(--faint); }
   h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; margin: 22px 0 10px; }
   .seg { display: inline-flex; background: rgba(0, 0, 0, .35); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
@@ -123,6 +123,25 @@
   .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
   .msg.me { align-self: flex-end; background: var(--text); color: #0b0b0d; border-bottom-right-radius: 4px; }
   .msg.bot { align-self: flex-start; background: var(--panel-strong); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  /* 마크다운으로 그린 답 (static/md.js) */
+  .msg.md { white-space: normal; line-height: 1.55; }
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md pre, .md blockquote, .md .table-wrap { margin: 0 0 8px; }
+  .md ul, .md ol { padding-left: 20px; } .md li + li { margin-top: 2px; }
+  .md h1, .md h2, .md h3, .md h4 { font-size: 14px; font-weight: 600; color: var(--text); margin: 12px 0 6px; }
+  .md strong { color: #fff; font-weight: 600; }
+  .md a { color: var(--accent); }
+  .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--panel-strong);
+             border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  .md pre { background: #0f0f12; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  .md pre code { background: none; border: 0; padding: 0; }
+  .md blockquote { border-left: 3px solid var(--line-strong); padding-left: 10px; color: var(--muted); }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+  .md .table-wrap { overflow-x: auto; }
+  .md table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .md th, .md td { border-bottom: 1px solid var(--line); padding: 5px 10px; text-align: left; white-space: nowrap; }
+  .md [align="right"] { text-align: right; } .md [align="center"] { text-align: center; }
+  .md th { color: var(--muted); font-weight: 600; border-bottom-color: var(--line-strong); }
   .msg.pending { display: inline-flex; align-items: center; gap: 10px; border-radius: 999px; padding: 8px 16px 8px 10px; }
   .msg.pending canvas { flex: none; }
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
@@ -177,6 +196,9 @@
 let mountOrb = null;
 const orbReady = import("/static/orb.js").then((m) => { mountOrb = m.mountOrb; }).catch(() => {});
 const orb = (canvas, state, size) => (mountOrb ? mountOrb(canvas, state, size) : () => {});
+// 답의 마크다운 표시 (static/md.js). 불러오지 못하면 글자 그대로 보여 준다
+let renderMarkdown = null;
+const mdReady = import("/static/md.js").then((m) => { renderMarkdown = m.renderMarkdown; }).catch(() => {});
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
@@ -451,7 +473,8 @@ async function send(text) {
   stop();
   pending.className = "msg bot";
   pending.removeAttribute("title");
-  pending.textContent = answer;
+  await mdReady;
+  if (renderMarkdown) renderMarkdown(pending, answer); else pending.textContent = answer;
   $("log").scrollTop = $("log").scrollHeight;
 }
 $("chat-form").addEventListener("submit", (ev) => {
@@ -467,7 +490,7 @@ for (const q of ["4-2-3-1 쓰는 랭커들 베스트 11 알려줘", "레알 5억
   b.addEventListener("click", () => send(q));
   $("examples").append(b);
 }
-say("bot", "무엇이든 물어보세요. 선수 추천, 스쿼드, 예산·급여, 능력치, 메타 동향까지 랭커 데이터로 답합니다. 수치는 공식 랭킹과 랭커 경기 기록에서 나옵니다.");
+say("bot", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
 orbReady.then(() => orb($("brand-orb"), "connecting", 32));
 loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });

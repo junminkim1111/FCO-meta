@@ -106,11 +106,10 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
                         "tool_calls": [answer.tool] if answer.tool else [],
                         "error": reason,
                     }
-            answer_text = turn.text
-            if bot.last_model and bot.last_model != bot.model:
-                answer_text += f"\n\n({bot.model}가 혼잡해 {bot.last_model}로 답했습니다)"
+            # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
+            log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             return {
-                "session_id": session_id, "answer": answer_text,
+                "session_id": session_id, "answer": turn.text,
                 "tool_calls": [n for n, _ in turn.tool_calls], "model": bot.last_model,
             }  # fmt: skip
         with lock:

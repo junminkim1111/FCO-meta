@@ -38,6 +38,16 @@ def toolbox(db):  # noqa: F811
     return Toolbox(db.conn, min_sample=1)
 
 
+@pytest.fixture(autouse=True)
+def fresh_cooldowns():
+    """한도 소진 기록은 프로세스 전체가 공유한다 — 테스트마다 비운다."""
+    from fco_meta.chatbot import gemini
+
+    gemini._COOLDOWN.clear()
+    yield
+    gemini._COOLDOWN.clear()
+
+
 def test_function_declarations_accepted_by_sdk():
     decls = {d.name: d for d in function_declarations()}
     assert set(decls) == {
@@ -64,8 +74,9 @@ def test_tool_round_trip(toolbox):
     turn = chat.ask("아스날 4-2-3-1 볼란치 2명 추천")
 
     assert turn.text.startswith("라이스가 1순위입니다.") and turn.finish_reason == "STOP"
-    # 근거 줄은 모델이 아니라 도구 결과에서 만든다
-    assert turn.text.endswith("\n\n[근거] 아스널 4-2-3-1 DM — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)")
+    # 근거 줄은 모델이 아니라 도구 결과에서 만들고, 답 본문에는 넣지 않는다
+    assert turn.text == "라이스가 1순위입니다."
+    assert turn.evidence == ["아스널 4-2-3-1 DM — 랭커 3명 스쿼드 (2026-09-28 20:00 기준)"]
     assert turn.tool_calls[0][0] == "recommend_players" and seen == ["recommend_players"]
     first, second = client.models.requests
     assert first["model"] == "gemini-test"
@@ -221,11 +232,11 @@ def test_all_models_unavailable_raises_last_error(toolbox):
 
 
 def test_models_from_env(monkeypatch):
-    from fco_meta.chatbot.gemini import DEFAULT_MODEL, models_from_env
+    from fco_meta.chatbot.gemini import DEFAULT_FALLBACK_MODELS, DEFAULT_MODEL, models_from_env
 
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GEMINI_FALLBACK_MODELS", raising=False)
-    assert models_from_env() == (DEFAULT_MODEL, ["gemini-3.5-flash"])
+    assert models_from_env() == (DEFAULT_MODEL, list(DEFAULT_FALLBACK_MODELS))
     monkeypatch.setenv("GEMINI_MODEL", "m1")
     monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "m2, m3")
     assert models_from_env() == ("m1", ["m2", "m3"])
@@ -295,11 +306,14 @@ def test_discovers_other_models_when_configured_ones_are_overloaded(toolbox):
         "gemini-3.8-flash-lite": [response([{"text": "lite 답"}])],
     })  # fmt: skip
     client.models.list = lambda: [Listed("gemini-3.8-flash"), Listed("gemini-3.5-flash"), Listed("gemini-3.8-flash-lite")]
-    chat = GeminiChat(client, toolbox, model="gemini-3.8-flash", fallback_models=["gemini-3.5-flash"], sleep=lambda s: None)
+    clock = [1000.0]
+    chat = GeminiChat(client, toolbox, model="gemini-3.8-flash", fallback_models=["gemini-3.5-flash"], sleep=lambda s: None,
+                      now=lambda: clock[0])  # fmt: skip
     assert chat.ask("질문").text == "lite 답" and chat.last_model == "gemini-3.8-flash-lite"
-    # 목록은 한 번만 조회하고 재사용
+    # 목록은 한 번만 조회하고 재사용, 혼잡했던 모델은 잠시 뒤 다시 쓴다
     client.models.list = lambda: (_ for _ in ()).throw(AssertionError("listed twice"))
     client.models.outcomes["gemini-3.8-flash"] = [response([{"text": "복구"}])]
+    clock[0] += 121
     assert chat.ask("다시").text == "복구"
 
 
@@ -337,13 +351,50 @@ def test_quota_short_delay_waits_once_then_retries(toolbox):
 
 
 def test_quota_long_delay_or_daily_moves_to_next_model_without_waiting(toolbox):
+    from fco_meta.chatbot import gemini
+
     for err in (_quota(delay=40), _quota(daily=True), _quota()):
+        gemini._COOLDOWN.clear()
         client = FakeClient([])
         client.models = ByModel({"a": [err], "b": [response([{"text": "b 답"}])]})
         slept = []
         chat = GeminiChat(client, toolbox, model="a", fallback_models=["b"], sleep=slept.append)
         assert chat.ask("질문").text == "b 답" and slept == []
         assert [r["model"] for r in client.models.requests] == ["a", "b"]  # 한도 걸린 모델은 다시 부르지 않음
+
+
+def test_exhausted_model_is_skipped_until_quota_resets(toolbox):
+    from datetime import datetime
+
+    from fco_meta.chatbot.gemini import QUOTA_RESET_TZ
+
+    call = {"function_call": {"id": "c", "name": "list_available_data", "args": {}}}
+    client = FakeClient([])
+    client.models = ByModel({"a": [_quota(daily=True)], "b": [response([call]), response([{"text": "b 답"}]), response([{"text": "또 b"}])]})
+    now = datetime(2026, 9, 30, 12, 0, tzinfo=QUOTA_RESET_TZ).timestamp()
+    clock = [now]
+    chat = GeminiChat(client, toolbox, model="a", fallback_models=["b"], sleep=lambda s: None, now=lambda: clock[0])
+    assert chat.ask("질문").text.startswith("b 답")
+    assert chat.ask("다음").text == "또 b"
+    # 하루 한도가 소진된 a는 도구 호출 다음 라운드에도, 다음 질문에도 다시 부르지 않는다
+    assert [r["model"] for r in client.models.requests] == ["a", "b", "b", "b"]
+
+    # 태평양 시간 자정이 지나면 다시 시도한다
+    client.models.outcomes["a"] = [response([{"text": "a 복구"}])]
+    clock[0] = datetime(2026, 10, 1, 0, 1, tzinfo=QUOTA_RESET_TZ).timestamp()
+    assert chat.ask("내일").text == "a 복구"
+
+
+def test_all_models_cooling_reports_when(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"a": [_quota(daily=True)]})
+    chat = GeminiChat(client, toolbox, model="a", fallback_models=[], sleep=lambda s: None)
+    chat.discover = False
+    with pytest.raises(GeminiUnavailable):
+        chat.ask("질문")
+    with pytest.raises(GeminiUnavailable) as info:
+        chat.ask("다시")  # 요청을 보내지 않고 바로 알린다
+    assert "KST까지 건너뜀" in describe_error(info.value) and len(client.models.requests) == 1
 
 
 def test_quota_retried_only_once(toolbox):

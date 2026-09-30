@@ -127,7 +127,8 @@ def _gemini(toolbox: Toolbox, args: argparse.Namespace):
 
     def ask(question: str) -> str:
         try:
-            text = chat.ask(question).text
+            turn = chat.ask(question)
+            text = turn.text + "".join(f"\n[근거] {e}" for e in turn.evidence)  # 개발용 CLI라 근거·모델도 보여 준다
             if chat.last_model and chat.last_model != chat.model:
                 text += f"\n\n({chat.model}가 혼잡해 {chat.last_model}로 답했습니다)"
             return text
