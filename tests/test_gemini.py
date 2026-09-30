@@ -27,6 +27,9 @@ class FakeModels:
         self.requests.append({"model": model, "contents": list(contents), "config": config})
         return self.responses.pop(0)
 
+    def generate_content_stream(self, **kwargs):  # 한 조각짜리 스트림 (오류는 실제 SDK처럼 첫 조각을 받을 때)
+        yield self.generate_content(**kwargs)
+
 
 class FakeClient:
     def __init__(self, responses):
@@ -55,6 +58,52 @@ def test_function_declarations_accepted_by_sdk():
         "get_player_detail", "get_meta_trends", "query_squads", "query_rankers", "get_formation_overview",
     }  # fmt: skip
     assert decls["recommend_players"].parameters_json_schema["required"] == ["role"]  # 팀컬러 생략 = 전체 랭커
+
+
+class Chunked(FakeModels):
+    """Each scripted response is a list of chunks (a real stream sends the answer in pieces)."""
+
+    def generate_content_stream(self, *, model, contents, config):
+        self.requests.append({"model": model, "contents": list(contents), "config": config})
+        yield from self.responses.pop(0)
+
+
+def test_answer_streams_in_pieces_and_preamble_is_reset(toolbox):
+    from fco_meta.chatbot.gemini import RESET, ToolCall
+
+    call = {"function_call": {"name": "list_formations", "args": {}}, "thought_signature": b"sig-1"}
+    client = FakeClient([])
+    client.models = Chunked([
+        [response([{"text": "찾아볼게요."}]), response([call])],  # 도구 부르기 전 글 → 답이 아님
+        [response([{"text": "4-2-3-1이 "}], finish=None), response([{"text": "1위입니다."}])],
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="gemini-test")
+    stream = chat.ask_stream("포메이션 순위")
+    events = []
+    while True:
+        try:
+            events.append(next(stream))
+        except StopIteration as stop:
+            turn = stop.value
+            break
+    # 도구를 부르기 전 글은 RESET으로 지우고, 도구를 부를 때 ToolCall을 알린다 (화면의 진행 문구)
+    assert events == ["찾아볼게요.", RESET, ToolCall("list_formations", {}), "4-2-3-1이 ", "1위입니다."]
+    assert turn.text == "4-2-3-1이 1위입니다." and turn.tool_calls == [("list_formations", {})]
+    # 조각들은 한 응답으로 기록되고, 도구 호출의 서명도 그대로 남는다
+    first = chat.contents[1]
+    assert first.role == "model" and first.parts[1].thought_signature == b"sig-1"
+    assert [p.text for p in chat.contents[-1].parts] == ["4-2-3-1이 ", "1위입니다."]
+
+
+def test_stopping_a_stream_drops_the_question(toolbox):
+    client = FakeClient([])
+    client.models = Chunked([[response([{"text": "첫 답"}])], [response([{"text": "길게 "}], finish=None), response([{"text": "…"}])]])
+    chat = GeminiChat(client, toolbox, model="gemini-test")
+    chat.ask("첫 질문")
+    stream = chat.ask_stream("두 번째")
+    assert next(stream) == "길게 "
+    stream.close()  # 사용자가 정지
+    assert [c.parts[0].text for c in chat.contents] == ["첫 질문", "첫 답"]
 
 
 def test_follow_up_resends_only_questions_and_answers(toolbox):

@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+import itertools
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -57,6 +58,36 @@ RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 �
 MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
 MAX_EVIDENCE = 4  # GeminiTurn.evidence 줄 수
+
+
+class Reset:
+    """Streamed text so far was a preamble to tool calls, not the answer: clear it (ask_stream event)."""
+
+
+RESET = Reset()
+
+
+@dataclass
+class ToolCall:
+    """The model is calling a tool now (ask_stream event, before the tool runs)."""
+
+    name: str
+    args: dict[str, Any]
+
+
+def _started(stream: Any) -> Iterator[Any]:
+    """Pull the first chunk now, so quota/overload errors surface inside the retry loop."""
+    it = iter(stream)
+    first = next(it, None)
+    return itertools.chain([] if first is None else [first], it)
+
+
+def _drain(gen: Generator[Any, None, Any]) -> Any:
+    while True:
+        try:
+            next(gen)
+        except StopIteration as stop:
+            return stop.value
 
 
 @dataclass
@@ -231,8 +262,12 @@ class GeminiChat:
             update={"tool_config": types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))}
         )
 
-    def _generate(self, config: Any = None) -> Any:
-        """generate_content with retries on overload/quota, then the fallback models in order."""
+    def _open(self, model: str, config: Any) -> Iterator[Any]:
+        stream = self.client.models.generate_content_stream(model=model, contents=self.contents, config=config or self.config)
+        return _started(stream)
+
+    def _generate(self, config: Any = None) -> Iterator[Any]:
+        """A response stream (chunks), with retries on overload/quota, then the fallback models in order."""
         from google.genai import errors
 
         failures: list[tuple[str, Exception]] = []
@@ -255,7 +290,7 @@ class GeminiChat:
                 continue
             for attempt in range(len(RETRY_DELAYS) + 1):
                 try:
-                    response = self.client.models.generate_content(model=model, contents=self.contents, config=config or self.config)
+                    response = self._open(model, config)
                 except errors.APIError as exc:
                     if exc.code in UNAVAILABLE:
                         fail(model, exc)
@@ -284,7 +319,7 @@ class GeminiChat:
             if cooling(model):
                 continue
             try:
-                response = self.client.models.generate_content(model=model, contents=self.contents, config=config or self.config)
+                response = self._open(model, config)
             except errors.APIError as exc:
                 if exc.code not in RETRYABLE + UNAVAILABLE:
                     raise
@@ -307,12 +342,19 @@ class GeminiChat:
         return [m for m in self._discovered if m not in tried][:MAX_DISCOVERED]
 
     def ask(self, question: str) -> GeminiTurn:
-        """One user turn. On any error the history is rolled back so the next question starts clean."""
+        """One user turn, without streaming."""
+        return _drain(self.ask_stream(question))
+
+    def ask_stream(self, question: str) -> Generator[str | Reset | ToolCall, None, GeminiTurn]:
+        """One user turn: yields answer text as it arrives (RESET = drop what was yielded so far,
+        ToolCall = a tool is about to run) and
+        returns the GeminiTurn. On an error or when the caller stops early (closes the generator), the
+        history is rolled back so the next question starts clean."""
         self._drop_tool_history()
         checkpoint = len(self.contents)
         try:
-            return self._ask(question)
-        except Exception:
+            return (yield from self._ask(question))
+        except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
 
@@ -327,7 +369,7 @@ class GeminiChat:
                 kept.append(types.Content(role=content.role, parts=parts))
         self.contents = kept
 
-    def _ask(self, question: str) -> GeminiTurn:
+    def _ask(self, question: str) -> Generator[str | Reset | ToolCall, None, GeminiTurn]:
         types = _types()
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
@@ -337,22 +379,41 @@ class GeminiChat:
             final = round_no == MAX_TOOL_ROUNDS
             if final:
                 log.warning("tool round limit (%d) reached, asking for an answer without tools", MAX_TOOL_ROUNDS)
-            response = self._generate(self.final_config if final else None)
-            candidate = response.candidates[0] if response.candidates else None
-            finish = str(candidate.finish_reason.value if candidate and candidate.finish_reason else None)
-            if candidate is None or candidate.content is None:
-                blocked = response.prompt_feedback.block_reason if response.prompt_feedback else None
-                return GeminiTurn(f"응답을 받지 못했습니다{f' ({blocked})' if blocked else ''}. 질문을 바꿔 주세요.", calls, finish)
-            self.contents.append(candidate.content)
+            # 조각이 오는 대로 글을 넘기고, 조각의 part들은 그대로 모아 한 응답으로 기록한다 (서명 보존)
+            received: list[Any] = []
+            finish, blocked, streamed = "None", None, False
+            for chunk in self._generate(self.final_config if final else None):
+                if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
+                    blocked = chunk.prompt_feedback.block_reason
+                candidate = chunk.candidates[0] if chunk.candidates else None
+                if candidate is None:
+                    continue
+                if candidate.finish_reason:
+                    finish = str(candidate.finish_reason.value)
+                for part in (candidate.content.parts if candidate.content else None) or []:
+                    received.append(part)
+                    if part.text and not part.thought:
+                        yield part.text
+                        streamed = True
+            if not received:
+                note = f"응답을 받지 못했습니다{f' ({blocked})' if blocked else ''}. 질문을 바꿔 주세요."
+                yield note
+                return GeminiTurn(note, calls, finish)
+            self.contents.append(types.Content(role="model", parts=received))
 
-            function_calls = response.function_calls or []
+            function_calls = [p.function_call for p in received if p.function_call]
             if not function_calls or final:
-                text = "".join(p.text for p in candidate.content.parts or [] if p.text and not p.thought).strip()
+                text = "".join(p.text for p in received if p.text and not p.thought).strip()
                 if finish == "MAX_TOKENS":
+                    yield "\n\n(답변이 길이 제한으로 잘렸습니다)"
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
                 if not text:  # 도구를 끈 마지막 요청에서도 글이 없으면
-                    return GeminiTurn("답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요.", calls, "tool_limit")
+                    note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
+                    yield note
+                    return GeminiTurn(note, calls, "tool_limit")
                 return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish, evidence[:MAX_EVIDENCE])
+            if streamed:  # 도구를 부르기 전에 쓴 글("찾아볼게요")은 답이 아니다
+                yield RESET
 
             parts = []
             for fc in function_calls:
@@ -365,6 +426,7 @@ class GeminiChat:
                 else:
                     seen.add(key)
                     calls.append((fc.name, args))
+                    yield ToolCall(fc.name, args)
                     if self.on_tool_call:
                         self.on_tool_call(fc.name, args)
                     content, is_error = self.toolbox.run(fc.name, args)

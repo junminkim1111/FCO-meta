@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..chatbot.gemini import describe_error
+from ..chatbot.gemini import RESET, ToolCall, describe_error
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 
@@ -23,6 +23,11 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_SESSIONS = 200
+
+
+def _event(**fields: Any) -> str:
+    """One line of the /api/chat stream (NDJSON)."""
+    return json.dumps(fields, ensure_ascii=False) + "\n"
 
 
 class ChatRequest(BaseModel):
@@ -86,41 +91,60 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
         return tool("get_formation_overview", {"formation": name})
 
     @app.post("/api/chat")
-    def chat(req: ChatRequest) -> dict[str, Any]:
-        if backend == "gemini":
-            session_id = req.session_id or uuid.uuid4().hex
+    def chat(req: ChatRequest) -> StreamingResponse:
+        """답을 한 줄에 하나씩 JSON 이벤트로 흘려보낸다: start(session_id) → delta(text)… → done.
+        reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args)."""
+        if backend != "gemini":
             with lock:
-                session = gemini_sessions.get(session_id)
-                if session is None:
-                    if len(gemini_sessions) >= MAX_SESSIONS:
-                        gemini_sessions.pop(next(iter(gemini_sessions)))
-                    session = gemini_sessions[session_id] = (_gemini_chat(gemini_tools, gemini_model), threading.Lock())
-            bot, busy = session
-            # 모델을 기다리는 수십 초 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
-            # 같은 대화의 질문은 차례로 (정지한 요청이 서버에서 아직 도는 중이면 끝나기를 기다린다)
+                answer = rules.ask(req.message)
+            lines = [_event(type="start", session_id=req.session_id), _event(type="delta", text=answer.text),
+                     _event(type="done", tool_calls=[answer.tool] if answer.tool else [])]  # fmt: skip
+            return StreamingResponse(iter(lines), media_type="application/x-ndjson")
+
+        session_id = req.session_id or uuid.uuid4().hex
+        with lock:
+            session = gemini_sessions.get(session_id)
+            if session is None:
+                if len(gemini_sessions) >= MAX_SESSIONS:
+                    gemini_sessions.pop(next(iter(gemini_sessions)))
+                session = gemini_sessions[session_id] = (_gemini_chat(gemini_tools, gemini_model), threading.Lock())
+        bot, busy = session
+
+        def events():
+            yield _event(type="start", session_id=session_id)
+            # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
+            # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
             with busy:
+                stream = bot.ask_stream(req.message)
                 try:
-                    turn = bot.ask(req.message)
+                    while True:
+                        try:
+                            piece = next(stream)
+                        except StopIteration as stop:
+                            turn = stop.value
+                            break
+                        if piece is RESET:
+                            yield _event(type="reset")
+                        elif isinstance(piece, ToolCall):
+                            yield _event(type="tool", name=piece.name, args=piece.args)
+                        else:
+                            yield _event(type="delta", text=piece)
                 except Exception as exc:  # Gemini 실패 → 원인을 알리고 규칙 기반으로 대신 답한다
                     log.exception("gemini chat failed")
                     reason = describe_error(exc)
                     with lock:
                         answer = rules.ask(req.message)
-                    return {
-                        "session_id": session_id,
-                        "answer": f"⚠ {reason}\n(이번 질문은 규칙 기반으로 답합니다)\n\n{answer.text}",
-                        "tool_calls": [answer.tool] if answer.tool else [],
-                        "error": reason,
-                    }
+                    yield _event(type="reset")
+                    yield _event(type="delta", text=f"⚠ {reason}\n(이번 질문은 규칙 기반으로 답합니다)\n\n{answer.text}")
+                    yield _event(type="done", tool_calls=[answer.tool] if answer.tool else [], error=reason)
+                    return
+                finally:  # 정지로 끊겨도 잠금을 풀기 전에 닫아, 그 질문을 기록에서 빼는 일이 다음 질문보다 먼저 끝나게 한다
+                    stream.close()
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
-            return {
-                "session_id": session_id, "answer": turn.text,
-                "tool_calls": [n for n, _ in turn.tool_calls], "model": bot.last_model,
-            }  # fmt: skip
-        with lock:
-            answer = rules.ask(req.message)
-        return {"session_id": req.session_id, "answer": answer.text, "tool_calls": [answer.tool] if answer.tool else []}
+            yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model)
+
+        return StreamingResponse(events(), media_type="application/x-ndjson")
 
     return app
 

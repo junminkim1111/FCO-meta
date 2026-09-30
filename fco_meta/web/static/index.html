@@ -165,7 +165,11 @@
              background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
              animation: shimmer 2.2s linear infinite; }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
-  @media (prefers-reduced-motion: reduce) { .shimmer { animation: none; color: var(--muted); background: none; } }
+  /* 도구에 맞춰 문구가 바뀔 때 살짝 떠오르며 나타난다 */
+  .shimmer.fresh { animation: shimmer 2.2s linear infinite, status-in .35s ease-out; }
+  @keyframes status-in { from { opacity: 0; transform: translateY(4px); } }
+  .pending .shimmer { display: inline-block; }
+  @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; } }
   #chat form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
   #msg-beam { flex: 1; display: flex; min-width: 0; }
   #chat form textarea { flex: 1; }
@@ -232,14 +236,14 @@ const pct = (x) => (x * 100).toFixed(1) + "%";
 const season = (s) => (s || "?").split(" (")[0];
 const asOf = (v) => v ? v.slice(0, 16).replace("T", " ") + " 기준" : "";
 
+async function failure(res) {
+  const d = (await res.json().catch(() => ({}))).detail;
+  return new Error(typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join(", ") : `오류 (${res.status})`);
+}
 async function api(path, options) {
   const res = await fetch(path, options);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const d = body.detail;
-    throw new Error(typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join(", ") : `오류 (${res.status})`);
-  }
-  return body;
+  if (!res.ok) throw await failure(res);
+  return res.json();
 }
 
 async function loadMeta() {
@@ -465,6 +469,20 @@ const say = (who, text) => {
   return node;
 };
 const THINKING = "랭커데이터를 살펴보고 있어요...";
+// 모델이 도구를 부르면 기다리는 문구를 그 도구에 맞게 바꾼다 (a = 도구 인자)
+const tc = (a) => (a.team_color ? a.team_color + " " : "");
+const TOOL_STATUS = {
+  resolve_terms: () => "팀컬러·포지션 이름을 확인하고 있어요...",
+  list_available_data: () => "수집된 데이터 범위를 확인하고 있어요...",
+  list_formations: (a) => `${tc(a)}포메이션 사용률을 세고 있어요...`,
+  recommend_players: (a) => `${tc(a)}랭커들이 쓰는 선수를 추리고 있어요...`,
+  recommend_squad: (a) => `${tc(a)}예산에 맞춰 스쿼드를 짜고 있어요...`,
+  get_player_detail: (a) => `${a.name ? a.name + " " : ""}선수 기록을 살펴보고 있어요...`,
+  query_squads: () => "랭커 스쿼드를 조건대로 집계하고 있어요...",
+  query_rankers: () => "상위 10,000명 랭킹을 집계하고 있어요...",
+  get_formation_overview: (a) => `${a.formation || "포메이션"} 전적을 살펴보고 있어요...`,
+  get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
+};
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
 let inflight = null;
 function setBusy(ctrl) {
@@ -479,37 +497,74 @@ $("send").addEventListener("click", (ev) => {
   ev.preventDefault(); // 취소하면 버튼이 곧바로 '보내기'로 돌아오므로, 이 클릭이 폼 제출까지 되지 않게 막는다
   inflight.abort();
 });
+// 답을 기다리는 말풍선: 오브 + "랭커데이터를 살펴보고 있어요...". 멈추는 함수를 돌려준다
+function thinking(bubble) {
+  const canvas = el("canvas", { ariaHidden: "true" });
+  bubble.className = "msg bot pending";
+  bubble.title = "답을 만드는 동안 왼쪽 포메이션을 둘러보세요";
+  bubble.replaceChildren(canvas, el("span", { class: "shimmer", text: THINKING }));
+  return mountOrb(canvas, "connecting", 20);
+}
+// 서버는 답을 몇 단어씩 묶어 보낸다(/api/chat, 한 줄에 JSON 이벤트 하나). 받은 글은 프레임마다 몇 글자씩 풀어 그린다
 async function send(text) {
   if (inflight) return;
   const ctrl = new AbortController();
   setBusy(ctrl);
   say("me", text);
-  const canvas = el("canvas", { ariaHidden: "true" });
-  const pending = el("div", { class: "msg bot pending", title: "답을 만드는 동안 왼쪽 포메이션을 둘러보세요" },
-    canvas, el("span", { class: "shimmer", text: THINKING }));
-  $("log").append(pending);
+  const bubble = el("div");
+  $("log").append(bubble);
   $("log").scrollTop = $("log").scrollHeight;
-  const stop = mountOrb(canvas, "connecting", 20);
-  let answer;
+  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0;
+  const draw = () => {
+    shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
+    renderMarkdown(bubble, answer.slice(0, shown));
+    $("log").scrollTop = $("log").scrollHeight;
+    frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
+  };
+  const grow = (piece) => {
+    if (stopOrb) { stopOrb(); stopOrb = null; bubble.className = "msg bot"; bubble.removeAttribute("title"); bubble.replaceChildren(); }
+    answer += piece;
+    if (!frame) frame = requestAnimationFrame(draw);
+  };
   try {
-    const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ message: text, session_id: sessionId }), signal: ctrl.signal });
-    sessionId = r.session_id;
-    answer = r.answer;
+    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ message: text, session_id: sessionId }), signal: ctrl.signal });
+    if (!res.ok) throw await failure(res);
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let rest = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const lines = (rest + value).split("\n");
+      rest = lines.pop();
+      for (const line of lines) {
+        const ev = JSON.parse(line);
+        if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
+        else if (ev.type === "delta") grow(ev.text);
+        else if (ev.type === "tool" && stopOrb) { // 기다리는 중이면 문구를 그 도구에 맞게
+          const line = TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING;
+          bubble.querySelector(".shimmer").replaceWith(el("span", { class: "shimmer fresh", text: line }));
+        }
+        else if (ev.type === "reset" && !stopOrb) { // 도구를 부르기 전에 쓴 글 → 지우고 다시 기다린다
+          cancelAnimationFrame(frame);
+          answer = "", shown = 0, frame = 0;
+          stopOrb = thinking(bubble);
+        }
+      }
+    }
   } catch (e) {
-    answer = "오류: " + e.message;
+    if (!ctrl.signal.aborted) grow((answer ? "\n\n" : "") + "오류: " + e.message);
   }
-  stop();
   setBusy(null);
-  pending.removeAttribute("title");
-  if (ctrl.signal.aborted) {
-    pending.className = "msg bot cancelled";
-    pending.textContent = "답변을 취소했습니다.";
+  if (ctrl.signal.aborted && !answer) {
+    stopOrb();
+    bubble.removeAttribute("title");
+    bubble.className = "msg bot cancelled";
+    bubble.textContent = "답변을 취소했습니다.";
     return;
   }
-  pending.className = "msg bot";
-  renderMarkdown(pending, answer);
-  $("log").scrollTop = $("log").scrollHeight;
+  if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
+  else if (!answer) grow("답을 받지 못했습니다.");
 }
 $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Enter는 줄바꿈 (한글 조합 중인 Enter는 무시)
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {

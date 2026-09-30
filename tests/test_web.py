@@ -8,6 +8,20 @@ from fco_meta.chatbot import Toolbox  # noqa: E402
 from fco_meta.web import create_app  # noqa: E402
 
 
+def ask(client, message):
+    """POST /api/chat and read the NDJSON stream → (answer as the page shows it, done event)."""
+    import json
+
+    res = client.post("/api/chat", json={"message": message})
+    assert res.status_code == 200 and res.headers["content-type"].startswith("application/x-ndjson")
+    text, events = "", [json.loads(line) for line in res.text.splitlines()]
+    assert events[0]["type"] == "start" and events[-1]["type"] == "done"
+    for e in events:
+        text = "" if e["type"] == "reset" else text + e.get("text", "")
+    done = {**events[-1], "tools": [e for e in events if e["type"] == "tool"]}
+    return text, done
+
+
 @pytest.fixture
 def client(db, tmp_path):  # noqa: F811
     Toolbox(db.conn)  # 시세 테이블 생성
@@ -50,8 +64,8 @@ def test_formation_overview(client):
 
 
 def test_chat_rules(client):
-    r = client.post("/api/chat", json={"message": "아스날 볼란치 1명 추천"}).json()
-    assert r["tool_calls"] == ["recommend_players"] and "볼란치R" in r["answer"]
+    answer, done = ask(client, "아스날 볼란치 1명 추천")
+    assert done["tool_calls"] == ["recommend_players"] and "볼란치R" in answer
     assert client.post("/api/chat", json={"message": ""}).status_code == 422
     assert client.post("/api/chat", json={"message": "x" * 501}).status_code == 422
 
@@ -74,34 +88,35 @@ def test_gemini_errors_are_shown_and_answered_by_rules(db, tmp_path, monkeypatch
     import fco_meta.web.app as web_app
 
     class Broken:
-        def ask(self, message):
+        def ask_stream(self, message):
+            yield "쓰다가 "  # 도중에 실패해도 쓰던 글은 지우고 규칙 기반 답으로 바꾼다
             raise errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
 
     monkeypatch.setattr(web_app, "_gemini_chat", lambda toolbox, model: Broken())
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
-    r = client.post("/api/chat", json={"message": "아스날 볼란치 1명 추천"})
-    assert r.status_code == 200
-    body = r.json()
-    assert "Gemini API 오류 404" in body["answer"] and "이 키로 쓸 수 없는 모델" in body["answer"]
-    assert "볼란치R" in body["answer"]  # 규칙 기반 답변이 이어서 나옴
-    assert body["error"].startswith("Gemini API 오류 404")
+    answer, done = ask(client, "아스날 볼란치 1명 추천")
+    assert answer.startswith("⚠ Gemini API 오류 404") and "이 키로 쓸 수 없는 모델" in answer
+    assert "볼란치R" in answer  # 규칙 기반 답변이 이어서 나옴
+    assert done["error"].startswith("Gemini API 오류 404")
 
 
 def test_gemini_answer_hides_evidence_and_fallback_model(db, tmp_path, monkeypatch):  # noqa: F811
     import fco_meta.web.app as web_app
-    from fco_meta.chatbot.gemini import GeminiTurn
+    from fco_meta.chatbot.gemini import RESET, GeminiTurn, ToolCall
 
     class Bot:
         model, last_model = "gemini-a", "gemini-b"  # 대체 모델로 답한 경우
 
-        def ask(self, message):
+        def ask_stream(self, message):
+            yield from ["찾아볼게요.", RESET, ToolCall("recommend_players", {"role": "DM"}), "라이스가 ", "1순위입니다."]
             return GeminiTurn("라이스가 1순위입니다.", [("recommend_players", {})], "STOP", ["아스널 DM — 랭커 3명"])
 
     monkeypatch.setattr(web_app, "_gemini_chat", lambda toolbox, model: Bot())
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
-    body = client.post("/api/chat", json={"message": "아스날 볼란치"}).json()
-    assert body["answer"] == "라이스가 1순위입니다."
-    assert body["model"] == "gemini-b"
+    answer, done = ask(client, "아스날 볼란치")
+    assert answer == "라이스가 1순위입니다."  # 글자 단위로 흘러오고, 근거 줄·대체 모델 안내는 없다
+    assert done["model"] == "gemini-b" and done["tool_calls"] == ["recommend_players"]
+    assert done["tools"] == [{"type": "tool", "name": "recommend_players", "args": {"role": "DM"}}]  # 진행 문구용
 
 
 def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # noqa: F811
@@ -118,16 +133,17 @@ def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # n
         def __init__(self, tools):
             self.tools = tools
 
-        def ask(self, message):
+        def ask_stream(self, message):
             thinking.set()
             release.wait(5)  # 모델 응답을 기다리는 중
             content, _ = self.tools.run("list_formations", {})  # 도구는 그 뒤에도 실행된다
+            yield content[:10]
             return GeminiTurn(content[:10])
 
     monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: SlowBot(tools))
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
     answers = []
-    chat = threading.Thread(target=lambda: answers.append(client.post("/api/chat", json={"message": "q"}).json()))
+    chat = threading.Thread(target=lambda: answers.append(ask(client, "q")[0]))
     chat.start()
     assert thinking.wait(5)
     panel = []  # 예전에는 답이 끝날 때까지 막혔다
@@ -137,4 +153,4 @@ def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # n
     release.set()
     assert panel == [200]
     chat.join(5)
-    assert answers and answers[0]["answer"]
+    assert answers and answers[0]
