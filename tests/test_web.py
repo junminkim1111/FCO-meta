@@ -100,3 +100,39 @@ def test_gemini_answer_hides_evidence_and_fallback_model(db, tmp_path, monkeypat
     body = client.post("/api/chat", json={"message": "아스날 볼란치"}).json()
     assert body["answer"] == "라이스가 1순위입니다."
     assert body["model"] == "gemini-b"
+
+
+def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # noqa: F811
+    import threading
+
+    import fco_meta.web.app as web_app
+    from fco_meta.chatbot.gemini import GeminiTurn
+
+    thinking, release = threading.Event(), threading.Event()
+
+    class SlowBot:
+        model = last_model = "gemini-a"
+
+        def __init__(self, tools):
+            self.tools = tools
+
+        def ask(self, message):
+            thinking.set()
+            release.wait(5)  # 모델 응답을 기다리는 중
+            content, _ = self.tools.run("list_formations", {})  # 도구는 그 뒤에도 실행된다
+            return GeminiTurn(content[:10])
+
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: SlowBot(tools))
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
+    answers = []
+    chat = threading.Thread(target=lambda: answers.append(client.post("/api/chat", json={"message": "q"}).json()))
+    chat.start()
+    assert thinking.wait(5)
+    panel = []  # 예전에는 답이 끝날 때까지 막혔다
+    peek = threading.Thread(target=lambda: panel.append(client.get("/api/formations").status_code))
+    peek.start()
+    peek.join(2)
+    release.set()
+    assert panel == [200]
+    chat.join(5)
+    assert answers and answers[0]["answer"]

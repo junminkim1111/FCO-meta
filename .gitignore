@@ -20,3 +20,6 @@ graphify-out/
 
 # local preview config (Claude Code)
 .claude/launch.json
+
+# macOS
+.DS_Store

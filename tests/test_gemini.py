@@ -57,6 +57,26 @@ def test_function_declarations_accepted_by_sdk():
     assert decls["recommend_players"].parameters_json_schema["required"] == ["role"]  # 팀컬러 생략 = 전체 랭커
 
 
+def test_follow_up_resends_only_questions_and_answers(toolbox):
+    """지난 질문의 도구 호출·결과(큰 JSON)는 다음 질문부터 보내지 않는다 — 대화가 길어져도 요청 크기가 거의 그대로."""
+    call = {"function_call": {"name": "list_formations", "args": {}}, "thought_signature": b"sig-1"}
+    client = FakeClient([
+        response([call]), response([{"text": "4-2-3-1이 1위입니다.", "thought_signature": b"sig-2"}]),
+        response([{"text": "그중 2위는 4-1-2-3입니다."}]),
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="gemini-test")
+    chat.ask("포메이션 순위")
+    chat.ask("2위는?")
+
+    sent = client.models.requests[-1]["contents"]
+    assert [(c.role, c.parts[0].text) for c in sent] == [
+        ("user", "포메이션 순위"), ("model", "4-2-3-1이 1위입니다."), ("user", "2위는?"),
+    ]  # fmt: skip
+    assert sent[1].parts[0].thought_signature == b"sig-2"  # 답 글의 서명은 그대로
+    # 이번 질문 안의 도구 결과는 그대로 보낸다
+    assert any(p.function_response for c in client.models.requests[1]["contents"] for p in c.parts)
+
+
 def test_tool_round_trip(toolbox):
     call = {
         "function_call": {

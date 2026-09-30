@@ -43,6 +43,7 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
     conn = _open_readonly(db_path)
     lock = threading.Lock()  # sqlite 연결 하나를 스레드풀 요청이 나눠 쓴다
     toolbox = Toolbox(conn)
+    gemini_tools = _LockedTools(toolbox, lock)
     rules = RuleBot(toolbox)
     gemini_sessions: dict[str, Any] = {}
 
@@ -89,17 +90,22 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
         if backend == "gemini":
             session_id = req.session_id or uuid.uuid4().hex
             with lock:
-                bot = gemini_sessions.get(session_id)
-                if bot is None:
+                session = gemini_sessions.get(session_id)
+                if session is None:
                     if len(gemini_sessions) >= MAX_SESSIONS:
                         gemini_sessions.pop(next(iter(gemini_sessions)))
-                    bot = gemini_sessions[session_id] = _gemini_chat(toolbox, gemini_model)
+                    session = gemini_sessions[session_id] = (_gemini_chat(gemini_tools, gemini_model), threading.Lock())
+            bot, busy = session
+            # 모델을 기다리는 수십 초 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
+            # 같은 대화의 질문은 차례로 (정지한 요청이 서버에서 아직 도는 중이면 끝나기를 기다린다)
+            with busy:
                 try:
                     turn = bot.ask(req.message)
                 except Exception as exc:  # Gemini 실패 → 원인을 알리고 규칙 기반으로 대신 답한다
                     log.exception("gemini chat failed")
                     reason = describe_error(exc)
-                    answer = rules.ask(req.message)
+                    with lock:
+                        answer = rules.ask(req.message)
                     return {
                         "session_id": session_id,
                         "answer": f"⚠ {reason}\n(이번 질문은 규칙 기반으로 답합니다)\n\n{answer.text}",
@@ -119,7 +125,21 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
     return app
 
 
-def _gemini_chat(toolbox: Toolbox, model: str | None):
+class _LockedTools:
+    """The toolbox as Gemini sees it: the DB lock is held only while a tool runs."""
+
+    def __init__(self, toolbox: Toolbox, lock: threading.Lock):
+        self.toolbox, self.lock = toolbox, lock
+
+    def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        with self.lock:
+            return self.toolbox.run(name, tool_input)
+
+    def evidence(self, name: str, result: dict[str, Any]) -> str | None:
+        return self.toolbox.evidence(name, result)
+
+
+def _gemini_chat(toolbox: Toolbox | _LockedTools, model: str | None):
     from google import genai
 
     from ..chatbot.gemini import GeminiChat, models_from_env

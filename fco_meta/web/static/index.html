@@ -25,14 +25,15 @@
                      radial-gradient(900px 480px at 100% -8%, var(--glow-b), transparent 60%), var(--bg);
          font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
          -webkit-font-smoothing: antialiased; }
-  header { display: flex; align-items: center; gap: 14px; padding: 28px 16px 12px; max-width: 1640px; margin: 0 auto; }
+  /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 2px 4px; }
   header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
                   display: flex; align-items: center; justify-content: center; flex: none; }
   header h1 { margin: 0; line-height: 0; }
   header h1 svg { height: 26px; width: auto; }
   header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
   main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
-         max-width: 1640px; margin: 0 auto; padding: 8px 16px 40px; }
+         max-width: 1640px; margin: 0 auto; padding: 16px; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0;
@@ -46,11 +47,11 @@
            cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s; }
   button:hover { opacity: .9; }
   button:disabled { opacity: .5; cursor: wait; }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  input { font: inherit; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid var(--line); border-radius: 999px;
-          padding: 10px 16px; min-width: 0; transition: border-color .15s; }
-  input::placeholder { color: var(--faint); }
-  input:focus { border-color: var(--line-strong); outline: none; }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  textarea { font: inherit; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid var(--line); border-radius: 16px;
+             padding: 12px 16px; min-width: 0; transition: border-color .15s; resize: none; line-height: 1.5; }
+  textarea::placeholder { color: var(--faint); }
+  textarea:focus { border-color: var(--line-strong); outline: none; }
 
   /* formation distribution */
   .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
@@ -119,15 +120,16 @@
 
   /* chat */
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
-  @media (min-width: 861px) { #chat { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); } #log { max-height: none; } }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 10px; max-height: 60vh; }
+  /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
+  @media (min-width: 861px) { #chat { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); } #log { max-height: none; } }
   .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
   .msg.me { align-self: flex-end; background: var(--text); color: #0b0b0d; border-bottom-right-radius: 4px; }
   .msg.bot { align-self: flex-start; background: var(--panel-strong); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
   /* 마크다운으로 그린 답 (static/md.js) */
   .msg.md { white-space: normal; line-height: 1.55; }
   .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
-  .md p, .md ul, .md ol, .md pre, .md blockquote, .md .table-wrap { margin: 0 0 8px; }
+  .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 0 0 8px; }
   .md ul, .md ol { padding-left: 20px; } .md li + li { margin-top: 2px; }
   .md h1, .md h2, .md h3, .md h4 { font-size: 14px; font-weight: 600; color: var(--text); margin: 12px 0 6px; }
   .md strong { color: #fff; font-weight: 600; }
@@ -138,8 +140,7 @@
   .md pre code { background: none; border: 0; padding: 0; }
   .md blockquote { border-left: 3px solid var(--line-strong); padding-left: 10px; color: var(--muted); }
   .md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
-  .md .table-wrap { overflow-x: auto; }
-  .md table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .md table { display: block; overflow-x: auto; border-collapse: collapse; /* 넓은 표는 말풍선 안에서 가로로 스크롤 */ font-size: 13px; font-variant-numeric: tabular-nums; }
   .md th, .md td { border-bottom: 1px solid var(--line); padding: 5px 10px; text-align: left; white-space: nowrap; }
   .md [align="right"] { text-align: right; } .md [align="center"] { text-align: center; }
   .md th { color: var(--muted); font-weight: 600; border-bottom-color: var(--line-strong); }
@@ -155,31 +156,31 @@
   .examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
   .examples button { background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); font-weight: 500; font-size: 12px; padding: 5px 12px; }
   .examples button:hover { border-color: var(--line-strong); opacity: 1; }
-  #chat form { display: flex; gap: 8px; }
+  #chat form { display: flex; gap: 8px; align-items: flex-end; }
   #msg-beam { flex: 1; display: flex; min-width: 0; }
-  #chat form input { flex: 1; }
+  #chat form textarea { flex: 1; }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand"><canvas id="brand-orb" width="32" height="32" aria-hidden="true"></canvas></div>
-  <div>
-    <!-- FCLM 로고: 획으로 그린 글자, C는 센터서클과 센터스폿 -->
-    <h1><svg viewBox="0 0 80 24" role="img" aria-label="FCLM"><title>FCLM</title>
-      <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" stop-color="#c7d2fe"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient></defs>
-      <g fill="none" stroke="url(#logo-g)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 22V2h12M2 11.5h9"/>
-        <path d="M36.07 4.93A10 10 0 1 0 36.07 19.07"/>
-        <path d="M42 2v20h11"/>
-        <path d="M59 22V2l9 12 9-12v20"/>
-      </g>
-      <circle cx="29" cy="12" r="2.2" fill="#a5b4fc"/>
-    </svg></h1>
-    <p id="asof">데이터 불러오는 중…</p>
-  </div>
-</header>
 <main>
   <div class="col">
+  <header>
+    <div class="brand"><canvas id="brand-orb" width="32" height="32" aria-hidden="true"></canvas></div>
+    <div>
+      <!-- FCLM 로고: 획으로 그린 글자, C는 센터서클과 센터스폿 -->
+      <h1><svg viewBox="0 0 80 24" role="img" aria-label="FCLM"><title>FCLM</title>
+        <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" stop-color="#c7d2fe"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient></defs>
+        <g fill="none" stroke="url(#logo-g)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 22V2h12M2 11.5h9"/>
+          <path d="M36.07 4.93A10 10 0 1 0 36.07 19.07"/>
+          <path d="M42 2v20h11"/>
+          <path d="M59 22V2l9 12 9-12v20"/>
+        </g>
+        <circle cx="29" cy="12" r="2.2" fill="#a5b4fc"/>
+      </svg></h1>
+      <p id="asof">데이터 불러오는 중…</p>
+    </div>
+  </header>
   <section aria-labelledby="form-title">
     <h2 id="form-title">포메이션 분포 <span id="form-scope" class="stat"></span></h2>
     <div id="fchart" class="fchart"></div>
@@ -196,26 +197,19 @@
     <div id="log" aria-live="polite"></div>
     <div class="examples" id="examples"></div>
     <form id="chat-form">
-      <div id="msg-beam"><input id="msg" maxlength="500" placeholder="무엇이든 물어보세요 — 예: 레알 5억 미만 공격수 추천해줘" autocomplete="off"></div>
+      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요 — 예: 레알 5억 미만 공격수 추천해줘 (줄바꿈은 Shift+Enter)"></textarea></div>
       <button type="submit" id="send">보내기</button>
     </form>
   </section>
 </main>
 <div id="tip" hidden></div>
 
-<script>
-"use strict";
-// 생각 중 오브 (static/orb.js). 불러오지 못해도 페이지는 그대로 동작한다
-let mountOrb = null;
-const orbReady = import("/static/orb.js").then((m) => { mountOrb = m.mountOrb; }).catch(() => {});
-const orb = (canvas, state, size) => (mountOrb ? mountOrb(canvas, state, size) : () => {});
-// 답의 마크다운 표시 (static/md.js). 불러오지 못하면 글자 그대로 보여 준다
-let renderMarkdown = null;
-const mdReady = import("/static/md.js").then((m) => { renderMarkdown = m.renderMarkdown; }).catch(() => {});
-// 답을 기다리는 동안 입력창 테두리를 도는 빛 (static/beam.js)
-let beam = null;
-import("/static/beam.js").then((m) => { beam = m.mountBeam($("msg-beam")); }).catch(() => {});
+<script type="module">
+import { mountOrb } from "/static/orb.js"; // 생각 중 오브
+import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
+import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
 const $ = (id) => document.getElementById(id);
+const beam = mountBeam($("msg-beam"));
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
@@ -471,7 +465,7 @@ const THINKING = "랭커데이터를 살펴보고 있어요...";
 let inflight = null;
 function setBusy(ctrl) {
   inflight = ctrl;
-  beam?.set(!!ctrl);
+  beam.set(!!ctrl);
   $("send").type = ctrl ? "button" : "submit";
   $("send").textContent = ctrl ? "■ 정지" : "보내기";
   $("send").setAttribute("aria-label", ctrl ? "답변 정지" : "보내기");
@@ -492,8 +486,7 @@ async function send(text) {
     canvas, el("span", { class: "shimmer", text: THINKING }));
   $("log").append(pending);
   $("log").scrollTop = $("log").scrollHeight;
-  await orbReady;
-  const stop = orb(canvas, "connecting", 20);
+  const stop = mountOrb(canvas, "connecting", 20);
   let answer;
   try {
     const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -505,18 +498,22 @@ async function send(text) {
   }
   stop();
   setBusy(null);
+  pending.removeAttribute("title");
   if (ctrl.signal.aborted) {
     pending.className = "msg bot cancelled";
-    pending.removeAttribute("title");
     pending.textContent = "답변을 취소했습니다.";
     return;
   }
   pending.className = "msg bot";
-  pending.removeAttribute("title");
-  await mdReady;
-  if (renderMarkdown) renderMarkdown(pending, answer); else pending.textContent = answer;
+  renderMarkdown(pending, answer);
   $("log").scrollTop = $("log").scrollHeight;
 }
+$("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Enter는 줄바꿈 (한글 조합 중인 Enter는 무시)
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+    ev.preventDefault();
+    $("chat-form").requestSubmit();
+  }
+});
 $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
@@ -532,7 +529,7 @@ for (const q of ["4-2-3-1 쓰는 랭커들 베스트 11 알려줘", "레알 5억
 }
 say("bot", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
-orbReady.then(() => orb($("brand-orb"), "solving", 32));
+mountOrb($("brand-orb"), "solving", 32);
 loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
 loadFormations();
 </script>

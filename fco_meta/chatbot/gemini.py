@@ -308,12 +308,24 @@ class GeminiChat:
 
     def ask(self, question: str) -> GeminiTurn:
         """One user turn. On any error the history is rolled back so the next question starts clean."""
+        self._drop_tool_history()
         checkpoint = len(self.contents)
         try:
             return self._ask(question)
         except Exception:
             del self.contents[checkpoint:]
             raise
+
+    def _drop_tool_history(self) -> None:
+        """Earlier turns keep only the question and the answer text. Their tool calls and (large JSON)
+        results would otherwise be resent on every model call, so each follow-up costs more quota."""
+        types = _types()
+        kept = []
+        for content in self.contents:
+            parts = [p for p in content.parts or [] if p.text and not p.thought]
+            if parts:
+                kept.append(types.Content(role=content.role, parts=parts))
+        self.contents = kept
 
     def _ask(self, question: str) -> GeminiTurn:
         types = _types()
