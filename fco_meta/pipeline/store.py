@@ -136,8 +136,8 @@ class MatchPlayer:
 
 # 나중에 추가한 열 — 새 DB든 기존 DB든 ALTER TABLE로 붙인다 (API 응답을 JSON 그대로 보관)
 ADDED_COLUMNS: dict[str, dict[str, str]] = {
-    "match_player": {"stats": "TEXT"},  # player.status 전체 (골·도움·슈팅·패스·드리블·태클·가로채기·공중볼 …)
-    "match_team": {"detail": "TEXT", "shots": "TEXT"},  # matchDetail·shoot·pass·defence / shootDetail (슈팅 위치·시간·도움)
+    "match_player": {"stats": "TEXT"},  # 선발의 player.status (골·도움·슈팅·패스·드리블·태클·가로채기·공중볼 …), 교체는 NULL
+    "match_team": {"detail": "TEXT", "shots": "TEXT"},  # detail = 스코어({"shoot": {"goalTotal"}})만, shots는 쓰지 않아 NULL
 }
 
 
@@ -231,7 +231,9 @@ class PipelineStore:
         return datetime.fromisoformat(row[0]) if row else None
 
     def save_match(self, detail: dict[str, Any]) -> None:
-        """Store match header plus result and players of every participant (nicknames are not kept)."""
+        """Store match header plus result and players of every participant (nicknames are not kept).
+        Only what is read later is kept, so 10,000 rankers a day stay small: the score per side and
+        the match stats of starters (substitutes keep their position only)."""
         match_id = detail["matchId"]
         self.conn.execute(
             "INSERT OR REPLACE INTO match (match_id, match_date, match_type, fetched_at) VALUES (?, ?, ?, ?)",
@@ -240,20 +242,19 @@ class PipelineStore:
         for info in detail.get("matchInfo") or []:
             ouid = info["ouid"]
             md = info.get("matchDetail") or {}
-            team = {k: info.get(k) for k in ("matchDetail", "shoot", "pass", "defence")}
+            score = {"shoot": {"goalTotal": (info.get("shoot") or {}).get("goalTotal")}}
             self.conn.execute(
                 "INSERT OR REPLACE INTO match_team (match_id, ouid, match_result, match_end_type, detail, shots)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (match_id, ouid, md.get("matchResult"), md.get("matchEndType"),
-                 json.dumps(team, ensure_ascii=False), json.dumps(info.get("shootDetail") or [], ensure_ascii=False)),
-            )  # fmt: skip
+                " VALUES (?, ?, ?, ?, ?, NULL)",
+                (match_id, ouid, md.get("matchResult"), md.get("matchEndType"), json.dumps(score)),
+            )
             rows = []
             for p in info.get("player") or []:
                 sp_id, pos = int(p["spId"]), int(p["spPosition"])
                 status = p.get("status") or {}
                 rows.append(
                     (match_id, ouid, sp_id, sp_id // 1_000_000, sp_id % 1_000_000, pos, p.get("spGrade"),
-                     status.get("spRating"), int(pos != SUB), json.dumps(status, ensure_ascii=False))
+                     status.get("spRating"), int(pos != SUB), json.dumps(status) if pos != SUB else None)
                 )  # fmt: skip
             self.conn.executemany(
                 "INSERT OR REPLACE INTO match_player (match_id, ouid, sp_id, season_id, pid, sp_position, sp_grade,"

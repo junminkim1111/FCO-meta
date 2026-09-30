@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import load_env
+from .retention import prune
 from .analytics import UsageStore
 from .crawler import DatacenterClient, RankQuery, crawl_rankings
 from .crawler.membership import record_displayed_membership
@@ -70,6 +71,7 @@ class DailyReport:
     prices: RefreshResult | None = None
     details: DetailResult | None = None
     ranker_stats: RankerStatsResult | None = None
+    pruned: dict[str, int] = field(default_factory=dict)  # 오래돼 지운 행 (retention.py)
 
     def lines(self) -> list[str]:
         return [
@@ -105,7 +107,7 @@ class DailyReport:
             ]
             if self.details
             else []
-        )
+        ) + ([f"오래된 기록 정리: {', '.join(f'{t} {n}행' for t, n in self.pruned.items())}"] if self.pruned else [])
 
 
 def run_daily(
@@ -214,6 +216,12 @@ def run_daily(
                 report.details = refresh_card_details(datacenter, db, limit=detail_cards)
             except Exception as exc:
                 log.warning("card detail refresh failed: %s", exc)
+
+        # 9. 오래된 원본 정리 (경기 원본 14일·랭킹 30일·시세 30일, 집계는 유지)
+        try:
+            report.pruned = prune(storage.conn, now())
+        except Exception as exc:  # 정리 실패가 수집 결과를 막지 않게
+            log.warning("prune failed: %s", exc)
         return report
     finally:
         storage.close()

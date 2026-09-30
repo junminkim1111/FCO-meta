@@ -86,7 +86,7 @@ fco_meta/
   pipeline/    닉네임→ouid→user/match→match-detail로 스쿼드 수집, 포지션 조합→포메이션 추론
   analytics/   usage.py: usage_sample / usage_stats 집계 (team_color_id 0 = 전체 랭커, formation '*' = 전체)
   chatbot/     tools.py(Toolbox: 도구 5개), rules.py(규칙 기반), gemini.py(Gemini 함수 호출), prompt.py
-  web/         FastAPI + static/index.html (바닐라 JS). 외부 라이브러리는 static/vendor/에 복사 (thinking-orbs, marked, DOMPurify)
+  web/         FastAPI + static/index.html (바닐라 JS). 외부 라이브러리는 static/vendor/에 복사 (thinking-orbs, marked, DOMPurify, border-beam·metal-fx 엔진만 — React 없이)
   daily.py     매일 작업: 크롤→소속→API 지연 대기→스쿼드→메타 갱신→집계→시세
   config.py    load_env(): cwd/.env와 프로젝트 .env 읽기 (기존 환경 변수 우선)
   storage.py   SQLite 스키마, unfiltered_coverage / latest_unfiltered_snapshot
