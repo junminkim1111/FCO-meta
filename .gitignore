@@ -23,3 +23,6 @@ graphify-out/
 
 # macOS
 .DS_Store
+
+# huggingface_hub가 data/로 받을 때 남기는 메타데이터 (python -m fco_meta.cloud pull-db)
+data/.cache/

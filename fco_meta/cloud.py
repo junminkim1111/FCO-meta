@@ -1,6 +1,7 @@
 """Run the web on a host without a persistent disk (Render free): the DB lives in a private Hugging Face dataset.
 
-    python -m fco_meta.cloud push-db   # 맥에서, 매일 수집 뒤: DB를 데이터셋에 올리고 Render에 재배포를 요청
+    python -m fco_meta.cloud pull-db   # 데이터셋의 DB를 data/로 받는다 (GitHub Actions 매일 수집의 첫 단계, 맥에서 최신본 받기)
+    python -m fco_meta.cloud push-db   # 매일 수집 뒤: DB를 데이터셋에 올리고 Render에 재배포를 요청
     python -m fco_meta.cloud serve     # 서버에서 (Render 시작 명령): 데이터셋의 DB를 받아 웹을 연다
 
 맥 .env: HF_TOKEN(쓰기 권한), 선택으로 HF_DATA_REPO(기본 <계정>/fclm-data), RENDER_DEPLOY_HOOK(Render의 Deploy Hook 주소).
@@ -52,19 +53,23 @@ def push_db(api: Any, post: Any, db: Path = DB) -> None:
         print("Render에 재배포를 요청했습니다 (몇 분 걸림)")
 
 
-def serve(port: int) -> int:
+def pull_db(repo: str) -> str:
+    """Download the dataset's DB to data/fco_meta.sqlite (replacing a local one); returns its path."""
     from huggingface_hub import hf_hub_download
 
+    return hf_hub_download(repo, DB_NAME, repo_type="dataset", local_dir=str(DB.parent))
+
+
+def serve(port: int) -> int:
     from .web.__main__ import main as web
 
-    path = hf_hub_download(os.environ["HF_DATA_REPO"], DB_NAME, repo_type="dataset", local_dir="data")
-    return web(["--db", path, "--host", "0.0.0.0", "--port", str(port)])
+    return web(["--db", pull_db(os.environ["HF_DATA_REPO"]), "--host", "0.0.0.0", "--port", str(port)])
 
 
 def main(argv: list[str] | None = None) -> int:
     load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.cloud")
-    parser.add_argument("command", choices=["push-db", "serve"])
+    parser.add_argument("command", choices=["pull-db", "push-db", "serve"])
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
     args = parser.parse_args(argv)
     try:
@@ -77,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     if not os.environ.get("HF_TOKEN"):
         print(".env에 HF_TOKEN(쓰기 권한 토큰)이 필요합니다: https://huggingface.co/settings/tokens", file=sys.stderr)
         return 2
+    if args.command == "pull-db":
+        print(f"DB를 받았습니다: {pull_db(data_repo(HfApi()))}")
+        return 0
     import httpx
 
     push_db(HfApi(), httpx.post)

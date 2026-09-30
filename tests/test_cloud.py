@@ -66,3 +66,12 @@ def test_push_db_without_a_hook_only_uploads(db, monkeypatch):
     api, post = FakeApi(), Posted()
     cloud.push_db(api, post, db=db)
     assert api.calls[1][2]["repo_id"] == "someone/data" and post.urls == []
+
+
+def test_pull_db_downloads_into_data(monkeypatch):
+    import huggingface_hub
+
+    calls = []
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **kw: calls.append((a, kw)) or "data/fco_meta.sqlite")
+    assert cloud.pull_db("me/fclm-data") == "data/fco_meta.sqlite"
+    assert calls == [(("me/fclm-data", "fco_meta.sqlite"), {"repo_type": "dataset", "local_dir": "data"})]
