@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .numbers import unsupported_numbers
 from .prompt import SYSTEM_PROMPT
 from .tools import TOOLS, Toolbox
 
@@ -73,6 +74,20 @@ class ToolCall:
 
     name: str
     args: dict[str, Any]
+
+
+@dataclass
+class Recheck:
+    """The answer had figures no tool result backs up; a rewrite follows (ask_stream event, after RESET)."""
+
+    numbers: list[str]
+
+
+# 답에 도구 결과에 없는 수치가 있을 때 한 번 다시 쓰게 하는 요청
+RECHECK_REQUEST = (
+    "방금 답에 쓴 수치 중 {numbers}는 이번 도구 결과에 없습니다. 도구 결과에 있는 값만 써서 답 전체를 다시 쓰세요. "
+    "결과에 없는 값은 '미수집'이라고 쓰고, 다시 쓴다는 말은 하지 마세요."
+)
 
 
 def _started(stream: Any) -> Iterator[Any]:
@@ -345,9 +360,9 @@ class GeminiChat:
         """One user turn, without streaming."""
         return _drain(self.ask_stream(question))
 
-    def ask_stream(self, question: str) -> Generator[str | Reset | ToolCall, None, GeminiTurn]:
+    def ask_stream(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         """One user turn: yields answer text as it arrives (RESET = drop what was yielded so far,
-        ToolCall = a tool is about to run) and
+        ToolCall = a tool is about to run, Recheck = figures are being rewritten) and
         returns the GeminiTurn. On an error or when the caller stops early (closes the generator), the
         history is rolled back so the next question starts clean."""
         self._drop_tool_history()
@@ -357,6 +372,14 @@ class GeminiChat:
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
+
+    def remember(self, question: str, answer: str) -> None:
+        """Add a question answered without the model (answer cache), so follow-ups keep the context."""
+        types = _types()
+        self.contents += [
+            types.Content(role="user", parts=[types.Part.from_text(text=question)]),
+            types.Content(role="model", parts=[types.Part.from_text(text=answer)]),
+        ]
 
     def _drop_tool_history(self) -> None:
         """Earlier turns keep only the question and the answer text. Their tool calls and (large JSON)
@@ -369,32 +392,66 @@ class GeminiChat:
                 kept.append(types.Content(role=content.role, parts=parts))
         self.contents = kept
 
-    def _ask(self, question: str) -> Generator[str | Reset | ToolCall, None, GeminiTurn]:
+    def _round(self, config: Any = None) -> Generator[str, None, tuple[list[Any], str, Any]]:
+        """One model call: yields its text as it arrives and returns (parts, finish reason, block reason).
+        The chunks' parts are kept as they came, to be recorded as one model turn (signatures intact)."""
+        received: list[Any] = []
+        finish, blocked = "None", None
+        for chunk in self._generate(config):
+            if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
+                blocked = chunk.prompt_feedback.block_reason
+            candidate = chunk.candidates[0] if chunk.candidates else None
+            if candidate is None:
+                continue
+            if candidate.finish_reason:
+                finish = str(candidate.finish_reason.value)
+            for part in (candidate.content.parts if candidate.content else None) or []:
+                received.append(part)
+                if part.text and not part.thought:
+                    yield part.text
+        return received, finish, blocked
+
+    def _checked(
+        self, question: str, text: str, finish: str, known: list[Any]
+    ) -> Generator[str | Reset | Recheck, None, tuple[str, str]]:
+        """If the answer has figures no tool result (or earlier answer) backs up, ask once for a rewrite
+        without tools. The flagged answer and the request are then dropped from the history."""
+        missing = unsupported_numbers(text, known, question)
+        if not missing:
+            return text, finish
+        log.warning("numbers not in tool results %s — asking for one rewrite", missing)
+        yield RESET
+        yield Recheck(missing)
         types = _types()
+        flagged = len(self.contents) - 1
+        request = RECHECK_REQUEST.format(numbers=", ".join(missing))
+        self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=request)]))
+        received, new_finish, _ = yield from self._round(self.final_config)
+        new_text = "".join(p.text for p in received if p.text and not p.thought).strip()
+        if not new_text:  # 다시 쓰기가 비면 처음 답을 그대로 둔다
+            del self.contents[flagged + 1 :]
+            yield RESET
+            yield text
+            return text, finish
+        self.contents[flagged:] = [types.Content(role="model", parts=received)]
+        if still := unsupported_numbers(new_text, known, question):
+            log.warning("rewrite still has numbers not in tool results %s", still)
+        return new_text, new_finish
+
+    def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
+        types = _types()
+        # 앞선 대화의 답에 나온 수치는 이번 답에 다시 써도 된다 (수치 검증용)
+        known: list[Any] = [p.text for c in self.contents for p in c.parts or [] if p.text]
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
         evidence: list[str] = []  # 모델이 아니라 도구 결과로 만든 근거 줄
+        results: list[Any] = []  # 이번 질문의 도구 결과 (수치 검증용)
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
             if final:
                 log.warning("tool round limit (%d) reached, asking for an answer without tools", MAX_TOOL_ROUNDS)
-            # 조각이 오는 대로 글을 넘기고, 조각의 part들은 그대로 모아 한 응답으로 기록한다 (서명 보존)
-            received: list[Any] = []
-            finish, blocked, streamed = "None", None, False
-            for chunk in self._generate(self.final_config if final else None):
-                if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
-                    blocked = chunk.prompt_feedback.block_reason
-                candidate = chunk.candidates[0] if chunk.candidates else None
-                if candidate is None:
-                    continue
-                if candidate.finish_reason:
-                    finish = str(candidate.finish_reason.value)
-                for part in (candidate.content.parts if candidate.content else None) or []:
-                    received.append(part)
-                    if part.text and not part.thought:
-                        yield part.text
-                        streamed = True
+            received, finish, blocked = yield from self._round(self.final_config if final else None)
             if not received:
                 note = f"응답을 받지 못했습니다{f' ({blocked})' if blocked else ''}. 질문을 바꿔 주세요."
                 yield note
@@ -404,15 +461,17 @@ class GeminiChat:
             function_calls = [p.function_call for p in received if p.function_call]
             if not function_calls or final:
                 text = "".join(p.text for p in received if p.text and not p.thought).strip()
-                if finish == "MAX_TOKENS":
-                    yield "\n\n(답변이 길이 제한으로 잘렸습니다)"
-                    text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
                 if not text:  # 도구를 끈 마지막 요청에서도 글이 없으면
                     note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
                     yield note
                     return GeminiTurn(note, calls, "tool_limit")
+                if results:  # 도구로 조회한 답만 검증한다 (인사·범위 밖 질문은 대조할 결과가 없음)
+                    text, finish = yield from self._checked(question, text, finish, [*results, *known])
+                if finish == "MAX_TOKENS":
+                    yield "\n\n(답변이 길이 제한으로 잘렸습니다)"
+                    text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
                 return GeminiTurn(text, calls, "tool_limit" if final and function_calls else finish, evidence[:MAX_EVIDENCE])
-            if streamed:  # 도구를 부르기 전에 쓴 글("찾아볼게요")은 답이 아니다
+            if any(p.text and not p.thought for p in received):  # 도구를 부르기 전에 쓴 글("찾아볼게요")은 답이 아니다
                 yield RESET
 
             parts = []
@@ -437,6 +496,7 @@ class GeminiChat:
                     else:
                         log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
                         payload = {"result": result}
+                        results.append(result)
                         line = self.toolbox.evidence(fc.name, result)
                         if line and line not in evidence:
                             evidence.append(line)

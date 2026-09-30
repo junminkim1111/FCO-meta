@@ -157,7 +157,7 @@ def test_evidence_lines(toolbox):  # noqa: F811
 
 
 def test_unsupported_numbers_flags_made_up_figures():
-    from fco_meta.chatbot.evaluate import unsupported_numbers
+    from fco_meta.chatbot.numbers import unsupported_numbers
 
     results = [{"players": [{"usage_rate": 0.5641, "rankers": 53, "price": "3억 2,000만", "change": -0.021}], "sample_size": 94}]
     answer = (

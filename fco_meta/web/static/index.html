@@ -482,6 +482,7 @@ const TOOL_STATUS = {
   query_rankers: () => "상위 10,000명 랭킹을 집계하고 있어요...",
   get_formation_overview: (a) => `${a.formation || "포메이션"} 전적을 살펴보고 있어요...`,
   get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
+  check_numbers: () => "수치를 다시 확인하고 있어요...", // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
 };
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
 let inflight = null;

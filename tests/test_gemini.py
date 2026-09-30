@@ -68,6 +68,55 @@ class Chunked(FakeModels):
         yield from self.responses.pop(0)
 
 
+def events_of(stream):
+    """All events of an ask_stream generator and the GeminiTurn it returns."""
+    events = []
+    while True:
+        try:
+            events.append(next(stream))
+        except StopIteration as stop:
+            return events, stop.value
+
+
+def test_made_up_figures_are_rewritten_once(toolbox):
+    from fco_meta.chatbot.gemini import RESET, Recheck, ToolCall
+
+    args = {"team_color": "아스날", "formation": "4-2-3-1", "role": "볼란치"}
+    call = {"function_call": {"name": "recommend_players", "args": args}}
+    rankers = json.loads(toolbox.run("recommend_players", args)[0])["players"][0]["rankers"]
+    client = FakeClient([
+        response([call]),
+        response([{"text": f"4-2-3-1이 99.9%, 랭커 {rankers}명입니다."}]),  # 99.9%는 조회 결과에 없음
+        response([{"text": f"4-2-3-1이 1위, 랭커 {rankers}명입니다."}]),
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="gemini-test")
+    events, turn = events_of(chat.ask_stream("포메이션 순위"))
+
+    assert events[:2] == [ToolCall("recommend_players", args), f"4-2-3-1이 99.9%, 랭커 {rankers}명입니다."]
+    assert events[2:] == [RESET, Recheck(["99.9%"]), f"4-2-3-1이 1위, 랭커 {rankers}명입니다."]
+    assert turn.text == f"4-2-3-1이 1위, 랭커 {rankers}명입니다."
+    request = client.models.requests[2]
+    assert "99.9%" in request["contents"][-1].parts[0].text  # 어떤 수치가 없는지 알려 준다
+    assert request["config"].tool_config.function_calling_config.mode == "NONE"  # 다시 쓸 때는 도구 없이
+    # 기록에는 고친 답만 남는다 (처음 답과 고쳐 달라는 요청은 빠짐)
+    assert chat.contents[-1].parts[0].text == turn.text
+    assert not any("99.9%" in (p.text or "") for c in chat.contents for p in c.parts or [])
+
+
+def test_backed_figures_and_tool_free_answers_are_not_rechecked(toolbox):
+    args = {"team_color": "아스날", "formation": "4-2-3-1", "role": "볼란치"}
+    call = {"function_call": {"name": "recommend_players", "args": args}}
+    rate = json.loads(toolbox.run("recommend_players", args)[0])["players"][0]["usage_rate"]
+    client = FakeClient([
+        response([call]), response([{"text": f"사용률 {rate * 100:.1f}%입니다."}]),  # 결과에 있는 비율
+        response([{"text": "안녕하세요! 예: 레알 5억 미만 공격수 추천해줘"}]),  # 도구 없이 답한 인사
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="gemini-test")
+    chat.ask("포메이션 순위")
+    chat.ask("안녕")
+    assert len(client.models.requests) == 3  # 다시 쓰기 요청 없음
+
+
 def test_answer_streams_in_pieces_and_preamble_is_reset(toolbox):
     from fco_meta.chatbot.gemini import RESET, ToolCall
 
@@ -104,6 +153,17 @@ def test_stopping_a_stream_drops_the_question(toolbox):
     assert next(stream) == "길게 "
     stream.close()  # 사용자가 정지
     assert [c.parts[0].text for c in chat.contents] == ["첫 질문", "첫 답"]
+
+
+def test_remembered_answer_is_context_for_follow_ups(toolbox):
+    client = FakeClient([response([{"text": "2위는 4-1-2-3입니다."}])])
+    chat = GeminiChat(client, toolbox, model="gemini-test")
+    chat.remember("포메이션 순위", "4-2-3-1이 1위입니다.")  # 캐시로 답한 첫 질문
+    chat.ask("2위는?")
+    sent = client.models.requests[0]["contents"]
+    assert [(c.role, c.parts[0].text) for c in sent] == [
+        ("user", "포메이션 순위"), ("model", "4-2-3-1이 1위입니다."), ("user", "2위는?"),
+    ]  # fmt: skip
 
 
 def test_follow_up_resends_only_questions_and_answers(toolbox):

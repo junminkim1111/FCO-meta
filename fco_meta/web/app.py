@@ -7,6 +7,7 @@ import logging
 import sqlite3
 import threading
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..chatbot.gemini import RESET, ToolCall, describe_error
+from ..chatbot.gemini import RESET, Recheck, ToolCall, describe_error
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 
@@ -23,12 +24,52 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_SESSIONS = 200
+MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 
 
 def _event(**fields: Any) -> str:
     """One line of the /api/chat stream (NDJSON)."""
     return json.dumps(fields, ensure_ascii=False) + "\n"
+
+
+class AnswerCache:
+    """Answers to the first question of a conversation, reused for the same question until the DB file
+    changes (daily collection, price refresh) — repeated questions cost no Gemini quota. Follow-ups are
+    not cached: their answer depends on the conversation."""
+
+    def __init__(self, db_path: Path, size: int = MAX_CACHED):
+        self.files = [db_path, db_path.with_name(db_path.name + "-wal")]
+        self.size, self.version = size, None
+        self.items: OrderedDict[str, str] = OrderedDict()
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def key(question: str) -> str:
+        # 띄어쓰기·대소문자·끝 문장부호만 무시하는 정확 일치 (뜻이 비슷한 질문은 묶지 않는다)
+        return " ".join(question.lower().split()).rstrip("?!.？！。 ")
+
+    def _check_version(self) -> None:
+        version = tuple(f.stat().st_mtime_ns for f in self.files if f.exists())
+        if version != self.version:  # 데이터가 바뀌었으면 예전 답은 버린다
+            self.items.clear()
+            self.version = version
+
+    def get(self, question: str) -> str | None:
+        with self.lock:
+            self._check_version()
+            answer = self.items.get(self.key(question))
+            if answer is not None:
+                self.items.move_to_end(self.key(question))
+            return answer
+
+    def put(self, question: str, answer: str) -> None:
+        with self.lock:
+            self._check_version()
+            self.items[self.key(question)] = answer
+            self.items.move_to_end(self.key(question))
+            if len(self.items) > self.size:
+                self.items.popitem(last=False)
 
 
 class ChatRequest(BaseModel):
@@ -51,6 +92,7 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
     toolbox = Toolbox(conn)
     gemini_tools = _LockedTools(toolbox, lock)
     rules = RuleBot(toolbox)
+    answers = AnswerCache(db_path)
     gemini_sessions: dict[str, Any] = {}
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
@@ -116,6 +158,13 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
             # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
             with busy:
+                first = not bot.contents  # 대화의 첫 질문만 캐시한다
+                cached = answers.get(req.message) if first else None
+                if cached is not None:
+                    bot.remember(req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
+                    yield _event(type="delta", text=cached)
+                    yield _event(type="done", tool_calls=[], cached=True)
+                    return
                 stream = bot.ask_stream(req.message)
                 try:
                     while True:
@@ -128,6 +177,8 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
                             yield _event(type="reset")
                         elif isinstance(piece, ToolCall):
                             yield _event(type="tool", name=piece.name, args=piece.args)
+                        elif isinstance(piece, Recheck):  # 수치를 다시 쓰는 중 (화면에는 진행 문구)
+                            yield _event(type="tool", name="check_numbers", args={})
                         else:
                             yield _event(type="delta", text=piece)
                 except Exception as exc:  # Gemini 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
@@ -140,6 +191,8 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
                     stream.close()
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
+            if first and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
+                answers.put(req.message, turn.text)
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model)
 
         return StreamingResponse(events(), media_type="application/x-ndjson")

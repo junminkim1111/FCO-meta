@@ -8,17 +8,17 @@ from fco_meta.chatbot import Toolbox  # noqa: E402
 from fco_meta.web import create_app  # noqa: E402
 
 
-def ask(client, message):
+def ask(client, message, session_id=None):
     """POST /api/chat and read the NDJSON stream → (answer as the page shows it, done event)."""
     import json
 
-    res = client.post("/api/chat", json={"message": message})
+    res = client.post("/api/chat", json={"message": message, "session_id": session_id})
     assert res.status_code == 200 and res.headers["content-type"].startswith("application/x-ndjson")
     text, events = "", [json.loads(line) for line in res.text.splitlines()]
     assert events[0]["type"] == "start" and events[-1]["type"] == "done"
     for e in events:
         text = "" if e["type"] == "reset" else text + e.get("text", "")
-    done = {**events[-1], "tools": [e for e in events if e["type"] == "tool"]}
+    done = {**events[-1], "tools": [e for e in events if e["type"] == "tool"], "session_id": events[0]["session_id"]}
     return text, done
 
 
@@ -88,6 +88,8 @@ def test_gemini_errors_show_only_a_busy_notice(db, tmp_path, monkeypatch):  # no
     import fco_meta.web.app as web_app
 
     class Broken:
+        contents: list = []
+
         def ask_stream(self, message):
             yield "쓰다가 "  # 도중에 실패해도 쓰던 글은 지우고 안내로 바꾼다
             raise errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
@@ -105,6 +107,7 @@ def test_gemini_answer_hides_evidence_and_fallback_model(db, tmp_path, monkeypat
 
     class Bot:
         model, last_model = "gemini-a", "gemini-b"  # 대체 모델로 답한 경우
+        contents: list = []
 
         def ask_stream(self, message):
             yield from ["찾아볼게요.", RESET, ToolCall("recommend_players", {"role": "DM"}), "라이스가 ", "1순위입니다."]
@@ -128,6 +131,7 @@ def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # n
 
     class SlowBot:
         model = last_model = "gemini-a"
+        contents: list = []
 
         def __init__(self, tools):
             self.tools = tools
@@ -153,3 +157,45 @@ def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # n
     assert panel == [200]
     chat.join(5)
     assert answers and answers[0]
+
+
+def test_repeated_first_question_is_answered_from_cache(db, tmp_path, monkeypatch):  # noqa: F811
+    import os
+
+    import fco_meta.web.app as web_app
+    from fco_meta.chatbot.gemini import GeminiTurn
+
+    asked = []
+
+    class Bot:
+        model = last_model = "gemini-a"
+
+        def __init__(self):
+            self.contents = []
+
+        def ask_stream(self, message):
+            asked.append(message)
+            answer = f"답 {len(asked)}"
+            self.remember(message, answer)
+            yield answer
+            return GeminiTurn(answer, [], "STOP")
+
+        def remember(self, question, answer):
+            self.contents += [question, answer]
+
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: Bot())
+    db_file = tmp_path / "db.sqlite"
+    client = TestClient(create_app(db_file, backend="gemini"))
+
+    first, _ = ask(client, "레알 5억 미만 공격수 추천해줘")
+    again, done = ask(client, "  레알 5억 미만   공격수 추천해줘?")  # 새 대화, 띄어쓰기·물음표만 다름
+    assert (first, again, done.get("cached"), len(asked)) == ("답 1", "답 1", True, 1)  # Gemini를 다시 부르지 않음
+
+    # 캐시로 답한 대화도 맥락이 남아, 이어지는 질문은 캐시 없이 모델이 답한다
+    follow, done = ask(client, "레알 5억 미만 공격수 추천해줘", session_id=done["session_id"])
+    assert follow == "답 2" and not done.get("cached")
+
+    os.utime(db_file, ns=(0, db_file.stat().st_mtime_ns + 1))  # 매일 수집 등으로 DB가 바뀌면 새로 답한다
+    fresh, done = ask(client, "레알 5억 미만 공격수 추천해줘")
+    assert fresh == "답 3" and not done.get("cached")
+
