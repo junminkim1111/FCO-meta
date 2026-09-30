@@ -22,7 +22,7 @@ web = ["fastapi>=0.115", "uvicorn>=0.30"]
 include = ["fco_meta*"]
 
 [tool.setuptools.package-data]
-"fco_meta.web" = ["static/*"]
+"fco_meta.web" = ["static/*", "static/vendor/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

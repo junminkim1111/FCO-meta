@@ -17,3 +17,6 @@ reports/
 
 # graphify knowledge graph output
 graphify-out/
+
+# local preview config (Claude Code)
+.claude/launch.json

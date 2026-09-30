@@ -50,6 +50,13 @@ def create_app(db_path: Path | str, *, backend: str = "rules", gemini_model: str
     app.state.conn = conn
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    @app.middleware("http")
+    async def revalidate(request, call_next):
+        # 브라우저가 옛 화면을 저장해 두고 쓰지 않도록 매번 확인하게 한다 (바뀌지 않았으면 304로 가볍게)
+        response = await call_next(request)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
     def tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         with lock:
             content, is_error = toolbox.run(name, tool_input)
