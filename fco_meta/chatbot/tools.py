@@ -1483,7 +1483,7 @@ class Toolbox:
         out["matchups"] = formation_matchups(self.conn, name)
         out["definitions"] = {
             "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
-            "top_ranker_squad": "스쿼드 수집 랭커 중 이 포메이션을 쓰는 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외)",
+            "top_ranker_squad": "스쿼드 수집 랭커 중 이 포메이션을 쓰는 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외, squad_value = 선발 최신 시세 합, unpriced = 시세 몰라 뺀 선수 수)",
             "best_eleven": "이 포메이션으로 실제 경기한 스쿼드들의 가장 흔한 배치에서 자리마다 가장 많이 쓰인 선수 (rankers = 그 자리 사용 수)",
             "matchups": "수집된 공식경기 중 양쪽 선발을 아는 경기의 상대 포메이션별 결과 (포메이션은 배치로 추론, 표본 작으면 참고용)",
         }
@@ -1526,7 +1526,7 @@ class Toolbox:
         out["definitions"] = {
             "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 팀컬러 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
             "formations": "그 팀컬러 랭커들이 랭킹 화면에서 쓰는 포메이션",
-            "top_ranker_squad": "스쿼드 수집 랭커 중 이 팀컬러의 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외)",
+            "top_ranker_squad": "스쿼드 수집 랭커 중 이 팀컬러의 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외, squad_value = 선발 최신 시세 합, unpriced = 시세 몰라 뺀 선수 수)",
             "best_eleven": "이 팀컬러 랭커들의 스쿼드(포메이션 무관)에서 가장 흔한 배치의 자리마다 가장 많이 쓰인 선수",
         }
         return out

@@ -10,7 +10,8 @@ from typing import Any
 
 from ..market.roles import ROLES
 from ..pipeline.formation import SUB, FormationTable
-from .query import squad_snapshot
+from ..market.money import format_bp
+from .query import _card_values, squad_snapshot
 from .usage import _POSITION_ROLE, UsageStore
 
 _PLAYERS = """
@@ -79,12 +80,17 @@ def top_ranker_squad(
     ).fetchone()
     if r is None:
         return None
+    players = [_player(p) for p in cur.execute(_PLAYERS, (r["match_id"], r["ouid"]))]
+    prices, _ = _card_values(conn, {p["sp_id"] for p in players})
+    priced = [prices[(p["sp_id"], p["grade"])] for p in players if (p["sp_id"], p["grade"]) in prices]
     return {
         "rank": r["rank"], "elo": r["elo"], "wins": r["wins"], "draws": r["draws"], "losses": r["losses"],
         "team_color": r["team_color_name"], "played_formation": r["inferred_formation"],
         "formation_match": bool(r["formation_match"]), "result": r["match_result"], "score": _score(conn, r["match_id"], r["ouid"]),
         "match_date": r["match_date"], "data_as_of": as_of,
-        "players": [_player(p) for p in cur.execute(_PLAYERS, (r["match_id"], r["ouid"]))],
+        # 선발 11명의 최신 시세 합 (시세를 모르는 선수는 빼고, 그 수는 unpriced)
+        "squad_value": format_bp(sum(priced)) if priced else None, "unpriced": len(players) - len(priced),
+        "players": players,
     }  # fmt: skip
 
 

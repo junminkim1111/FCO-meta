@@ -433,7 +433,9 @@ function renderPitchArea(d) {
                         pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
       // 포메이션 보기는 팀컬러를, 팀컬러 보기는 그 경기 배치를 함께 보여 준다
       const side = d.formation ? top.team_color || "팀컬러 미상" : top.played_formation || "배치 미상";
-      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${side} · ELO ${Math.round(top.elo)}` })];
+      // 구단가치 = 선발 11명 최신 시세 합. 시세를 모르는 선수가 있으면 그만큼 빠져 있어 "이상"
+      const value = top.squad_value ? ` · 구단가치 ${top.squad_value}${top.unpriced ? " 이상" : ""}` : "";
+      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${side}${value} · ELO ${Math.round(top.elo)}` })];
       if (d.formation && !top.formation_match)
         out.push(el("div", { class: "notice", text: `이 경기 실제 배치는 ${top.played_formation || "알 수 없음"}입니다 (랭킹 표시는 ${d.formation}).` }));
       out.push(pitch(top.players, "", (p) => (p.rating != null ? ` · 평점 ${p.rating}` : "")));
@@ -442,7 +444,8 @@ function renderPitchArea(d) {
     best: () => {
       if (!best) return [el("p", { class: "caption", text: d.formation ? "이 포메이션으로 실제 경기한 스쿼드가 아직 없습니다." : "스쿼드 수집 랭커 중 이 팀컬러 랭커가 아직 없습니다." }),
                          pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
-      return [pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
+      // 최상위 랭커 스쿼드의 캡션 줄만큼 띄워 버튼과 경기장 사이 간격을 맞춘다
+      return [el("p", { class: "caption", text: "\u00a0" }), pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
     },
   };
   const body = el("div");

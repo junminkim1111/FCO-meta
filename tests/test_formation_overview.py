@@ -24,6 +24,18 @@ def test_overview_ranking_squads_and_matchups(tmp_path, fixture_html):
     first = min(t.rank for t in targets if t.formation == "4-2-3-1")
     assert top["rank"] == first and top["formation_match"] and len(top["players"]) == 11
     assert {p["position"] for p in top["players"]} == {0, 3, 4, 6, 7, 9, 11, 17, 18, 19, 25}
+    assert (top["squad_value"], top["unpriced"]) == (None, 11)  # 시세 전
+
+    # 구단가치 = 선발 중 시세를 아는 선수(카드·강화)의 최신 시세 합
+    a, b = top["players"][:2]
+    storage.conn.executemany(
+        "INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (?, ?, ?, ?)",
+        [(a["sp_id"], a["grade"], 1, "2026-09-27"), (a["sp_id"], a["grade"], 100_000_000, "2026-09-28"),
+         (b["sp_id"], b["grade"], 50_000_000, "2026-09-28"), (b["sp_id"], b["grade"] + 1, 9, "2026-09-28")],
+    )  # fmt: skip
+    content, _ = Toolbox(storage.conn).run("get_formation_overview", {"formation": "4231"})
+    top = json.loads(content)["top_ranker_squad"]
+    assert (top["squad_value"], top["unpriced"]) == ("1억 5,000만", 9)
 
     best = d["best_eleven"]
     squads = sum(t.formation == "4-2-3-1" for t in targets)
