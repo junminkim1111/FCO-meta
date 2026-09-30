@@ -105,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"많이 쓰는 선수 {r.players}명 중 {r.requests}명 시세 갱신 (사용 시즌 카드 {r.cards}장 / 검색된 {r.cards_seen}장),"
                     f" 최근 갱신이라 건너뜀 {r.skipped_fresh}명" + (f", 실패 {r.failed}명" if r.failed else "")
+                    + (f", 다음 실행으로 미룸 {r.deferred}명" if r.deferred else "")
                 )
                 return 0
 

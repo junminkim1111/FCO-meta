@@ -78,3 +78,28 @@ def test_no_stats_means_nothing_to_refresh(tmp_path, fixture_html):
     searched = []
     r = refresh_used_prices(datacenter(fixture_html, searched), tmp_path / "empty.sqlite")
     assert r.players == 0 and searched == []
+
+
+def test_refresh_in_tiers_with_a_cap(tmp_path, fixture_html, monkeypatch):
+    """많이 쓰는 선수는 매일, 나머지는 주 1회 (시세 없는 선수 먼저), 한 번에 max_requests명까지."""
+    from fco_meta.market import refresh
+
+    storage, _, _ = setup(tmp_path, fixture_html, top=10)
+    with_names(storage)
+    db, searched = tmp_path / "db.sqlite", []
+    now = datetime(2026, 9, 29, 1, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(refresh, "HOT_PLAYERS", 1)  # 골키퍼만 '많이 쓰는 선수'
+
+    first = refresh_used_prices(datacenter(fixture_html, searched), db, limit=3, max_requests=2, now=now)
+    assert searched == ["골키퍼", "센터백R"] and first.deferred == 1  # 많이 쓰는 선수 먼저, 세 번째는 다음으로
+
+    # 하루 뒤: 골키퍼(매일)는 다시 받는다
+    searched.clear()
+    refresh_used_prices(datacenter(fixture_html, searched), db, limit=3, now=now + timedelta(hours=21))
+    assert "골키퍼" in searched
+
+    # 골키퍼가 '나머지'면 일주일이 지나기 전에는 다시 받지 않는다
+    monkeypatch.setattr(refresh, "HOT_PLAYERS", 0)
+    searched.clear()
+    rest = refresh_used_prices(datacenter(fixture_html, searched), db, limit=3, now=now + timedelta(days=3))
+    assert "골키퍼" not in searched and rest.skipped_fresh >= 1

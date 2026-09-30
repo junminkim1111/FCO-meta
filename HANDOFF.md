@@ -80,7 +80,7 @@ python -m fco_meta.daily rank                                                 # 
 ```
 fco_meta/
   crawler/     데이터센터 랭킹 크롤러 (rank_inner), 팀컬러 목록, membership.py(표시 팀컬러·엠블럼으로 소속 추정)
-  market/      시세 크롤러 (선수 검색 PlayerList, 시세 이력), refresh.py(쓰인 선수 전부 시세·급여, 쓰인 시즌 카드만),
+  market/      시세 크롤러 (선수 검색 PlayerList, 시세 이력), refresh.py(쓰인 선수 시세·급여, 쓰인 시즌 카드만. 많이 쓰는 500명은 매일·나머지 주 1회·한 번에 1,500명까지),
                details.py(카드 팝업 PlayerPreView → card_detail: 능력치·신체·특성, 30일 유지)
   openapi/     Open API 클라이언트 (초당 제한, CallBudget = api_usage 테이블에 KST 일자별 사용량, 재시도)
   pipeline/    닉네임→ouid→user/match→match-detail로 스쿼드 수집, 포지션 조합→포메이션 추론
@@ -96,7 +96,7 @@ tests/         pytest (네트워크 없음, fixtures/openapi/는 익명화된 �
 ### 주요 명령
 
 ```bash
-python -m fco_meta.daily run [--top 300 --no-wait --ranker-stats-calls 30 --price-players 2000 --detail-cards 600 -v]   # 매일 수집
+python -m fco_meta.daily run [--top 1000 --no-wait --ranker-stats-calls 200 --price-requests 1500 --detail-cards 600 -v]   # 매일 수집
 python -m fco_meta.daily status
 python -m fco_meta.daily schedule --at 00:00                                 # KST 자정마다 실행 (프로세스 상주)
 python -m fco_meta.pipeline squads --top 300 | meta | budget | formations | ranker-stats

@@ -4,6 +4,10 @@ The datacenter search can't look up a card by spid, but a full player name retur
 card of that player with its 1~13강 prices and salary. So: take the used players from `usage_stats`
 (all rankers, all formations), search each by name (one request per player), keep only the season
 cards rankers actually used, and skip players refreshed recently.
+
+Refreshed in tiers so the run stays about the same length as the ranker count grows (10,000 rankers use
+thousands of players at ~2 s each): the HOT_PLAYERS most used every day, the rest once a week (never-priced
+first, then the oldest), at most `max_requests` searches per run — the rest wait for the next run.
 """
 
 from __future__ import annotations
@@ -21,8 +25,11 @@ from .storage import MarketStorage
 
 log = logging.getLogger(__name__)
 
-DEFAULT_PLAYERS = 2000  # 사실상 수집된 랭커가 쓴 선수 전부 (300명 × 선발 11명 → 보통 수백 명, 선수당 약 2초)
-MAX_AGE = timedelta(hours=20)  # 이보다 최근에 받은 선수는 다시 받지 않음 (매일 실행 기준)
+DEFAULT_PLAYERS = 10_000  # 살펴볼 '많이 쓰는 선수' 수 = 사실상 쓰인 선수 전부
+HOT_PLAYERS = 500  # 이만큼 많이 쓰이는 선수는 매일 갱신
+MAX_AGE = timedelta(hours=20)  # 많이 쓰는 선수: 이보다 최근에 받았으면 다시 받지 않음 (매일 실행 기준)
+REST_MAX_AGE = timedelta(days=7)  # 나머지 선수: 일주일에 한 번
+MAX_REQUESTS = 1500  # 한 번 실행에 보낼 최대 검색 수 (선수당 약 2초 → 약 50분), 남으면 다음 실행으로
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,7 @@ class RefreshResult:
     cards_seen: int = 0  # 검색 응답에 온 카드 (그 선수의 모든 시즌)
     skipped_fresh: int = 0
     failed: int = 0
+    deferred: int = 0  # 갱신할 때가 됐지만 max_requests를 넘어 다음 실행으로 넘긴 선수
 
 
 def used_players(conn: sqlite3.Connection, limit: int = DEFAULT_PLAYERS, data_as_of: str | None = None) -> list[UsedPlayer]:
@@ -63,16 +71,15 @@ def used_players(conn: sqlite3.Connection, limit: int = DEFAULT_PLAYERS, data_as
     return [UsedPlayer(pid, name, n, tuple(int(x) for x in ids.split(","))) for pid, name, n, ids in rows]
 
 
-def _fresh(conn: sqlite3.Connection, player: UsedPlayer, now: datetime) -> bool:
-    """All cards rankers used already have a price fetched within MAX_AGE."""
+def _oldest_price(conn: sqlite3.Connection, player: UsedPlayer) -> datetime | None:
+    """When the stalest of the player's used cards was priced; None if some card has no price yet."""
     marks = ",".join("?" * len(player.sp_ids))
-    row = conn.execute(
+    count, oldest = conn.execute(
         f"SELECT COUNT(DISTINCT spid), MIN(last) FROM (SELECT spid, MAX(fetched_at) AS last FROM card_price"
         f" WHERE spid IN ({marks}) GROUP BY spid)",
         player.sp_ids,
     ).fetchone()
-    count, oldest = row
-    return count == len(player.sp_ids) and oldest is not None and datetime.fromisoformat(oldest) >= now - MAX_AGE
+    return datetime.fromisoformat(oldest) if count == len(player.sp_ids) and oldest else None
 
 
 def refresh_used_prices(
@@ -80,9 +87,10 @@ def refresh_used_prices(
     db_path,
     *,
     limit: int = DEFAULT_PLAYERS,
+    max_requests: int = MAX_REQUESTS,
     now: datetime | None = None,
 ) -> RefreshResult:
-    """Fetch current prices of the `limit` most used players (one datacenter request each)."""
+    """Fetch current prices of the most used players that are due (one datacenter request each)."""
     now = now or datetime.now(timezone.utc)
     storage = MarketStorage(db_path)
     result = RefreshResult()
@@ -90,10 +98,17 @@ def refresh_used_prices(
         storage.conn.executescript(MARKET_SCHEMA)
         players = used_players(storage.conn, limit)
         result.players = len(players)
-        for p in players:
-            if _fresh(storage.conn, p, now):
+        due = []  # (순서 키, 선수): 많이 쓰는 선수(사용 순) → 시세가 없는 선수 → 가장 오래된 선수
+        for i, p in enumerate(players):
+            hot = i < HOT_PLAYERS
+            oldest = _oldest_price(storage.conn, p)
+            if oldest is not None and oldest >= now - (MAX_AGE if hot else REST_MAX_AGE):
                 result.skipped_fresh += 1
-                continue
+            else:
+                due.append(((0, 0, "", i) if hot else (1, oldest is not None, oldest.isoformat() if oldest else "", i), p))
+        due.sort(key=lambda d: d[0])
+        result.deferred = max(len(due) - max_requests, 0)
+        for _, p in due[:max_requests]:
             try:
                 cards = fetch_cards(client, PlayerSearch(name=p.name))
             except Exception as exc:  # 한 선수 실패로 전체를 멈추지 않음

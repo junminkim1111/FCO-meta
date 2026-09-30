@@ -35,7 +35,7 @@ from .crawler.membership import record_displayed_membership
 from .crawler.models import PAGE_SIZE
 from .crawler.teamcolors import TeamColorCatalog
 from .market.details import DEFAULT_CARDS, DetailResult, refresh_card_details
-from .market.refresh import DEFAULT_PLAYERS, RefreshResult, refresh_used_prices
+from .market.refresh import DEFAULT_PLAYERS, MAX_REQUESTS, RefreshResult, refresh_used_prices
 from .market.storage import SCHEMA as MARKET_SCHEMA
 from .openapi import CallBudget, NexonOpenApiClient
 from .pipeline import FormationTable, PipelineStore, SquadCollector, select_top_targets
@@ -95,7 +95,8 @@ class DailyReport:
             [
                 f"시세: 많이 쓰는 선수 {self.prices.players}명 중 {self.prices.requests}명 갱신"
                 f" (사용 시즌 카드 {self.prices.cards}장, 최근 갱신이라 건너뜀 {self.prices.skipped_fresh}명"
-                + (f", 실패 {self.prices.failed}명" if self.prices.failed else "") + ")"
+                + (f", 실패 {self.prices.failed}명" if self.prices.failed else "")
+                + (f", 다음 실행으로 미룸 {self.prices.deferred}명" if self.prices.deferred else "") + ")"
             ]
             if self.prices
             else []
@@ -122,6 +123,7 @@ def run_daily(
     run_budget: int | None = None,
     datacenter: DatacenterClient | None = None,
     price_players: int = DEFAULT_PLAYERS,
+    price_requests: int = MAX_REQUESTS,
     detail_cards: int = DEFAULT_CARDS,
     ranker_stats_calls: int = RANKER_STATS_CALLS,
     api: NexonOpenApiClient | None = None,
@@ -206,7 +208,7 @@ def run_daily(
         # 7. 많이 쓰이는 선수 시세 (데이터센터, 넥슨 API 한도와 무관)
         if price_players > 0:
             try:
-                report.prices = refresh_used_prices(datacenter, db, limit=price_players)
+                report.prices = refresh_used_prices(datacenter, db, limit=price_players, max_requests=price_requests)
             except Exception as exc:  # 시세 실패가 수집 결과를 막지 않게
                 log.warning("price refresh failed: %s", exc)
 
@@ -324,7 +326,11 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--no-wait", action="store_true", help="API 반영 지연(2시간)을 기다리지 않음")
     common.add_argument(
         "--price-players", type=int, default=DEFAULT_PLAYERS,
-        help=f"시세를 갱신할 '많이 쓰는 선수' 수 (기본 {DEFAULT_PLAYERS} = 사실상 쓰인 선수 전부, 0이면 생략, 선수당 2초)",
+        help=f"시세를 살펴볼 '많이 쓰는 선수' 수 (기본 {DEFAULT_PLAYERS} = 사실상 쓰인 선수 전부, 0이면 생략)",
+    )  # fmt: skip
+    common.add_argument(
+        "--price-requests", type=int, default=MAX_REQUESTS,
+        help=f"한 번 실행에 시세를 받을 최대 선수 수 (기본 {MAX_REQUESTS}, 선수당 약 2초. 상위 500명은 매일, 나머지는 주 1회)",
     )  # fmt: skip
     common.add_argument(
         "--ranker-stats-calls", type=int, default=RANKER_STATS_CALLS,
@@ -353,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
             report = run_daily(
                 args.db, top=args.top, rank_top=args.rank_top, wait_lag=not args.no_wait, daily_limit=args.daily_limit,
                 per_second=args.rps,
-                price_players=args.price_players, detail_cards=args.detail_cards,
+                price_players=args.price_players, price_requests=args.price_requests, detail_cards=args.detail_cards,
                 ranker_stats_calls=args.ranker_stats_calls,
             )  # fmt: skip
         except ValueError as exc:  # NEXON_API_KEY 없음 등
