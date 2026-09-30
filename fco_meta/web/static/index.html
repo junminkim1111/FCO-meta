@@ -26,13 +26,12 @@
          font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
          -webkit-font-smoothing: antialiased; }
   /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
-  header { display: flex; align-items: center; gap: 14px; padding: 12px 2px 4px; }
+  header { display: flex; align-items: center; gap: 14px; height: var(--head-h); padding: 0 2px; }
   header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
                   display: flex; align-items: center; justify-content: center; flex: none; }
   header h1 { margin: 0; line-height: 0; }
-  header h1 svg { height: 26px; width: auto; }
-  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
+  header h1 svg { height: 28px; width: auto; }
+  main { --head-h: 60px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
          max-width: 1640px; margin: 0 auto; padding: 16px; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -77,7 +76,7 @@
   .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 5px 14px; }
   .seg button.on { background: var(--panel-strong); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .caption { font-size: 13px; color: var(--muted); margin: 10px 0; }
-  .pitch { position: relative; width: 100%; max-width: 380px; aspect-ratio: 68 / 88; margin: 0 auto; border-radius: 14px; overflow: hidden;
+  .pitch { position: relative; width: 100%; max-width: 494px; aspect-ratio: 68 / 88; margin: 0 auto; border-radius: 14px; overflow: hidden;
            border: 1px solid var(--line);
            background: radial-gradient(120% 80% at 50% 0%, rgba(99, 102, 241, .18), transparent 70%),
                        repeating-linear-gradient(180deg, #11151c 0 11.1%, #0e1218 11.1% 22.2%); }
@@ -88,16 +87,24 @@
   .pitch .box { position: absolute; left: 26%; right: 26%; height: 14%; border: 1px solid rgba(255, 255, 255, .16); }
   .pitch .box.top { top: 4%; border-top: 0; } .pitch .box.bottom { bottom: 4%; border-bottom: 0; }
   .pp { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; width: 22%; }
-  .pp .ph { position: relative; width: 44px; height: 44px; border-radius: 50%; background: #1a1d24; overflow: hidden;
+  .pp .pw { position: relative; } /* 사진 틀: 강화 표시는 둥근 사진 밖으로 나와도 보이도록 사진 옆에 둔다 */
+  .pp .ph { width: 57px; height: 57px; border-radius: 50%; background: #1a1d24; overflow: hidden;
             display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700;
             border: 1px solid var(--line-strong); box-shadow: 0 0 18px rgba(99, 102, 241, .25); }
   .pp .ph img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
-  .pp .gr { position: absolute; right: -4px; bottom: -2px; background: #0b0b0d; color: #ffd24a; font-size: 10px; font-weight: 700;
-            border: 1px solid var(--line-strong); border-radius: 6px; padding: 0 4px; line-height: 14px; }
-  .pp .nm { margin-top: 3px; max-width: 100%; font-size: 11px; color: var(--text); text-align: center; white-space: nowrap; overflow: hidden;
+  /* 강화 표시: 데이터센터와 같은 색 (1강 회색 · 2~4 동 · 5~7 은 · 8~10 금 · 11~ 백금 무늬) */
+  .pp .gr { position: absolute; right: -5px; bottom: -3px; z-index: 1; font-size: 13px; font-weight: 900; border-radius: 3px;
+            padding: 0 5px; line-height: 18px; box-shadow: 0 1px 4px rgba(0, 0, 0, .6);
+            background: linear-gradient(140deg, #51545a, #42464d); color: #c5c8c9; }
+  .pp .gr.bronze { background: linear-gradient(140deg, #de946b, #ad5f42); color: #7e3f27; }
+  .pp .gr.silver { background: linear-gradient(140deg, #d8d9dc, #b8bdca); color: #4e545e; }
+  .pp .gr.gold { background: linear-gradient(140deg, #f9dd62, #dca908); color: #695100; }
+  .pp .gr.platinum { background: #dfe3f5 url(https://ssl.nexon.com/s2/game/fc/online/obt/datacenter/bg_plt.png) 0 0 / 100% 100%; color: #2d2b43; }
+  .pp .nm { margin-top: 4px; max-width: 100%; font-size: 14px; color: var(--text); text-align: center; white-space: nowrap; overflow: hidden;
             text-overflow: ellipsis; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); display: flex; align-items: center; gap: 2px; }
-  .pp .nm img { height: 11px; }
-  @media (max-width: 520px) { .pp .ph { width: 34px; height: 34px; } .pp .nm { font-size: 10px; } }
+  .pp .nm img { height: 14px; }
+  @media (max-width: 520px) { .pp .ph { width: 34px; height: 34px; } .pp .nm { font-size: 10px; } .pp .nm img { height: 11px; }
+                              .pp .gr { font-size: 10px; line-height: 14px; padding: 0 4px; } }
   .empty-pitch { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); padding: 20%; font-size: 13px; height: 100%; }
   .mu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; font-size: 13px; }
   .mu .f { font-variant-numeric: tabular-nums; }
@@ -119,10 +126,16 @@
          padding: 6px 9px; border-radius: 8px; white-space: pre; z-index: 10; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
 
   /* chat */
+  /* 오른쪽 칸: 로고 줄 높이만큼 위에 수집 범위를 두어 챗봇 칸 윗선을 왼쪽 포메이션 칸과 맞춘다 */
+  .side { display: flex; flex-direction: column; min-width: 0; }
+  #asof { height: calc(var(--head-h) + 16px); margin: 0; padding: 0 4px 6px; display: flex; align-items: flex-end; justify-content: flex-end;
+          color: var(--muted); font-size: 13px; }
+  @media (max-width: 860px) { #asof { height: auto; justify-content: flex-start; padding: 0 2px 8px; } }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 10px; max-height: 60vh; }
   /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
-  @media (min-width: 861px) { #chat { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); } #log { max-height: none; } }
+  @media (min-width: 861px) { .side { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); }
+                              #chat { flex: 1; min-height: 0; } #log { max-height: none; } }
   .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
   .msg.me { align-self: flex-end; background: var(--text); color: #0b0b0d; border-bottom-right-radius: 4px; }
   .msg.bot { align-self: flex-start; background: var(--panel-strong); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
@@ -153,10 +166,7 @@
              animation: shimmer 2.2s linear infinite; }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
   @media (prefers-reduced-motion: reduce) { .shimmer { animation: none; color: var(--muted); background: none; } }
-  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
-  .examples button { background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); font-weight: 500; font-size: 12px; padding: 5px 12px; }
-  .examples button:hover { border-color: var(--line-strong); opacity: 1; }
-  #chat form { display: flex; gap: 8px; align-items: flex-end; }
+  #chat form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
   #msg-beam { flex: 1; display: flex; min-width: 0; }
   #chat form textarea { flex: 1; }
 </style>
@@ -168,23 +178,21 @@
     <div class="brand"><canvas id="brand-orb" width="32" height="32" aria-hidden="true"></canvas></div>
     <div>
       <!-- FCLM 로고: 획으로 그린 글자, C는 센터서클과 센터스폿 -->
-      <h1><svg viewBox="0 0 80 24" role="img" aria-label="FCLM"><title>FCLM</title>
+      <h1><svg viewBox="-1 -1 84 26" role="img" aria-label="FCLM"><title>FCLM</title>
         <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" stop-color="#c7d2fe"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient></defs>
-        <g fill="none" stroke="url(#logo-g)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+        <g fill="none" stroke="url(#logo-g)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 22V2h12M2 11.5h9"/>
-          <path d="M36.07 4.93A10 10 0 1 0 36.07 19.07"/>
-          <path d="M42 2v20h11"/>
-          <path d="M59 22V2l9 12 9-12v20"/>
+          <path d="M38.07 4.93A10 10 0 1 0 38.07 19.07"/>
+          <path d="M44 2v20h11"/>
+          <path d="M62 22V2l9 12 9-12v20"/>
         </g>
-        <circle cx="29" cy="12" r="2.2" fill="#a5b4fc"/>
+        <circle cx="31" cy="12" r="2.6" fill="#a5b4fc"/>
       </svg></h1>
-      <p id="asof">데이터 불러오는 중…</p>
     </div>
   </header>
   <section aria-labelledby="form-title">
     <h2 id="form-title">포메이션 분포 <span id="form-scope" class="stat"></span></h2>
     <div id="fchart" class="fchart"></div>
-    <p id="form-foot" class="foot"></p>
   </section>
 
   <section id="fdetail" aria-live="polite">
@@ -192,15 +200,17 @@
   </section>
   </div>
 
+  <div class="side">
+  <p id="asof">데이터 불러오는 중…</p>
   <section id="chat" aria-labelledby="chat-title">
     <h2 id="chat-title">FCLM</h2>
     <div id="log" aria-live="polite"></div>
-    <div class="examples" id="examples"></div>
     <form id="chat-form">
-      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요 — 예: 레알 5억 미만 공격수 추천해줘 (줄바꿈은 Shift+Enter)"></textarea></div>
+      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea></div>
       <button type="submit" id="send">보내기</button>
     </form>
   </section>
+  </div>
 </main>
 <div id="tip" hidden></div>
 
@@ -274,7 +284,6 @@ async function loadFormations() {
     const forms = d.formations || [];
     if (!forms.length) {
       box.replaceChildren(el("p", { class: "stat", text: d.note || "랭킹 스냅샷이 없습니다." }));
-      $("form-foot").textContent = "";
       return;
     }
     const shown = forms.slice(0, MAX_BARS);
@@ -294,7 +303,6 @@ async function loadFormations() {
       rows.push(el("span", { class: "other", text: `그 외 ${rest.length}개 포메이션 ${n}명` }));
     }
     box.replaceChildren(...rows);
-    $("form-foot").textContent = `${d.note || ""} · ${asOf(d.data_as_of)} · 막대를 누르면 아래에 그 포메이션 정보가 나옵니다`;
     showFormation(shown[0].formation);
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
@@ -315,8 +323,8 @@ function photo(p) {
     box.replaceChildren(img);
   };
   next();
-  if (p.grade) box.append(el("span", { class: "gr", text: String(p.grade) }));
-  return box;
+  const g = p.grade, tier = g >= 11 ? "platinum" : g >= 8 ? "gold" : g >= 5 ? "silver" : g >= 2 ? "bronze" : "";
+  return el("div", { class: "pw" }, box, g ? el("span", { class: "gr " + tier, text: String(g) }) : null);
 }
 
 // spposition 코드 → 경기장 위치 [x%, y%] (위쪽이 공격 방향, 오른쪽이 R 포지션)
@@ -341,7 +349,7 @@ function pitch(players, emptyText, detailOf) {
     const short = (p.name || "?").split(" ").pop();
     const icon = p.season_img ? el("img", { src: p.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
     const node = el("div", { class: "pp", style: `left:${x}%;top:${y}%` }, photo(p), el("div", { class: "nm" }, icon, short));
-    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)} · ${p.grade ?? "-"}강${detailOf(p)}`);
+    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}`);
     box.append(node);
   }
   return box;
@@ -359,9 +367,7 @@ function renderPitchArea(d) {
     top: () => {
       if (!top) return [el("p", { class: "caption", text: "스쿼드 수집 랭커 중 이 포메이션을 쓰는 랭커가 아직 없습니다." }),
                         pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
-      const rec = top.wins != null ? ` · 시즌 ${top.wins}승 ${top.draws}무 ${top.losses}패` : "";
-      const res = top.result ? ` · 이 경기 ${top.result}${top.score ? " " + top.score : ""}` : "";
-      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${top.team_color || "팀컬러 미상"} · ELO ${Math.round(top.elo)}${rec}${res}` })];
+      const out = [el("p", { class: "caption", text: `${top.rank}위 랭커 · ${top.team_color || "팀컬러 미상"} · ELO ${Math.round(top.elo)}` })];
       if (!top.formation_match)
         out.push(el("div", { class: "notice", text: `이 경기 실제 배치는 ${top.played_formation || "알 수 없음"}입니다 (랭킹 표시는 ${d.formation}).` }));
       out.push(pitch(top.players, "", (p) => (p.rating != null ? ` · 평점 ${p.rating}` : "")));
@@ -370,8 +376,7 @@ function renderPitchArea(d) {
     best: () => {
       if (!best) return [el("p", { class: "caption", text: "이 포메이션으로 실제 경기한 스쿼드가 아직 없습니다." }),
                          pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
-      return [el("p", { class: "caption", text: `이 포메이션으로 경기한 랭커 ${best.squads}명 · 자리마다 가장 많이 쓴 선수 (가장 흔한 배치 ${best.layout_squads}명)` }),
-              pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
+      return [pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
     },
   };
   const body = el("div");
@@ -407,7 +412,7 @@ function renderMatchups(m) {
     el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:var(--win)" }), "승"),
        el("span", {}, el("i", { style: "background:var(--draw)" }), "무"), el("span", {}, el("i", { style: "background:var(--loss)" }), "패")),
     el("div", { class: "mu" }, ...rows),
-    el("p", { class: "foot", text: `수집된 공식경기 ${m.games}경기 기준 (상대 포메이션은 선발 배치로 추론). 경기 수가 적으면 참고용입니다.` }),
+    el("p", { class: "foot", text: `수집된 공식경기 ${m.games}경기 기준` }),
   ];
 }
 
@@ -445,7 +450,6 @@ async function showFormation(name) {
         el("div", {}, el("h3", { text: "많이 쓰는 팀컬러" }), teams),
         el("div", {}, el("h3", { text: "순위 구간별 사용 비율" }), bands)));
     }
-    out.push(el("p", { class: "foot", text: `랭킹 ${asOf(d.data_as_of)} · 스쿼드·경기 기록은 매일 상위 300명 수집분` }));
     box.replaceChildren(...out);
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
@@ -469,7 +473,6 @@ function setBusy(ctrl) {
   $("send").type = ctrl ? "button" : "submit";
   $("send").textContent = ctrl ? "■ 정지" : "보내기";
   $("send").setAttribute("aria-label", ctrl ? "답변 정지" : "보내기");
-  for (const b of $("examples").children) b.disabled = !!ctrl;
 }
 $("send").addEventListener("click", (ev) => {
   if (!inflight) return;
@@ -521,12 +524,11 @@ $("chat-form").addEventListener("submit", (ev) => {
   $("msg").value = "";
   send(text);
 });
-for (const q of ["4-2-3-1 쓰는 랭커들 베스트 11 알려줘", "레알 5억 미만 공격수 추천해줘", "상위 10000명 기준 승률 높은 포메이션은?",
-                 "라이스랑 수비멘디 비교해줘"]) {
-  const b = el("button", { type: "button", text: q });
-  b.addEventListener("click", () => send(q));
-  $("examples").append(b);
-}
+// 입력창 안내: 예시 질문(static/examples.txt) 중 하나를 무작위로
+fetch("/static/examples.txt").then((r) => r.text()).then((t) => {
+  const qs = t.split("\n").filter((q) => q.trim());
+  $("msg").placeholder = `예: ${qs[Math.floor(Math.random() * qs.length)]}`;
+}).catch(() => {});
 say("bot", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
 mountOrb($("brand-orb"), "solving", 32);

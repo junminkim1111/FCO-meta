@@ -72,14 +72,14 @@ def top_ranker_squad(conn: sqlite3.Connection, formation: str, mode: str = "1vs1
 
 def best_eleven(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> dict[str, Any] | None:
     """Most used player at each position of the most common layout, over the latest snapshot's squads
-    that actually played `formation`."""
+    that actually played `formation`. Counted per player and card regardless of grade (no grade shown)."""
     as_of = squad_snapshot(conn, mode=mode)
     if as_of is None:
         return None
     cur = conn.cursor()
     cur.row_factory = sqlite3.Row
     rows = cur.execute(
-        "SELECT q.rank, p.sp_position, p.pid, p.sp_id, p.sp_grade FROM ranker_squad q"
+        "SELECT q.rank, p.sp_position, p.pid, p.sp_id FROM ranker_squad q"
         " JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
         " JOIN match_player p ON p.match_id = q.match_id AND p.ouid = q.ouid AND p.starter = 1"
         " WHERE q.data_as_of = ? AND q.mode = ? AND q.match_order = 0 AND q.accepted = 1 AND q.formation_match = 1"
@@ -89,12 +89,10 @@ def best_eleven(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") ->
     squads: dict[int, list[int]] = defaultdict(list)
     at: dict[int, Counter[int]] = defaultdict(Counter)  # 포지션 → 선수(pid)별 사용 수
     cards: dict[tuple[int, int], Counter[int]] = defaultdict(Counter)
-    grades: dict[tuple[int, int], Counter[int]] = defaultdict(Counter)
     for r in rows:
         squads[r["rank"]].append(r["sp_position"])
         at[r["sp_position"]][r["pid"]] += 1
         cards[(r["sp_position"], r["pid"])][r["sp_id"]] += 1
-        grades[(r["sp_position"], r["pid"])][r["sp_grade"]] += 1
     layouts = Counter(tuple(sorted(p)) for p in squads.values() if len(p) == 11)
     if not layouts:
         return None
@@ -115,7 +113,7 @@ def best_eleven(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") ->
         players.append({
             "sp_id": sp_id, "pid": pid, "position": pos, "name": p["name"] if p else None,
             "season": p["class_name"] if p else None, "season_img": (p["season_img"] or None) if p else None,
-            "grade": grades[(pos, pid)].most_common(1)[0][0], "rankers": at[pos][pid],
+            "rankers": at[pos][pid],
         })  # fmt: skip
     return {"squads": len(squads), "layout": list(layout), "layout_squads": layouts[layout], "data_as_of": as_of, "players": players}
 

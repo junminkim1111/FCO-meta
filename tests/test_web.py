@@ -24,6 +24,8 @@ def test_index_and_static(client):
     assert res.status_code == 200 and "<title>FCLM</title>" in res.text and "/api/formation?" in res.text
     assert res.headers["cache-control"] == "no-cache"  # 수정한 화면이 바로 보이게
     assert client.get("/static/orb.js").headers["cache-control"] == "no-cache"
+    examples = [q for q in client.get("/static/examples.txt").text.splitlines() if q.strip()]  # 입력창 예시 질문
+    assert len(examples) >= 30
 
 
 def test_meta(client):

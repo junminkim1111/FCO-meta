@@ -30,6 +30,7 @@ def test_overview_ranking_squads_and_matchups(tmp_path, fixture_html):
     assert best["squads"] == squads and len(best["players"]) == 11
     st = next(p for p in best["players"] if p["position"] == 25)
     assert (st["name"], st["rankers"]) == ("스트라이커", squads)
+    assert all("grade" not in p for p in best["players"])  # 베스트 11은 강화와 상관없이 선수·카드로만 센다
 
     # 모든 테스트 경기: 랭커 4-2-3-1(승) vs 상대 4-4-2(패)
     (vs,) = d["matchups"]["opponents"]
