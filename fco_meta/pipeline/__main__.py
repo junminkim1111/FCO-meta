@@ -2,7 +2,7 @@
 
     python -m fco_meta.pipeline meta                                   # spid/seasonid/spposition 메타데이터 저장
     python -m fco_meta.pipeline squads --team-color 아스널 --formation 4-2-3-1 --budget 300
-    python -m fco_meta.pipeline squads --top 300                       # 필터 없는 랭킹 상위 300명
+    python -m fco_meta.pipeline squads --top 1000                      # 필터 없는 랭킹 상위 1,000명
     python -m fco_meta.pipeline formations --save                     # 포지션 조합 → 포메이션 표 갱신
     python -m fco_meta.pipeline budget                                 # 오늘 호출 수
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -31,8 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.pipeline")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--daily-limit", type=int, default=1000, help="일일 호출 한도 (개발 키 1,000)")
-    parser.add_argument("--rps", type=int, default=5, help="초당 최대 호출 수 (개발 키 5)")
+    parser.add_argument("--daily-limit", type=int, default=int(os.environ.get("NEXON_DAILY_LIMIT", 1000)),
+                        help="일일 호출 한도 (.env NEXON_DAILY_LIMIT, 개발 키 1,000)")  # fmt: skip
+    parser.add_argument("--rps", type=int, default=int(os.environ.get("NEXON_RPS", 5)),
+                        help="초당 최대 호출 수 (.env NEXON_RPS, 개발 키 5)")  # fmt: skip
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 

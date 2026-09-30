@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS ranker_stats (
 """
 
 STOPS = {BudgetExceededError: "budget", MaintenanceError: "maintenance", RateLimitError: "rate_limit"}
-DEFAULT_CALLS = 30  # 한 번 실행에 쓸 최대 호출 (1회 50쌍 → 1,500쌍)
+DEFAULT_CALLS = 200  # 한 번 실행에 쓸 최대 호출 (1회 50쌍 → 10,000쌍). 남은 일일 예산의 10%를 넘지 않는다
 MAX_AGE = timedelta(days=7)
 
 

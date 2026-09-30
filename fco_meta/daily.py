@@ -1,6 +1,6 @@
 """Daily collection: ranking TOP N → squads → usage stats.
 
-    python -m fco_meta.daily run --top 300            # 지금 한 번
+    python -m fco_meta.daily run --top 1000           # 지금 한 번
     python -m fco_meta.daily schedule --at 00:00      # 매일 00:00 (KST)에 반복 (프로세스를 띄워 둔다)
     python -m fco_meta.daily status                   # 수집 상태 확인
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -48,7 +49,7 @@ log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path("data/fco_meta.sqlite")
 META_RESERVE = 3  # 메타데이터 갱신용으로 남겨 둘 호출 수
-DEFAULT_TOP = 300  # 스쿼드를 받을 랭커 수. 개발 키 하루 1,000회: 랭커당 2~3회 → 약 750회, 나머지는 메타데이터·랭커 스탯·여유분
+DEFAULT_TOP = 1000  # 스쿼드를 받을 랭커 수 (랭커당 2~3회 호출). 개발 키(하루 1,000회)면 남은 랭커는 다음 날 이어서 수집
 DEFAULT_RANK_TOP = 10_000  # 웹에서 받을 랭킹 범위 (팀컬러·포메이션·시즌 전적, API 불필요, 500페이지 ≈ 17분)
 RANK_RESTARTS = 1  # 긴 랭킹 수집 도중 정각 갱신이 일어나면 처음부터 다시 받는 횟수
 
@@ -115,6 +116,7 @@ def run_daily(
     mode: str = "1vs1",
     wait_lag: bool = True,
     daily_limit: int = 1000,
+    per_second: int = 5,
     run_budget: int | None = None,
     datacenter: DatacenterClient | None = None,
     price_players: int = DEFAULT_PLAYERS,
@@ -162,7 +164,7 @@ def run_daily(
         stats_reserve = min(max(ranker_stats_calls, 0), budget.remaining() // 10)
         allowed = max(budget.remaining() - META_RESERVE - stats_reserve, 0)
         budget.run_limit = min(run_budget, allowed) if run_budget is not None else allowed
-        api = api or NexonOpenApiClient(budget=budget)
+        api = api or NexonOpenApiClient(budget=budget, per_second=per_second)
         api.budget = budget
         store = PipelineStore(storage.conn)
         targets = select_top_targets(storage.conn, top, mode, report.data_as_of)
@@ -303,12 +305,14 @@ def main(argv: list[str] | None = None) -> int:
     load_env()
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--db", type=Path, default=DEFAULT_DB)
-    common.add_argument("--top", type=int, default=DEFAULT_TOP, help=f"스쿼드를 받을 랭킹 상위 몇 명 (기본 {DEFAULT_TOP}, 개발 키 기준 여유 있게)")
+    common.add_argument("--top", type=int, default=DEFAULT_TOP, help=f"스쿼드를 받을 랭킹 상위 몇 명 (기본 {DEFAULT_TOP})")
     common.add_argument(
         "--rank-top", type=int, default=DEFAULT_RANK_TOP,
         help=f"웹에서 받을 랭킹 범위 (기본 {DEFAULT_RANK_TOP}, 팀컬러·포메이션·시즌 전적, 20명당 2초, --top 이하면 생략)",
     )  # fmt: skip
-    common.add_argument("--daily-limit", type=int, default=1000, help="Open API 일일 한도")
+    # 넥슨 키 한도: 개발 키 하루 1,000회·초당 5회, 서비스 키 하루 2천만 회·초당 500회 (.env의 NEXON_DAILY_LIMIT, NEXON_RPS)
+    common.add_argument("--daily-limit", type=int, default=int(os.environ.get("NEXON_DAILY_LIMIT", 1000)), help="Open API 일일 한도")
+    common.add_argument("--rps", type=int, default=int(os.environ.get("NEXON_RPS", 5)), help="Open API 초당 최대 호출")
     common.add_argument("--no-wait", action="store_true", help="API 반영 지연(2시간)을 기다리지 않음")
     common.add_argument(
         "--price-players", type=int, default=DEFAULT_PLAYERS,
@@ -340,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             report = run_daily(
                 args.db, top=args.top, rank_top=args.rank_top, wait_lag=not args.no_wait, daily_limit=args.daily_limit,
+                per_second=args.rps,
                 price_players=args.price_players, detail_cards=args.detail_cards,
                 ranker_stats_calls=args.ranker_stats_calls,
             )  # fmt: skip

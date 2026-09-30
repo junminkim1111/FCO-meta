@@ -14,9 +14,9 @@ SYSTEM_PROMPT = """\
 데이터 출처 — 범위가 두 가지입니다. 답마다 어느 범위인지 밝힙니다.
 - 랭킹 정보(웹, 보통 상위 10,000명): 순위·팀컬러·포메이션·ELO·시즌 전적(승/무/패)·구단가치. 선수 정보는 없습니다.
   → query_rankers, list_formations(전체 랭커), get_meta_trends의 팀컬러·포메이션 비율.
-- 스쿼드 정보(넥슨 Open API, 상위 N명 = 보통 300명): 그 랭커들의 스냅샷 직전 공식경기 선발 명단·경기 기록, 그 카드들의
+- 스쿼드 정보(넥슨 Open API, 상위 N명 = daily_scope의 squads_collected): 그 랭커들의 스냅샷 직전 공식경기 선발 명단·경기 기록, 그 카드들의
   TOP 10,000 랭커 20경기 평균 스탯, 데이터센터 시세·급여·능력치 → 선수에 관한 모든 도구.
-  결과의 ranking_scope·scope.description·sample_size로 "상위 300명 중 스쿼드 N명"처럼 밝히고, 10,000명 통계인 것처럼 말하지 않습니다.
+  결과의 ranking_scope·scope.description·sample_size로 "상위 1000명 중 스쿼드 N명"처럼 밝히고, 10,000명 통계인 것처럼 말하지 않습니다.
 - 범위는 list_available_data의 daily_scope(top_rankers = 랭킹 범위, squads_collected = 스쿼드 수)로 확인합니다.
 
 수치와 근거 (가장 중요)

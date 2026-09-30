@@ -172,9 +172,11 @@
   @keyframes status-in { from { opacity: 0; transform: translateY(4px); } }
   .pending .shimmer { display: inline-block; }
   @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; } }
-  #chat form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
-  #msg-beam { flex: 1; display: flex; min-width: 0; }
-  #chat form textarea { flex: 1; }
+  #chat form { margin-top: 10px; }
+  /* 입력창은 칸 끝까지, 보내기 버튼은 입력창 안 오른쪽 아래 (테두리 빛 위에 오도록 z-index) */
+  #msg-beam { display: flex; position: relative; }
+  #chat form textarea { flex: 1; padding-right: 92px; }
+  #send { position: absolute; right: 10px; bottom: 10px; z-index: 4; font-size: 13px; padding: 6px 14px; }
 </style>
 </head>
 <body>
@@ -214,8 +216,7 @@
     <h2 id="chat-title">FCLM</h2>
     <div id="log" aria-live="polite"></div>
     <form id="chat-form">
-      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea></div>
-      <button type="submit" id="send">보내기</button>
+      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send">보내기</button></div>
     </form>
   </section>
   </div>
