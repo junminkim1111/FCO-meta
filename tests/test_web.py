@@ -236,3 +236,21 @@ def test_team_color_endpoints(client):
     detail = client.get("/api/teamcolor", params={"name": "아스날"})
     assert detail.status_code == 200 and detail.json()["team_color"] == "아스널"
     assert client.get("/api/teamcolor", params={"name": ""}).status_code == 422
+
+
+def test_page_results_are_reused_until_the_db_changes(client, tmp_path, monkeypatch):
+    import os
+
+    from fco_meta.chatbot import Toolbox as ToolboxClass
+
+    calls = []
+    run = ToolboxClass.run
+    monkeypatch.setattr(ToolboxClass, "run", lambda self, name, args: calls.append(name) or run(self, name, args))
+    first = client.get("/api/formation", params={"name": "4231"}).json()
+    assert client.get("/api/formation", params={"name": "4231"}).json() == first and calls == ["get_formation_overview"]
+    assert client.get("/api/formations", params={"team_color": "없는팀"}).status_code == 400  # 오류는 담지 않는다
+    assert client.get("/api/formations", params={"team_color": "없는팀"}).status_code == 400 and calls.count("list_formations") == 2
+    db_file = tmp_path / "db.sqlite"
+    os.utime(db_file, ns=(db_file.stat().st_atime_ns, db_file.stat().st_mtime_ns + 1_000_000_000))  # 수집으로 DB가 바뀜
+    client.get("/api/formation", params={"name": "4231"})
+    assert calls.count("get_formation_overview") == 2

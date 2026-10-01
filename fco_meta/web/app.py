@@ -134,6 +134,8 @@ def create_app(
     gemini_tools = _LockedTools(toolbox, lock)
     rules = RuleBot(toolbox)
     answers = AnswerCache(db_path)
+    # 화면 조회(포메이션·팀컬러 정보 등)도 DB가 바뀔 때까지 결과를 재사용한다 (Render 무료 CPU에선 한 번에 수 초)
+    pages = AnswerCache(db_path, size=300)
     gemini_sessions: dict[str, Any] = {}
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
@@ -148,12 +150,29 @@ def create_app(
         return response
 
     def tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        with lock:
-            content, is_error = toolbox.run(name, tool_input)
-        result = json.loads(content)
-        if is_error:
-            raise HTTPException(status_code=400, detail=result["error"])
-        return result
+        key = name + json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+        if (content := pages.get(key)) is None:
+            with lock:
+                content, is_error = toolbox.run(name, tool_input)
+            if is_error:
+                raise HTTPException(status_code=400, detail=json.loads(content)["error"])
+            pages.put(key, content)
+        return json.loads(content)
+
+    def warm() -> None:
+        """첫 화면이 부르는 조회를 미리 계산해 둔다 (서버가 뜬 직후 첫 방문이 느리지 않게; 같은 키로 pages에 담긴다)."""
+        try:
+            tool("list_available_data", {})
+            formations = tool("list_formations", {"team_color": None})["formations"]
+            if formations:
+                tool("get_formation_overview", {"formation": formations[0]["formation"]})
+            colors = tool("query_rankers", {"group_by": "team_color", "limit": 30})["rows"]
+            if colors:
+                tool("get_team_color_overview", {"team_color": colors[0]["team_color"]})
+        except Exception:
+            log.exception("warming the page cache failed")
+
+    app.state.warm = warm
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:

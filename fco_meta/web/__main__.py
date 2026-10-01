@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from ..config import load_env
@@ -46,7 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     if notice:
         print(notice, file=sys.stderr)
     print(f"http://{args.host}:{args.port} 에서 열립니다 (챗봇: {'Gemini' if backend == 'gemini' else '규칙 기반'})", flush=True)
-    uvicorn.run(create_app(args.db, backend=backend, gemini_model=args.model), host=args.host, port=args.port)
+    app = create_app(args.db, backend=backend, gemini_model=args.model)
+    threading.Thread(target=app.state.warm, daemon=True).start()  # 첫 화면 조회를 미리 (요청은 그동안에도 받는다)
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
