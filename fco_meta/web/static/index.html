@@ -51,8 +51,10 @@
   .error { color: var(--error); font-size: 14px; margin-top: 12px; }
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
   button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
-           cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s; }
-  button:hover { opacity: .9; }
+           cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s, transform .1s ease-out; }
+  @media (hover: hover) { button:hover { opacity: .9; } } /* 터치 화면에서 흐린 상태가 남지 않게 */
+  /* 누르는 순간 살짝 눌린다 (막대·고무 세그먼트는 따로 처리) */
+  @media (prefers-reduced-motion: no-preference) { button:not(.track, .rubber-segment__item, :disabled):active { transform: scale(.96); } }
   button:disabled { opacity: .5; cursor: wait; }
   button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   textarea { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 16px;
@@ -211,8 +213,19 @@
   /* 도구에 맞춰 문구가 바뀔 때 살짝 떠오르며 나타난다 */
   .shimmer.fresh { animation: shimmer 2.2s linear infinite, status-in .35s ease-out; }
   @keyframes status-in { from { opacity: 0; transform: translateY(4px); } }
+  /* 이전 문구는 그 자리에서 흐려지며 사라진다 (새 문구와 같은 칸에 겹쳐 둔다) */
+  .status { display: inline-grid; } .status > * { grid-area: 1 / 1; }
+  .shimmer.out { animation: shimmer 2.2s linear infinite, status-out .15s ease-in forwards; }
+  @keyframes status-out { to { opacity: 0; } }
   .pending .shimmer { display: inline-block; }
-  @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; } }
+  @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; }
+                                            .shimmer.out { animation: status-out .15s ease-in forwards; } }
+  /* 기다리던 말풍선이 답으로 바뀔 때 툭 끊기지 않게 */
+  .msg.arrive { animation: fade-in .2s ease-out; }
+  @keyframes fade-in { from { opacity: 0; } }
+  /* 다시 불러오는 동안 기존 내용을 흐리게 두어 높이가 출렁이지 않게 (빨리 오면 흐려지지도 않게 잠깐 기다린다) */
+  #fchart, #fdetail { transition: opacity .2s ease-out; }
+  #fchart[aria-busy="true"], #fdetail[aria-busy="true"] { opacity: .45; transition-delay: .15s; }
   #chat form { margin-top: 10px; }
   /* 입력창은 칸 끝까지, 보내기 버튼은 입력창 안 오른쪽 아래 (테두리 빛 위에 오도록 z-index) */
   #msg-beam { display: flex; position: relative; }
@@ -221,7 +234,12 @@
   #send { position: absolute; right: 10px; bottom: 10px; z-index: 4; width: 36px; height: 36px; padding: 0; border-radius: 50%;
           display: flex; align-items: center; justify-content: center; background: #fff; color: #0b0b0d;
           box-shadow: 0 1px 3px rgba(0, 0, 0, .2); font-size: 14px; line-height: 1; }
-  #send svg { width: 18px; height: 18px; }
+  /* 보내기 화살표 ↔ 정지 사각형: 같은 자리에 겹쳐 두고 서로 줄었다 커지며 바뀐다 */
+  #send svg { position: absolute; inset: 0; margin: auto; width: 18px; height: 18px;
+              transition: opacity .15s ease-out, transform .25s cubic-bezier(.23, 1, .32, 1); }
+  #send .i-stop, #send[data-busy] .i-send { opacity: 0; transform: scale(.5); }
+  #send[data-busy] .i-stop { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { #send svg { transform: none !important; } }
 </style>
 </head>
 <body>
@@ -261,7 +279,7 @@
     <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span></h2>
     <div id="log" aria-live="polite"></div>
     <form id="chat-form">
-      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button></div>
+      <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg class="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></button></div>
     </form>
   </section>
   </div>
@@ -275,7 +293,6 @@ import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입�
 import { mountSegment } from "/static/segment.js"; // 포메이션 분포 / 팀컬러 분포 전환
 const $ = (id) => document.getElementById(id);
 const beam = mountBeam($("msg-beam"));
-const SEND_ICON = $("send").innerHTML; // 위쪽 화살표 (답을 기다리는 동안은 ■)
 
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
@@ -355,6 +372,7 @@ function markSelected() {
 
 async function loadChart() {
   const m = MODES[mode], want = mode, box = $("fchart");
+  box.ariaBusy = "true";
   try {
     const d = await api(m.list);
     if (mode !== want) return;  // 그사이 전환했으면 버린다
@@ -381,6 +399,8 @@ async function loadChart() {
     showDetail(m.key(shown[0]));
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
+  } finally {
+    if (mode === want) box.ariaBusy = "false";
   }
 }
 
@@ -502,7 +522,8 @@ async function showDetail(name) {
   markSelected();
   const want = mode, isForm = mode === "formation";
   const box = $("fdetail");
-  box.replaceChildren(el("p", { class: "stat", text: `${name} 불러오는 중…` }));
+  if (box.childElementCount) box.ariaBusy = "true"; // 이미 보이는 내용은 흐리게만 두고 그 자리를 지킨다
+  else box.replaceChildren(el("p", { class: "stat", text: `${name} 불러오는 중…` }));
   try {
     const d = await api(MODES[mode].detail(name));
     if (selected !== name || mode !== want) return;  // 그사이 다른 막대를 눌렀거나 전환했으면 버린다
@@ -540,6 +561,8 @@ async function showDetail(name) {
     box.replaceChildren(...out);
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
+  } finally {
+    if (selected === name && mode === want) box.ariaBusy = "false";
   }
 }
 
@@ -575,7 +598,7 @@ function setBusy(ctrl) {
   inflight = ctrl;
   beam.set(!!ctrl);
   $("send").type = ctrl ? "button" : "submit";
-  $("send").innerHTML = ctrl ? "■" : SEND_ICON;
+  $("send").toggleAttribute("data-busy", !!ctrl); // 위쪽 화살표 ↔ 정지 사각형
   $("send").setAttribute("aria-label", ctrl ? "답변 정지" : "보내기");
 }
 $("send").addEventListener("click", (ev) => {
@@ -583,12 +606,18 @@ $("send").addEventListener("click", (ev) => {
   ev.preventDefault(); // 취소하면 버튼이 곧바로 '보내기'로 돌아오므로, 이 클릭이 폼 제출까지 되지 않게 막는다
   inflight.abort();
 });
+// 반짝이는 문구. 새로 만들어도 빛이 지나가는 위치가 처음으로 튀지 않게 같은 시계에 맞춘다
+const shimmer = (text, cls) => {
+  const node = el("span", { class: ("shimmer " + cls).trim(), text });
+  node.style.animationDelay = `${-(performance.now() % 2200)}ms, 0s`;
+  return node;
+};
 // 답을 기다리는 말풍선: 오브 + "랭커데이터를 살펴보고 있어요...". 멈추는 함수를 돌려준다
 function thinking(bubble) {
   const canvas = el("canvas", { ariaHidden: "true" });
   bubble.className = "msg bot pending";
   bubble.title = "답을 만드는 동안 왼쪽 포메이션을 둘러보세요";
-  bubble.replaceChildren(canvas, el("span", { class: "shimmer", text: THINKING }));
+  bubble.replaceChildren(canvas, el("span", { class: "status" }, shimmer(THINKING, "")));
   return mountOrb(canvas, "connecting", 20);
 }
 // 서버는 답을 몇 단어씩 묶어 보낸다(/api/chat, 한 줄에 JSON 이벤트 하나). 받은 글은 프레임마다 몇 글자씩 풀어 그린다
@@ -603,12 +632,13 @@ async function send(text) {
   let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0;
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
+    const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
     renderMarkdown(bubble, answer.slice(0, shown));
-    $("log").scrollTop = $("log").scrollHeight;
+    if (stick) log.scrollTop = log.scrollHeight;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
   };
   const grow = (piece) => {
-    if (stopOrb) { stopOrb(); stopOrb = null; bubble.className = "msg bot"; bubble.removeAttribute("title"); bubble.replaceChildren(); }
+    if (stopOrb) { stopOrb(); stopOrb = null; bubble.className = "msg bot arrive"; bubble.removeAttribute("title"); bubble.replaceChildren(); }
     answer += piece;
     if (!frame) frame = requestAnimationFrame(draw);
   };
@@ -629,7 +659,11 @@ async function send(text) {
         else if (ev.type === "delta") grow(ev.text);
         else if (ev.type === "tool" && stopOrb) { // 기다리는 중이면 문구를 그 도구에 맞게
           const line = TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING;
-          bubble.querySelector(".shimmer").replaceWith(el("span", { class: "shimmer fresh", text: line }));
+          const status = bubble.querySelector(".status"), old = status.lastElementChild;
+          old.className = "shimmer out"; // 이전 문구는 흐려지며 사라지고 새 문구가 떠오른다
+          old.ariaHidden = "true";
+          old.addEventListener("animationend", (e) => e.animationName === "status-out" && old.remove());
+          status.append(shimmer(line, "fresh"));
         }
         else if (ev.type === "reset" && !stopOrb) { // 도구를 부르기 전에 쓴 글 → 지우고 다시 기다린다
           cancelAnimationFrame(frame);
