@@ -322,7 +322,7 @@ python -m fco_meta.web --host 0.0.0.0 --port 8080
   누르면 같은 모양의 팀컬러 정보(`get_team_color_overview`): 사용률·시즌 승률·ELO·구단가치·최고 순위, 그 팀컬러 최상위 랭커 스쿼드 /
   베스트 11(포메이션 무관), 많이 쓰는 포메이션, 순위 구간별 비율. 랭커 한 명이 팀컬러 여럿일 수 있어 비율 합은 100%를 넘음
 - **챗봇**: 자연어 질문. 답을 만드는 동안에도 포메이션을 둘러볼 수 있고, 넓은 화면에서는 챗봇이 화면에 고정됨
-- 라이트/다크 모드, 모바일 폭 대응
+- 다크 테마, 모바일 폭 대응
 - JSON API: `/api/meta`(수집 범위), `/api/formations`, `/api/formation?name=4-2-3-1`, `/api/teamcolors`, `/api/teamcolor?name=레알`,
   `POST /api/chat` (문서: `/api/docs`)
 

@@ -6,13 +6,8 @@
 <title>FCLM</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
 <meta name="theme-color" content="#101116">
-<script>
-  // 테마: 사용자가 고른 값(전환 버튼, 이 브라우저에만 저장) → 없으면 기기 설정. 그리기 전에 정한다
-  try { var t = localStorage.getItem("fclm-theme"); } catch (e) {}
-  document.documentElement.dataset.theme = t || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-</script>
 <style>
-  /* 에이전트형 다크 테마: 거의 검은 바탕 + 은은한 빛, 반투명 패널, 얇은 테두리 (라이트는 아래 [data-theme="light"]) */
+  /* 에이전트형 다크 테마: 거의 검은 바탕 + 은은한 빛, 반투명 패널, 얇은 테두리 */
   :root {
     color-scheme: dark;
     --bg: #101116; --bg-2: #262833; --panel: rgba(255, 255, 255, .035); --panel-strong: rgba(255, 255, 255, .06);
@@ -27,27 +22,6 @@
     --pitch-name: var(--text); --ph-bg: #1a1d24; --name-shadow: 0 1px 3px rgba(0, 0, 0, .9); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
     --radius: 16px;
   }
-  :root[data-theme="light"] {
-    color-scheme: light;
-    /* 네이비 바탕 + 밝은 블루 패널 (패널 밖 로고 줄·수집 범위·푸터는 아래에서 밝은 글자로) */
-    --bg: #203a63; --bg-2: #3a5d93; --panel: rgba(233, 240, 250, .97); --panel-strong: rgba(30, 64, 120, .05);
-    --line: rgba(30, 64, 120, .11); --line-strong: rgba(30, 64, 120, .22);
-    --text: #151a24; --muted: #56607a; --faint: #8a93a8;
-    --accent: #4f46e5; --glow-a: rgba(99, 102, 241, .16); --glow-b: rgba(56, 189, 248, .18);
-    --bar: #3987e5; --track: rgba(30, 64, 120, .07);
-    --warn-bg: rgba(234, 179, 8, .12); --warn: #8a6100;
-    --win: #3987e5; --draw: #a8a7a1; --loss: #e15b5b;
-    --on-text: #fff; --strong: #000; --error: #c62828; --field: #fff; --tip-bg: #fff; --code-bg: #eef2f8;
-    /* 경기장: 잔디 줄무늬 + 흰 선 */
-    --pitch-1: #3f9a4c; --pitch-2: #378d44; --pitch-glow: rgba(255, 255, 255, .10); --pitch-line: rgba(255, 255, 255, .62);
-    --pitch-name: #fff; --ph-bg: #e8edf3; --name-shadow: 0 1px 3px rgba(0, 0, 0, .55); --logo-a: #6366f1; --logo-b: #0ea5e9;
-  }
-  /* 라이트 모드에서 네이비 바탕에 바로 놓이는 것들: 밝은 글자·선 */
-  :root[data-theme="light"] :is(header, #asof, .foot) {
-    --text: #eef3fb; --muted: #bccae0; --faint: #97aacb; --accent: #a5b4fc;
-    --panel-strong: rgba(255, 255, 255, .08); --line: rgba(255, 255, 255, .16); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
-  }
-  :root[data-theme="light"] header .brand { background: #e9f0fa; } /* 오브는 라이트에서 어두운 점이라 밝은 칸에 */
   * { box-sizing: border-box; }
   body { margin: 0; color: var(--text); min-height: 100vh;
          background: radial-gradient(1100px 520px at 12% -12%, var(--glow-a), transparent 60%),
@@ -63,11 +37,6 @@
   header h1 { margin: 0; line-height: 0; }
   header h1 svg { height: 28px; width: auto; }
   header .logo-a { stop-color: var(--logo-a); } header .logo-b { stop-color: var(--logo-b); }
-  /* 라이트/다크 전환 (로고 줄 오른쪽 끝) */
-  #theme { margin-left: auto; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;
-           background: var(--panel-strong); color: var(--muted); border: 1px solid var(--line); }
-  #theme:hover { color: var(--text); opacity: 1; }
-  #theme svg { width: 18px; height: 18px; }
   main { --head-h: 60px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
          max-width: 1640px; margin: 0 auto; padding: 16px; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -198,7 +167,7 @@
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
   /* 챗봇 칸 강조: 로고 색(보라→하늘) 그라데이션 테두리와 바깥 빛, 큰 제목 */
   #chat { position: relative; border-color: transparent;
-          box-shadow: 0 0 36px -6px rgba(99, 102, 241, .45), 0 0 80px -20px rgba(56, 189, 248, .35); }
+          box-shadow: 0 0 36px -6px rgba(99, 102, 241, .22), 0 0 80px -20px rgba(56, 189, 248, .17); }
   #chat::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
                   background: linear-gradient(135deg, var(--logo-a), var(--logo-b));
                   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
@@ -248,10 +217,10 @@
   /* 입력창은 칸 끝까지, 보내기 버튼은 입력창 안 오른쪽 아래 (테두리 빛 위에 오도록 z-index) */
   #msg-beam { display: flex; position: relative; }
   #chat form textarea { flex: 1; padding-right: 60px; }
-  /* 보내기(↑)·정지(■): 금속 링(static/metal.js, libraries.dev/metal v1)을 두른 원형 버튼, 입력창 안 오른쪽 아래 */
-  #msg-beam .metal-fx-root { position: absolute; right: 10px; bottom: 10px; z-index: 4; border-radius: 50%; }
-  #send { width: 36px; height: 36px; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-          color: inherit; font-size: 14px; line-height: 1; } /* 금속 링 테마 색 (다크 #f8f8f8 · 라이트 #1d1d1d) */
+  /* 보내기(↑)·정지(■): 흰 원형 버튼, 입력창 안 오른쪽 아래 */
+  #send { position: absolute; right: 10px; bottom: 10px; z-index: 4; width: 36px; height: 36px; padding: 0; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center; background: #fff; color: #0b0b0d;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, .2); font-size: 14px; line-height: 1; }
   #send svg { width: 18px; height: 18px; }
 </style>
 </head>
@@ -273,7 +242,6 @@
         <circle cx="31" cy="12" r="2.6" style="fill: var(--accent)"/>
       </svg></h1>
     </div>
-    <button type="button" id="theme"></button>
   </header>
   <section aria-label="랭커 분포">
     <div class="dist-head"><div id="dist-mode"></div><span id="form-scope" class="stat"></span></div>
@@ -304,40 +272,11 @@
 import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
-import { mountMetal, setMetalTheme } from "/static/metal.js"; // 보내기 버튼의 금속 링
 import { mountSegment } from "/static/segment.js"; // 포메이션 분포 / 팀컬러 분포 전환
 const $ = (id) => document.getElementById(id);
-const theme = () => document.documentElement.dataset.theme;
-const beam = mountBeam($("msg-beam"), theme());
+const beam = mountBeam($("msg-beam"));
 const SEND_ICON = $("send").innerHTML; // 위쪽 화살표 (답을 기다리는 동안은 ■)
-setMetalTheme(theme());
-mountMetal($("send"));
 
-// --- 라이트/다크 전환: 누르면 이 브라우저에 저장, 고른 적 없으면 기기 설정을 따라간다 ---
-const THEME_ICON = {  // 지금과 반대 테마의 아이콘 (누르면 그쪽으로)
-  light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 0 0 11 11z"/></svg>',
-  dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>',
-};
-function applyTheme(next) {
-  document.documentElement.dataset.theme = next;
-  document.querySelector('meta[name="theme-color"]').content = next === "light" ? "#203a63" : "#101116";
-  $("theme").innerHTML = THEME_ICON[next];
-  $("theme").ariaLabel = next === "light" ? "다크 모드로 전환" : "라이트 모드로 전환";
-  $("theme").title = $("theme").ariaLabel;
-  beam.setTheme(next);
-  setMetalTheme(next);
-}
-applyTheme(theme());
-$("theme").addEventListener("click", () => {
-  const next = theme() === "light" ? "dark" : "light";
-  try { localStorage.setItem("fclm-theme", next); } catch {}
-  applyTheme(next);
-});
-matchMedia("(prefers-color-scheme: light)").addEventListener("change", (ev) => {
-  let saved = null;
-  try { saved = localStorage.getItem("fclm-theme"); } catch {}
-  if (!saved) applyTheme(ev.matches ? "light" : "dark");
-});
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
