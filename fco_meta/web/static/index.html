@@ -23,13 +23,16 @@
     --radius: 16px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; color: var(--text); min-height: 100vh;
-         background: radial-gradient(1100px 520px at 12% -12%, var(--glow-a), transparent 60%),
-                     radial-gradient(900px 480px at 100% -8%, var(--glow-b), transparent 60%),
-                     linear-gradient(120deg, var(--bg), var(--bg-2)) fixed; /* 왼쪽 위 → 오른쪽 아래로 밝아진다 (화면 기준) */
-         background-color: var(--bg);
+  body { margin: 0; color: var(--text); min-height: 100vh; background: var(--bg);
          font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
          -webkit-font-smoothing: antialiased; }
+  /* 바탕: 화면에 고정된 층 (iOS Safari는 background-attachment: fixed를 무시해 긴 페이지 전체로 늘어난다) */
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+                 background: radial-gradient(1100px 520px at 12% -12%, var(--glow-a), transparent 60%),
+                             radial-gradient(900px 480px at 100% -8%, var(--glow-b), transparent 60%),
+                             linear-gradient(120deg, var(--bg), var(--bg-2)); } /* 왼쪽 위 → 오른쪽 아래로 밝아진다 */
+  /* 휴대폰 화면에선 반투명 칸이 바탕과 잘 구분되지 않아 칸과 테두리를 조금 진하게 */
+  @media (max-width: 860px) { :root { --panel: rgba(255, 255, 255, .06); --line: rgba(255, 255, 255, .13); } }
   /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
   header { display: flex; align-items: center; gap: 14px; height: var(--head-h); padding: 0 2px; }
   header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
