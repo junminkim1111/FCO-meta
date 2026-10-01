@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -63,7 +64,11 @@ def pull_db(repo: str) -> str:
 def serve(port: int) -> int:
     from .web.__main__ import main as web
 
-    return web(["--db", pull_db(os.environ["HF_DATA_REPO"]), "--host", "0.0.0.0", "--port", str(port)])
+    # 받기는 따로 프로세스에서: 다운로더(xet)가 300MB 넘게 쓰는데, 같은 프로세스면 웹을 여는 동안에도 그 메모리가
+    # 남아 Render 무료(512MB)를 넘긴다. 따로 돌리면 끝날 때 모두 반납된다.
+    repo = os.environ["HF_DATA_REPO"]
+    subprocess.run([sys.executable, "-c", f"from fco_meta.cloud import pull_db; pull_db({repo!r})"], check=True)
+    return web(["--db", str(DB), "--host", "0.0.0.0", "--port", str(port)])
 
 
 def main(argv: list[str] | None = None) -> int:

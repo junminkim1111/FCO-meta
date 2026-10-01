@@ -75,3 +75,16 @@ def test_pull_db_downloads_into_data(monkeypatch):
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **kw: calls.append((a, kw)) or "data/fco_meta.sqlite")
     assert cloud.pull_db("me/fclm-data") == "data/fco_meta.sqlite"
     assert calls == [(("me/fclm-data", "fco_meta.sqlite"), {"repo_type": "dataset", "local_dir": "data"})]
+
+
+def test_serve_downloads_in_a_child_process(monkeypatch):
+    import fco_meta.web.__main__ as web_main
+
+    calls = []
+    monkeypatch.setenv("HF_DATA_REPO", "me/fclm-data")
+    monkeypatch.setattr(cloud.subprocess, "run", lambda cmd, check: calls.append(cmd))
+    monkeypatch.setattr(web_main, "main", lambda argv: calls.append(argv) or 0)
+    assert cloud.serve(1234) == 0
+    download, web = calls  # 받기가 끝난 뒤 웹 (받기 메모리는 자식 프로세스와 함께 반납)
+    assert download[-1] == "from fco_meta.cloud import pull_db; pull_db('me/fclm-data')"
+    assert web == ["--db", "data/fco_meta.sqlite", "--host", "0.0.0.0", "--port", "1234"]

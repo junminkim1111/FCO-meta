@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import Counter, defaultdict
+from itertools import groupby
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,7 +85,8 @@ WITH base AS (
     AND (:strict = 0 OR q.formation_match = 1)
 )
 SELECT b.rank, b.elo, b.formation, b.wins, b.draws, b.losses, b.match_result,
-       p.sp_id, p.pid, p.season_id, p.sp_position, p.sp_grade, p.sp_rating, p.stats
+       p.sp_id, p.pid, p.season_id, p.sp_position, p.sp_grade, p.sp_rating,
+       CASE WHEN :need_stats THEN p.stats END AS stats  -- 경기 스탯 JSON은 우리 랭커 경기 스탯을 물을 때만 (10,000명이면 수십 MB)
 FROM base b
 JOIN match_player p ON p.match_id = b.match_id AND p.ouid = b.ouid AND p.starter = 1
 """
@@ -165,19 +167,13 @@ def query_squads(
     params = {
         "as_of": as_of, "mode": q.mode, "tc": q.team_color_id, "covered": covered, "formation": q.formation,
         "rank_min": q.rank_min, "rank_max": q.rank_max, "elo_min": q.elo_min, "strict": int(q.strict),
+        "need_stats": int(q.match_stat is not None and q.match_stat_source == "rankers"),
     }  # fmt: skip
-    squads: dict[int, list[sqlite3.Row]] = defaultdict(list)
-    cur = conn.cursor()
-    cur.row_factory = sqlite3.Row
-    for r in cur.execute(_STARTERS, params):
-        squads[r["rank"]].append(r)
-    if q.with_pid is not None:
-        squads = {rank: rows for rank, rows in squads.items() if any(r["pid"] == q.with_pid for r in rows)}
-    out = {**empty, "covered": covered, "squads": len(squads)}
-    if not squads:
+    # 랭커 10,000명이면 선발 11만 행이라 한꺼번에 올리지 않고 스쿼드 하나씩 흘려 보내며 센다 (Render 무료 512MB)
+    sp_ids = {sp_id for (sp_id,) in conn.execute(f"SELECT DISTINCT sp_id FROM ({_STARTERS})", params)}
+    out = {**empty, "covered": covered}
+    if not sp_ids:
         return out
-
-    sp_ids = {r["sp_id"] for rows in squads.values() for r in rows}
     prices, salaries = _card_values(conn, sp_ids)
     details = _card_details(conn, sp_ids) if q.stat else {}
     top10000 = _top10000(conn, sp_ids) if q.match_stat and q.match_stat_source == "top10000" else {}
@@ -189,8 +185,18 @@ def query_squads(
         ):
             teams[rank].add(tc)
 
+    match_fields = [f for f in MATCH_STATS[q.match_stat] if f] if q.match_stat and q.match_stat_source == "rankers" else []
     groups: dict[Any, dict[str, Any]] = {}
-    for rank, rows in squads.items():
+    squads = 0
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    for rank, squad in groupby(cur.execute(_STARTERS + "ORDER BY b.rank", params), key=lambda r: r["rank"]):
+        rows = list(squad)
+        if q.with_pid is not None and not any(r["pid"] == q.with_pid for r in rows):
+            continue
+        squads += 1
+        first = rows[0]  # 랭커 정보 (그룹마다 이 dict 하나를 같이 가리킨다)
+        ranker = {k: first[k] for k in ("elo", "wins", "draws", "losses", "match_result")}
         for r in rows:
             role = _POSITION_ROLE.get(r["sp_position"])
             if q.roles and role not in q.roles:
@@ -218,9 +224,10 @@ def query_squads(
                         g["match"].append(found[1] if found else None)
                         if found:
                             g["pairs"][(r["sp_id"], r["sp_position"])] = found[0]
-                    else:
-                        g["match"].append(json.loads(r["stats"]) if r["stats"] else None)
-                g["ranks"][rank] = r
+                    else:  # 필요한 값만 남긴다 (경기 기록 전체를 담으면 수백 MB)
+                        stats = json.loads(r["stats"]) if r["stats"] else None
+                        g["match"].append({f: stats.get(f) for f in match_fields} if stats else None)
+                g["ranks"][rank] = ranker
                 g["ratings"].append(r["sp_rating"])
                 g["grades"].append(r["sp_grade"])
                 g["prices"].append(prices.get((r["sp_id"], r["sp_grade"])))
@@ -237,7 +244,7 @@ def query_squads(
         row: dict[str, Any] = {
             "key": key,
             "rankers": len(ranks),
-            "usage_rate": round(len(ranks) / len(squads), 4),
+            "usage_rate": round(len(ranks) / squads, 4),
             "avg_rating": _mean(g["ratings"]),
             "season_win_rate": round(wins / games, 4) if games else None,
             "season_games": games,
@@ -274,7 +281,7 @@ def query_squads(
     else:
         # 값이 없는 행은 뒤로, 같으면 사용 랭커 수가 많은 순
         rows_out.sort(key=lambda r: (r[sort_by] is None, -(r[sort_by] or 0), -r["rankers"], r["key"]))
-    return {**out, "total_groups": total, "rows": rows_out[:limit]}
+    return {**out, "squads": squads, "total_groups": total, "rows": rows_out[:limit]}
 
 
 def _combine(stats: list[dict[str, Any]], field: str, per: str | None) -> float | None:

@@ -1032,12 +1032,14 @@ class Toolbox:
             filters += " AND u.formation = ?"
             args.append(formation)
         rows = self.conn.execute(
-            "SELECT u.team_color_id, u.formation, u.role, u.sp_id, u.pid, u.ranker_count, u.sample_size,"
+            # 팀컬러마다 최신 집계만. 최신 시각은 한 번만 구한다 (행마다 하위 쿼리면 10,000명 규모에서 2분 넘게 걸림)
+            "WITH latest AS (SELECT team_color_id, MAX(data_as_of) AS as_of FROM usage_stats GROUP BY team_color_id)"
+            " SELECT u.team_color_id, u.formation, u.role, u.sp_id, u.pid, u.ranker_count, u.sample_size,"
             " u.usage_rate, u.avg_grade, u.data_as_of, sp.name, ss.class_name"
-            " FROM usage_stats u JOIN meta_spid sp ON sp.sp_id = u.sp_id"
+            " FROM usage_stats u JOIN latest l ON l.team_color_id = u.team_color_id AND u.data_as_of = l.as_of"
+            " JOIN meta_spid sp ON sp.sp_id = u.sp_id"
             " LEFT JOIN meta_season ss ON ss.season_id = u.season_id"
             f" WHERE u.strict = 0 AND u.formation != '*' AND REPLACE(sp.name, ' ', '') LIKE ?{filters}"
-            " AND u.data_as_of = (SELECT MAX(data_as_of) FROM usage_stats WHERE team_color_id = u.team_color_id)"
             " ORDER BY u.ranker_count DESC LIMIT 40",
             args,
         ).fetchall()
