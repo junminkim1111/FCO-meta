@@ -1,6 +1,7 @@
 """Command line entry point.
 
     python -m fco_meta.crawler catalog                 # 팀컬러 목록 갱신 → data/teamcolors.json
+    python -m fco_meta.crawler teamcolor-info          # 관계·스페셜 팀컬러 효과·적용 선수 → data/teamcolor_info.json (약 1시간 반, 한 번)
     python -m fco_meta.crawler summary                 # TOP 10,000 팀컬러/포메이션 이용률 TOP 10
     python -m fco_meta.crawler rank --team-color 아스널 --formation 4-2-3-1
     python -m fco_meta.crawler rank --max-pages 50     # 필터 없이 상위 1,000명
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from ..config import load_env
 from ..storage import Storage
+from . import teamcolor_info
 from .client import DatacenterClient
 from .jobs import crawl_rankings
 from .parser import parse_formation_options, parse_rank_summary, parse_team_color_catalog
@@ -36,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_catalog = sub.add_parser("catalog", help="팀컬러 목록 갱신")
     p_catalog.add_argument("--out", type=Path, default=DEFAULT_CATALOG_PATH)
+
+    p_info = sub.add_parser("teamcolor-info", help="관계·스페셜 팀컬러 효과와 적용 선수 (한 번)")
+    p_info.add_argument("--out", type=Path, default=teamcolor_info.DEFAULT_PATH)
 
     sub.add_parser("summary", help="팀컬러/포메이션 이용률 TOP 10")
 
@@ -57,6 +62,13 @@ def main(argv: list[str] | None = None) -> int:
             catalog.save(args.out)
             print(f"{len(catalog.entries)} team colors → {args.out}")
             print(f"formations: {', '.join(parse_formation_options(shell))}")
+            return 0
+
+        if args.command == "teamcolor-info":
+            entries = teamcolor_info.collect(client)
+            teamcolor_info.save(entries, args.out)
+            partial = sum(1 for e in entries if e.get("players_complete") is False)
+            print(f"{len(entries)} team colors → {args.out}" + (f" (선수 목록 일부만: {partial}개)" if partial else ""))
             return 0
 
         if args.command == "summary":

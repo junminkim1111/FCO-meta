@@ -58,6 +58,9 @@ cp .env.example .env   # .env에 NEXON_API_KEY, GEMINI_API_KEY를 적어 두면 
 # 팀컬러 목록 갱신 → data/teamcolors.json
 python -m fco_meta.crawler catalog
 
+# 관계·스페셜 팀컬러 효과와 적용 선수 → data/teamcolor_info.json (거의 안 바뀌어 한 번만, 약 1시간 반)
+python -m fco_meta.crawler teamcolor-info
+
 # TOP 10,000 팀컬러/포메이션 이용률 TOP 10
 python -m fco_meta.crawler summary
 
@@ -97,14 +100,14 @@ ORDER BY s.rank;
 | 범위 | 출처 | 내용 | 설정 |
 |---|---|---|---|
 | **랭킹 상위 10,000명** | 웹(데이터센터 랭킹) | 순위·팀컬러·포메이션·ELO·시즌 승/무/패·구단가치 | `--rank-top 10000` (500페이지 ≈ 17분) |
-| **스쿼드 상위 1,000명** | 넥슨 Open API | 선발 명단·경기 기록, 그 카드들의 랭커 스탯·시세·급여·능력치 | `--top 1000` |
+| **스쿼드 상위 10,000명** | 넥슨 Open API | 선발 명단·경기 기록, 그 카드들의 랭커 스탯·시세·급여·능력치 | `--top 10000` |
 
-스쿼드는 랭커 1명당 2~3회 호출입니다. 서비스 키(하루 2천만 회·초당 500회)라 `.env`의 `NEXON_DAILY_LIMIT=50000`, `NEXON_RPS=20`으로 1,000명을 한 번에 받습니다.
+스쿼드는 랭커 1명당 2~3회 호출입니다. 서비스 키(하루 2천만 회·초당 500회)라 `.env`의 `NEXON_DAILY_LIMIT=50000`, `NEXON_RPS=20`으로 10,000명을 한 번에 받습니다 (첫날 약 3만 회, 이후 하루 2만여 회).
 개발 키(하루 1,000회·초당 5회, 기본값)면 하루 약 300명씩 받고 나머지는 다음 날 이어서 받습니다.
 
 ```bash
 export NEXON_API_KEY=...
-python -m fco_meta.daily run --top 1000              # 지금 한 번
+python -m fco_meta.daily run --top 10000             # 지금 한 번
 python -m fco_meta.daily schedule --at 00:00         # 매일 00:00(KST)에 실행 — 이 프로세스를 켜 둔다
 python -m fco_meta.daily status                      # 수집 상태 (스냅샷, 처리한 랭커 수, 포메이션별 표본, API 사용량)
 python -m fco_meta.daily rank                        # 랭킹 상위 10,000명만 웹에서 (API 키 불필요, 약 17분)
@@ -272,6 +275,7 @@ python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널",
 | `query_squads` (범용 조회) | 평점 높은 볼란치 / 상위 100위는 뭐 써? / 라이스 파트너 / 승률 높은 포메이션 / 속력 좋은 볼란치 | 최신 스냅샷 기준 경기 선발 명단을 조건(팀컬러·포메이션·역할·순위 구간·ELO·특정 선수를 쓴 랭커·능력치 하한)으로 거르고 선수·카드·시즌·강화·팀컬러·포메이션·역할별로 묶어 사용률·평점·시즌 승률·강화·ELO·평균 시세·급여·능력치로 정렬. 평점 등으로 정렬하면 사용 랭커 3명 미만 항목은 기본 제외 |
 | `query_rankers` (랭킹 10,000명) | 10,000명 중 많이 쓰는 팀컬러 / 승률 높은 포메이션 / 1,000~2,000위는 뭐 써? | 랭킹 페이지 정보만으로 팀컬러·포메이션·순위 구간별 랭커 수·비율·시즌 승률·ELO·구단가치 (선수 정보 없음) |
 | `list_formations`, `list_available_data`, `resolve_terms` | 포메이션 분포 / 어떤 데이터 있어? | |
+| `get_team_color_info` | 레드데블스 철벽라인 효과 / 박지성 들어간 관계 팀컬러 / 골 결정력 올려주는 팀컬러 | `data/teamcolor_info.json` (데이터센터) |
 
 - 포메이션은 `4231`처럼 써도 되고, 역할 별칭(좌윙·우풀백·세컨톱 등)과 **묶음 포지션**(윙어 = RW+LW, 공격수, 풀백, 미드필더, 수비수 …)도 받습니다.
 - 팀컬러 별칭(레알, 맨유, 뮌헨, AC밀란 → 밀라노 FC 등)은 [`data/team_color_aliases.json`](data/team_color_aliases.json)에 있습니다. 한 줄씩 추가하면 됩니다.

@@ -40,6 +40,7 @@ from ..analytics import (
     top_ranker_squad,
     usage_history,
 )
+from ..crawler import teamcolor_info
 from ..crawler.teamcolors import TeamColorCatalog
 from ..market.money import format_bp
 from ..market.roles import ROLES, resolve_roles
@@ -72,6 +73,8 @@ DEFAULT_MIN_USAGE_FOR_PRICE_SORT = 0.03  # 가성비(시세 낮은 순) 정렬�
 TREND_MIN_RANKERS = 3  # 사용률 변화 목록에 넣을 최소 사용 랭커 수 (두 스냅샷 중 큰 쪽)
 QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 기본 최소 사용 랭커 수 (1명짜리 1위 방지)
 QUERY_MAX_ROWS = 30
+MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
+MAX_TEAM_COLOR_NAMES = 40
 RANKERS_MIN_FOR_SORT = 30  # query_rankers를 승률 등으로 정렬할 때 기본 최소 랭커 수 (10,000명 규모라 넉넉히)
 
 
@@ -393,6 +396,23 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": _schema({"team_color": {"type": "string", "description": "팀컬러 (별칭 가능, 예: 레알, AC밀란)"}}, ["team_color"]),
     },
     {
+        "name": "get_team_color_info",
+        "description": (
+            "관계 팀컬러(특성, 예: 레드데블스 철벽라인)와 스페셜 팀컬러(시즌 클래스, 예: 19 UEFA Champions League)의 설명, "
+            "단계별 필요 인원과 능력치 효과, 관계 팀컬러의 적용 선수(데이터센터 기준). 셋 중 하나 이상: "
+            "team_color(이름 일부도 가능), player(그 선수가 들어간 관계 팀컬러), effect(그 능력치를 올려 주는 팀컬러, 예: 골 결정력). "
+            "클럽·국가 팀컬러는 get_team_color_overview."
+        ),
+        "input_schema": _schema(
+            {
+                "team_color": {"type": "string", "description": "관계·스페셜 팀컬러 이름 (일부만 써도 됨)"},
+                "player": {"type": "string", "description": "선수 이름 (예: 박지성)"},
+                "effect": {"type": "string", "description": "능력치 이름 (예: 골 결정력, 전체 능력치)"},
+            },
+            [],
+        ),
+    },
+    {
         "name": "get_meta_trends",
         "description": (
             "랭커 메타 동향: 많이 쓰는 팀컬러(전체 랭커일 때)·포메이션 비율, 가장 많이 쓰인 선수, "
@@ -415,7 +435,12 @@ class ToolError(Exception):
 
 class Toolbox:
     def __init__(
-        self, conn: sqlite3.Connection, catalog: TeamColorCatalog | None = None, *, min_sample: int = MIN_SAMPLE
+        self,
+        conn: sqlite3.Connection,
+        catalog: TeamColorCatalog | None = None,
+        *,
+        min_sample: int = MIN_SAMPLE,
+        team_color_info: list[dict[str, Any]] | None = None,
     ):
         self.conn = conn
         self.min_sample = min_sample  # 이보다 표본이 적으면 팀컬러 전체 포메이션으로 폴백
@@ -423,6 +448,7 @@ class Toolbox:
         UsageStore(conn)
         self.conn.executescript(MARKET_SCHEMA)  # 시세 미수집이어도 조인이 되도록
         self.catalog = catalog or TeamColorCatalog.load()
+        self.team_color_info = teamcolor_info.load() if team_color_info is None else team_color_info
         self._handlers: dict[str, Callable[..., dict[str, Any]]] = {
             "resolve_terms": self.resolve_terms,
             "list_available_data": self.list_available_data,
@@ -435,6 +461,7 @@ class Toolbox:
             "query_rankers": self.query_rankers,
             "get_formation_overview": self.get_formation_overview,
             "get_team_color_overview": self.get_team_color_overview,
+            "get_team_color_info": self.get_team_color_info,
         }
 
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
@@ -1573,6 +1600,41 @@ class Toolbox:
                 "salary": r["salary"],
             }
         return {**label, **metrics}
+
+    def get_team_color_info(self, team_color: str = "", player: str = "", effect: str = "") -> dict[str, Any]:
+        if not self.team_color_info:
+            return {"note": "관계·스페셜 팀컬러 정보를 아직 수집하지 않음"}
+        if not (team_color or player or effect).strip():
+            raise ToolError("team_color, player, effect 중 하나가 필요합니다")
+        def key(text: str) -> str:
+            return "".join(text.split()).casefold()
+
+        entries = self.team_color_info
+        if team_color:
+            want = key(team_color)
+            exact = [e for e in entries if key(e["name"]) == want]
+            entries = exact or [e for e in entries if want in key(e["name"])]
+        if player:
+            want = key(player)
+            entries = [e for e in entries if any(key(p["name"]) == want for p in e.get("players") or [])]
+        if effect:
+            want = key(effect)
+            entries = [e for e in entries if any(want in key(x) for lv in e["levels"] for x in lv["effects"])]
+        base = {"source": "FC온라인 데이터센터 팀컬러 페이지 (관계·스페셜)", "matches": len(entries)}
+        if not entries:
+            hint = None
+            if team_color and self.catalog.resolve(TEAM_COLOR_ALIASES.get(key(team_color), team_color)):
+                hint = "클럽·국가 팀컬러입니다 → get_team_color_overview"
+            return {**base, "team_colors": [], "hint": hint}
+        if len(entries) > MAX_TEAM_COLOR_INFO:  # 많으면 이름만
+            return {**base, "names": [e["name"] for e in entries[:MAX_TEAM_COLOR_NAMES]],
+                    "note": "많아서 이름만 보여 줌. 하나를 골라 team_color로 다시 조회"}  # fmt: skip
+        return {**base, "team_colors": [
+            {"name": e["name"], "type": teamcolor_info.TYPES[e["type"]], "description": e["description"], "levels": e["levels"],
+             **({"players": [p["name"] for p in e["players"]], "players_complete": e["players_complete"]} if e["type"] == "relation"
+                else {"players": "해당 시즌 클래스 카드 전부"})}
+            for e in entries
+        ]}  # fmt: skip
 
     # --- evidence ----------------------------------------------------------
 

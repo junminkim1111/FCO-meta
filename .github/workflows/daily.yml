@@ -34,8 +34,8 @@ jobs:
         run: pip install ".[cloud]"
       - name: Download DB (Hugging Face dataset)
         run: python -m fco_meta.cloud pull-db
-      - name: Collect (top 1,000)
-        run: python -m fco_meta.daily run --top 1000
+      - name: Collect (top 10,000)
+        run: python -m fco_meta.daily run --top 10000
       - name: Status
         if: always()
         run: python -m fco_meta.daily status

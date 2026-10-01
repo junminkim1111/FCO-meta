@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+from fco_meta.analytics.usage import UsageStore
 from fco_meta.market.storage import MarketStorage
 from fco_meta.pipeline.store import PipelineStore
 from fco_meta.retention import prune
@@ -32,6 +33,13 @@ def build(path):
             "INSERT INTO match_player (match_id, ouid, sp_id, season_id, pid, sp_position, starter) VALUES (?, 'o', 1, 1, 1, 25, 1)", (match_id,)
         )  # fmt: skip
         conn.execute("INSERT INTO match_team (match_id, ouid) VALUES (?, 'o')", (match_id,))
+    UsageStore(conn)
+    for as_of in (OLD, RECENT, LATEST):
+        conn.execute("INSERT INTO usage_sample VALUES (?, '1vs1', 0, 'all', 0, 1, 1, ?)", (as_of, as_of))
+        conn.execute(
+            "INSERT INTO usage_stats VALUES (?, '1vs1', 0, 'all', 0, 'ST', 1, 1, 1, 1, 1, 1.0, NULL, NULL, NULL, '{}', NULL, NULL, ?)",
+            (as_of, as_of),
+        )  # fmt: skip
     prices = [(1, "2026-09-01T00:00:00+00:00"), (1, "2026-10-29T00:00:00+00:00"), (2, "2026-09-01T00:00:00+00:00")]
     conn.executemany("INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (?, 5, 100, ?)", prices)
     conn.commit()
@@ -46,16 +54,18 @@ def test_prune_keeps_recent_latest_and_last_prices(tmp_path):
     conn = build(tmp_path / "db.sqlite")
     deleted = prune(conn, NOW)
 
-    assert dates(conn, "ranker_squad") == [RECENT, LATEST]  # 경기 원본 14일 (9월 1일은 지움)
+    assert dates(conn, "ranker_squad") == [LATEST]  # 경기 원본 3일 (9월 1일·10월 25일은 지움)
     assert dates(conn, "ranker_snapshot") == [RECENT, LATEST]  # 랭킹 30일
-    # 남은 스쿼드의 경기와 최근 경기는 남고, 오래된 경기(스쿼드와 함께 지운 m0, 연결 없는 x-old)만 지운다
-    assert sorted(r[0] for r in conn.execute("SELECT match_id FROM match_player")) == ["m1", "m2", "x-new"]
-    assert sorted(r[0] for r in conn.execute("SELECT match_id FROM match")) == ["m1", "m2", "x-new"]
+    # 남은 스쿼드의 경기와 최근 경기는 남고, 오래된 경기(스쿼드와 함께 지운 m0·m1, 연결 없는 x-old)만 지운다
+    assert sorted(r[0] for r in conn.execute("SELECT match_id FROM match_player")) == ["m2", "x-new"]
+    assert sorted(r[0] for r in conn.execute("SELECT match_id FROM match")) == ["m2", "x-new"]
     # 카드 1: 오래된 기록은 지우고 최신만, 카드 2: 오래됐어도 그게 유일한 최신 시세라 남긴다
     assert sorted(tuple(r) for r in conn.execute("SELECT spid, fetched_at FROM card_price")) == [
         (1, "2026-10-29T00:00:00+00:00"), (2, "2026-09-01T00:00:00+00:00"),
     ]  # fmt: skip
-    assert deleted["ranker_squad"] == 1 and deleted["card_price"] == 1
+    assert deleted["ranker_squad"] == 2 and deleted["card_price"] == 1
+    assert dates(conn, "usage_sample") == [RECENT, LATEST]  # 사용률 집계 8일
+    assert dates(conn, "usage_stats") == [RECENT, LATEST]
 
 
 def test_latest_snapshot_is_kept_even_when_old(tmp_path):
@@ -85,3 +95,5 @@ def test_old_style_match_records_are_slimmed(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM match_player WHERE starter = 1 AND stats IS NOT NULL").fetchone()[0] > 0  # 선발 기록은 유지
     assert deleted["교체 선수 기록 비움"] == 1
     assert "팀 상세를 스코어만 남김" not in prune(conn, NOW)  # 한 번 줄이면 다시 건드리지 않는다
+    # 선발 스탯은 최신 스쿼드 스냅샷의 경기(m2)만 (x-new는 상대 포메이션 전적용이라 포지션·결과만)
+    assert {m for (m,) in conn.execute("SELECT match_id FROM match_player WHERE stats IS NOT NULL")} == {"m2"}

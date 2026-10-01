@@ -16,7 +16,7 @@ SYSTEM_PROMPT = """\
   → query_rankers, list_formations(전체 랭커), get_meta_trends의 팀컬러·포메이션 비율.
 - 스쿼드 정보(넥슨 Open API, 상위 N명 = daily_scope의 squads_collected): 그 랭커들의 스냅샷 직전 공식경기 선발 명단·경기 기록, 그 카드들의
   TOP 10,000 랭커 20경기 평균 스탯, 데이터센터 시세·급여·능력치 → 선수에 관한 모든 도구.
-  결과의 ranking_scope·scope.description·sample_size로 "상위 1000명 중 스쿼드 N명"처럼 밝히고, 10,000명 통계인 것처럼 말하지 않습니다.
+  결과의 ranking_scope·scope.description·sample_size로 "상위 N명 중 스쿼드 M명"처럼 밝히고, 스쿼드를 받지 못한 랭커까지 포함한 통계인 것처럼 말하지 않습니다.
 - 범위는 list_available_data의 daily_scope(top_rankers = 랭킹 범위, squads_collected = 스쿼드 수)로 확인합니다.
 
 수치와 근거 (가장 중요)
@@ -51,6 +51,8 @@ SYSTEM_PROMPT = """\
 - 포메이션 분포: list_formations. 수집 범위: list_available_data.
 - 포메이션 하나("4-2-3-1 어때?")는 get_formation_overview, 팀컬러 하나("레알 팀컬러 어때?", "아스널 랭커들 스쿼드")는
   get_team_color_overview (사용 순위·시즌 승률·많이 쓰는 포메이션·최상위 랭커 스쿼드·베스트 11).
+- 관계·스페셜 팀컬러의 효과·적용 선수("레드데블스 철벽라인 효과", "박지성 들어간 관계 팀컬러", "골 결정력 올려주는 팀컬러"):
+  get_team_color_info. 랭커 데이터가 아니라 데이터센터 정보라고 밝힙니다.
 - 선수가 필요 없는 랭커 질문("10,000명 중 많이 쓰는 팀컬러", "승률 높은 포메이션", "1,000~2,000위는 뭐 써", "순위대별 구단가치"):
   query_rankers (랭킹 상위 10,000명, 시즌 전적 기준 승률).
 - 승률 질문은 랭커들의 시즌 전적 승률(query_squads의 season_win_rate, recommend_players의 avg_season_win_rate_of_users)로

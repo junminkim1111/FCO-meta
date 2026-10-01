@@ -4,6 +4,7 @@ from test_pipeline import AS_OF, F442, F4231, F4231_OTHER_DM, LATER, FakeApi, de
 
 from fco_meta.analytics import ALL_FORMATIONS, UsageStore, top_players
 from fco_meta.analytics.__main__ import main
+from fco_meta.analytics.usage import squad_range
 from fco_meta.openapi import CallBudget, NexonOpenApiClient
 from fco_meta.pipeline import PipelineStore, SquadCollector, select_targets
 from fco_meta.storage import Storage
@@ -114,3 +115,14 @@ def test_cli_top(db, tmp_path, capsys):
     assert code == 0
     assert "아스널 4-2-3-1 DM 사용 TOP 5" in out and "표본 3명 / 조합 3명" in out
     assert "1. 볼란치R: 2명 (66.7%)" in out and "S250 1명, S300 1명" in out
+
+
+def test_squad_range_skips_ranks_the_ranking_skips(tmp_path):
+    conn = Storage(tmp_path / "db.sqlite").conn
+    PipelineStore(conn)
+    as_of = "2026-10-01T09:00:00+09:00"
+    for rank in (1, 2, 4, 5):  # 2위가 동점 둘 → 다음은 4위 (3위 없음)
+        conn.execute("INSERT INTO ranker_snapshot (data_as_of, mode, rank, run_id, nickname) VALUES (?, '1vs1', ?, 1, 'x')", (as_of, rank))
+    for rank in (1, 2, 4):
+        conn.execute("INSERT INTO ranker_squad_status (data_as_of, mode, rank, status, updated_at) VALUES (?, '1vs1', ?, 'ok', ?)", (as_of, rank, as_of))
+    assert squad_range(conn, as_of) == 4  # 5위는 아직

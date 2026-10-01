@@ -5,24 +5,55 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FCLM</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
-<meta name="theme-color" content="#09090b">
+<meta name="theme-color" content="#101116">
+<script>
+  // 테마: 사용자가 고른 값(전환 버튼, 이 브라우저에만 저장) → 없으면 기기 설정. 그리기 전에 정한다
+  try { var t = localStorage.getItem("fclm-theme"); } catch (e) {}
+  document.documentElement.dataset.theme = t || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+</script>
 <style>
-  /* 에이전트형 다크 테마: 거의 검은 바탕 + 은은한 빛, 반투명 패널, 얇은 테두리 */
+  /* 에이전트형 다크 테마: 거의 검은 바탕 + 은은한 빛, 반투명 패널, 얇은 테두리 (라이트는 아래 [data-theme="light"]) */
   :root {
     color-scheme: dark;
-    --bg: #09090b; --panel: rgba(255, 255, 255, .035); --panel-strong: rgba(255, 255, 255, .06);
+    --bg: #101116; --bg-2: #262833; --panel: rgba(255, 255, 255, .035); --panel-strong: rgba(255, 255, 255, .06);
     --line: rgba(255, 255, 255, .08); --line-strong: rgba(255, 255, 255, .16);
     --text: #ededef; --muted: #8e8e98; --faint: #5f5f69;
     --accent: #a5b4fc; --glow-a: rgba(99, 102, 241, .16); --glow-b: rgba(56, 189, 248, .10);
     --bar: #3987e5; --track: rgba(255, 255, 255, .06);
     --warn-bg: rgba(242, 204, 96, .10); --warn: #f2cc60;
     --win: #3987e5; --draw: #5a5955; --loss: #e66767;  /* 승·무·패: 파랑↔빨강 + 중립 회색 (dataviz 기준 팔레트, 다크) */
+    --on-text: #0b0b0d; --strong: #fff; --error: #ff8a8a; --field: rgba(0, 0, 0, .35); --tip-bg: #16161a; --code-bg: #0f0f12;
+    --pitch-1: #11151c; --pitch-2: #0e1218; --pitch-glow: rgba(99, 102, 241, .18); --pitch-line: rgba(255, 255, 255, .16);
+    --pitch-name: var(--text); --ph-bg: #1a1d24; --name-shadow: 0 1px 3px rgba(0, 0, 0, .9); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
     --radius: 16px;
   }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    /* 네이비 바탕 + 밝은 블루 패널 (패널 밖 로고 줄·수집 범위·푸터는 아래에서 밝은 글자로) */
+    --bg: #203a63; --bg-2: #3a5d93; --panel: rgba(233, 240, 250, .97); --panel-strong: rgba(30, 64, 120, .05);
+    --line: rgba(30, 64, 120, .11); --line-strong: rgba(30, 64, 120, .22);
+    --text: #151a24; --muted: #56607a; --faint: #8a93a8;
+    --accent: #4f46e5; --glow-a: rgba(99, 102, 241, .16); --glow-b: rgba(56, 189, 248, .18);
+    --bar: #3987e5; --track: rgba(30, 64, 120, .07);
+    --warn-bg: rgba(234, 179, 8, .12); --warn: #8a6100;
+    --win: #3987e5; --draw: #a8a7a1; --loss: #e15b5b;
+    --on-text: #fff; --strong: #000; --error: #c62828; --field: #fff; --tip-bg: #fff; --code-bg: #eef2f8;
+    /* 경기장: 잔디 줄무늬 + 흰 선 */
+    --pitch-1: #3f9a4c; --pitch-2: #378d44; --pitch-glow: rgba(255, 255, 255, .10); --pitch-line: rgba(255, 255, 255, .62);
+    --pitch-name: #fff; --ph-bg: #e8edf3; --name-shadow: 0 1px 3px rgba(0, 0, 0, .55); --logo-a: #6366f1; --logo-b: #0ea5e9;
+  }
+  /* 라이트 모드에서 네이비 바탕에 바로 놓이는 것들: 밝은 글자·선 */
+  :root[data-theme="light"] :is(header, #asof, .foot) {
+    --text: #eef3fb; --muted: #bccae0; --faint: #97aacb; --accent: #a5b4fc;
+    --panel-strong: rgba(255, 255, 255, .08); --line: rgba(255, 255, 255, .16); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
+  }
+  :root[data-theme="light"] header .brand { background: #e9f0fa; } /* 오브는 라이트에서 어두운 점이라 밝은 칸에 */
   * { box-sizing: border-box; }
   body { margin: 0; color: var(--text); min-height: 100vh;
          background: radial-gradient(1100px 520px at 12% -12%, var(--glow-a), transparent 60%),
-                     radial-gradient(900px 480px at 100% -8%, var(--glow-b), transparent 60%), var(--bg);
+                     radial-gradient(900px 480px at 100% -8%, var(--glow-b), transparent 60%),
+                     linear-gradient(120deg, var(--bg), var(--bg-2)) fixed; /* 왼쪽 위 → 오른쪽 아래로 밝아진다 (화면 기준) */
+         background-color: var(--bg);
          font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
          -webkit-font-smoothing: antialiased; }
   /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
@@ -31,6 +62,12 @@
                   display: flex; align-items: center; justify-content: center; flex: none; }
   header h1 { margin: 0; line-height: 0; }
   header h1 svg { height: 28px; width: auto; }
+  header .logo-a { stop-color: var(--logo-a); } header .logo-b { stop-color: var(--logo-b); }
+  /* 라이트/다크 전환 (로고 줄 오른쪽 끝) */
+  #theme { margin-left: auto; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;
+           background: var(--panel-strong); color: var(--muted); border: 1px solid var(--line); }
+  #theme:hover { color: var(--text); opacity: 1; }
+  #theme svg { width: 18px; height: 18px; }
   main { --head-h: 60px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
          max-width: 1640px; margin: 0 auto; padding: 16px; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -42,14 +79,14 @@
   section h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .stat { color: var(--muted); font-size: 13px; font-weight: 400; }
   .notice { background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(242, 204, 96, .2); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
-  .error { color: #ff8a8a; font-size: 14px; margin-top: 12px; }
+  .error { color: var(--error); font-size: 14px; margin-top: 12px; }
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
-  button { font: inherit; background: var(--text); color: #0b0b0d; border: none; border-radius: 999px; padding: 8px 16px;
+  button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
            cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s; }
   button:hover { opacity: .9; }
   button:disabled { opacity: .5; cursor: wait; }
   button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  textarea { font: inherit; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid var(--line); border-radius: 16px;
+  textarea { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 16px;
              padding: 12px 16px; min-width: 0; transition: border-color .15s; resize: none; line-height: 1.5; }
   textarea::placeholder { color: var(--faint); }
   textarea:focus { border-color: var(--line-strong); outline: none; }
@@ -76,7 +113,7 @@
   h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; margin: 22px 0 10px; }
   /* 분포 전환 (static/segment.js — React Bits Rubber Segment, MIT + Commons Clause © David Haz) */
   .dist-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-  .rubber-segment { --rs-track: rgba(255, 255, 255, .06); --rs-thumb: var(--text); --rs-ink: var(--text); --rs-ink-active: #0b0b0d;
+  .rubber-segment { --rs-track: var(--track); --rs-thumb: var(--text); --rs-ink: var(--text); --rs-ink-active: var(--on-text);
     --rs-radius: 10px; --rs-inset: 3px; --rs-thumb-radius: 7px; --rs-h: 34px; --rs-font: 13px; --rs-pad: 14px; --rs-min: 44px;
     --rs-idle: .7; --rs-hover: .9; --rs-ease-out: cubic-bezier(.23, 1, .32, 1);
     position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); vertical-align: middle;
@@ -99,23 +136,23 @@
     border-radius: var(--rs-thumb-radius); }
   .rubber-segment__copy { color: inherit; opacity: 1; cursor: default; }
   @media (prefers-reduced-motion: reduce) { .rubber-segment__item { transition: opacity 160ms ease; } }
-  .seg { display: inline-flex; background: rgba(0, 0, 0, .35); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
+  .seg { display: inline-flex; background: var(--field); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
   .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 5px 14px; }
   .seg button.on { background: var(--panel-strong); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .caption { font-size: 13px; color: var(--muted); margin: 10px 0; }
   .pitch { position: relative; width: 100%; max-width: 494px; aspect-ratio: 68 / 88; margin: 0 auto; border-radius: 14px; overflow: hidden;
            border: 1px solid var(--line);
-           background: radial-gradient(120% 80% at 50% 0%, rgba(99, 102, 241, .18), transparent 70%),
-                       repeating-linear-gradient(180deg, #11151c 0 11.1%, #0e1218 11.1% 22.2%); }
-  .pitch::before { content: ""; position: absolute; inset: 4%; border: 1px solid rgba(255, 255, 255, .16); border-radius: 4px; }
-  .pitch .mid { position: absolute; left: 4%; right: 4%; top: 50%; border-top: 1px solid rgba(255, 255, 255, .16); }
+           background: radial-gradient(120% 80% at 50% 0%, var(--pitch-glow), transparent 70%),
+                       repeating-linear-gradient(180deg, var(--pitch-1) 0 11.1%, var(--pitch-2) 11.1% 22.2%); }
+  .pitch::before { content: ""; position: absolute; inset: 4%; border: 1px solid var(--pitch-line); border-radius: 4px; }
+  .pitch .mid { position: absolute; left: 4%; right: 4%; top: 50%; border-top: 1px solid var(--pitch-line); }
   .pitch .circle { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%, -50%);
-                   border: 1px solid rgba(255, 255, 255, .16); border-radius: 50%; }
-  .pitch .box { position: absolute; left: 26%; right: 26%; height: 14%; border: 1px solid rgba(255, 255, 255, .16); }
+                   border: 1px solid var(--pitch-line); border-radius: 50%; }
+  .pitch .box { position: absolute; left: 26%; right: 26%; height: 14%; border: 1px solid var(--pitch-line); }
   .pitch .box.top { top: 4%; border-top: 0; } .pitch .box.bottom { bottom: 4%; border-bottom: 0; }
   .pp { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; width: 22%; }
   .pp .pw { position: relative; } /* 사진 틀: 강화 표시는 둥근 사진 밖으로 나와도 보이도록 사진 옆에 둔다 */
-  .pp .ph { width: 57px; height: 57px; border-radius: 50%; background: #1a1d24; overflow: hidden;
+  .pp .ph { width: 57px; height: 57px; border-radius: 50%; background: var(--ph-bg); overflow: hidden;
             display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700;
             border: 1px solid var(--line-strong); box-shadow: 0 0 18px rgba(99, 102, 241, .25); }
   .pp .ph img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
@@ -127,12 +164,12 @@
   .pp .gr.silver { background: linear-gradient(140deg, #d8d9dc, #b8bdca); color: #4e545e; }
   .pp .gr.gold { background: linear-gradient(140deg, #f9dd62, #dca908); color: #695100; }
   .pp .gr.platinum { background: #dfe3f5 url(https://ssl.nexon.com/s2/game/fc/online/obt/datacenter/bg_plt.png) 0 0 / 100% 100%; color: #2d2b43; }
-  .pp .nm { margin-top: 4px; max-width: 100%; font-size: 14px; color: var(--text); text-align: center; white-space: nowrap; overflow: hidden;
-            text-overflow: ellipsis; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); display: flex; align-items: center; gap: 2px; }
+  .pp .nm { margin-top: 4px; max-width: 100%; font-size: 14px; color: var(--pitch-name); text-align: center; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; text-shadow: var(--name-shadow); display: flex; align-items: center; gap: 2px; }
   .pp .nm img { height: 14px; }
   @media (max-width: 520px) { .pp .ph { width: 34px; height: 34px; } .pp .nm { font-size: 10px; } .pp .nm img { height: 11px; }
                               .pp .gr { font-size: 10px; line-height: 14px; padding: 0 4px; } }
-  .empty-pitch { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); padding: 20%; font-size: 13px; height: 100%; }
+  .empty-pitch { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--pitch-name); opacity: .75; padding: 20%; font-size: 13px; height: 100%; }
   .mu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; font-size: 13px; }
   .mu .f { font-variant-numeric: tabular-nums; }
   .mu .stack { display: flex; height: 10px; gap: 2px; }
@@ -149,7 +186,7 @@
   .band .track span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; }
   .band .v { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-  #tip { position: fixed; pointer-events: none; background: #16161a; color: var(--text); border: 1px solid var(--line-strong); font-size: 12px;
+  #tip { position: fixed; pointer-events: none; background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); font-size: 12px;
          padding: 6px 9px; border-radius: 8px; white-space: pre; z-index: 10; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
 
   /* chat */
@@ -165,7 +202,7 @@
                               #chat { flex: 1; min-height: 0; } #log { max-height: none; } }
   .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
   /* 사용자 질문만 말풍선, 챗봇 답은 박스 없이 대화 영역에 바로 (LLM 채팅처럼) */
-  .msg.me { align-self: flex-end; max-width: 80%; background: var(--text); color: #0b0b0d; border-bottom-right-radius: 4px; }
+  .msg.me { align-self: flex-end; max-width: 80%; background: var(--text); color: var(--on-text); border-bottom-right-radius: 4px; }
   .msg.bot { align-self: stretch; max-width: 100%; padding: 2px; border-radius: 0; line-height: 1.6; }
   /* 마크다운으로 그린 답 (static/md.js) */
   .msg.md { white-space: normal; line-height: 1.55; }
@@ -173,11 +210,11 @@
   .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 0 0 8px; }
   .md ul, .md ol { padding-left: 20px; } .md li + li { margin-top: 2px; }
   .md h1, .md h2, .md h3, .md h4 { font-size: 14px; font-weight: 600; color: var(--text); margin: 12px 0 6px; }
-  .md strong { color: #fff; font-weight: 600; }
+  .md strong { color: var(--strong); font-weight: 600; }
   .md a { color: var(--accent); }
   .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--panel-strong);
              border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
-  .md pre { background: #0f0f12; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  .md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
   .md pre code { background: none; border: 0; padding: 0; }
   .md blockquote { border-left: 3px solid var(--line-strong); padding-left: 10px; color: var(--muted); }
   .md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
@@ -191,7 +228,7 @@
   .msg.intro { color: var(--muted); font-size: 13px; } /* 첫 안내 문구 */
   .msg.me + .msg { margin-top: 8px; } /* 질문과 그 답 사이 */
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
-  .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, #fff 50%, var(--muted) 60%, var(--muted) 100%);
+  .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--strong) 50%, var(--muted) 60%, var(--muted) 100%);
              background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
              animation: shimmer 2.2s linear infinite; }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
@@ -207,7 +244,7 @@
   /* 보내기(↑)·정지(■): 금속 링(static/metal.js, libraries.dev/metal v1)을 두른 원형 버튼, 입력창 안 오른쪽 아래 */
   #msg-beam .metal-fx-root { position: absolute; right: 10px; bottom: 10px; z-index: 4; border-radius: 50%; }
   #send { width: 36px; height: 36px; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-          color: #f8f8f8; font-size: 14px; line-height: 1; }
+          color: inherit; font-size: 14px; line-height: 1; } /* 금속 링 테마 색 (다크 #f8f8f8 · 라이트 #1d1d1d) */
   #send svg { width: 18px; height: 18px; }
 </style>
 </head>
@@ -219,16 +256,17 @@
     <div>
       <!-- FCLM 로고: 획으로 그린 글자, C는 센터서클과 센터스폿 -->
       <h1><svg viewBox="-1 -1 84 26" role="img" aria-label="FCLM"><title>FCLM</title>
-        <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" stop-color="#c7d2fe"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient></defs>
+        <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" class="logo-a"/><stop offset="1" class="logo-b"/></linearGradient></defs>
         <g fill="none" stroke="url(#logo-g)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 22V2h12M2 11.5h9"/>
           <path d="M38.07 4.93A10 10 0 1 0 38.07 19.07"/>
           <path d="M44 2v20h11"/>
           <path d="M62 22V2l9 12 9-12v20"/>
         </g>
-        <circle cx="31" cy="12" r="2.6" fill="#a5b4fc"/>
+        <circle cx="31" cy="12" r="2.6" style="fill: var(--accent)"/>
       </svg></h1>
     </div>
+    <button type="button" id="theme"></button>
   </header>
   <section aria-label="랭커 분포">
     <div class="dist-head"><div id="dist-mode"></div><span id="form-scope" class="stat"></span></div>
@@ -259,12 +297,40 @@
 import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
-import { mountMetal } from "/static/metal.js"; // 보내기 버튼의 금속 링
+import { mountMetal, setMetalTheme } from "/static/metal.js"; // 보내기 버튼의 금속 링
 import { mountSegment } from "/static/segment.js"; // 포메이션 분포 / 팀컬러 분포 전환
 const $ = (id) => document.getElementById(id);
-const beam = mountBeam($("msg-beam"));
+const theme = () => document.documentElement.dataset.theme;
+const beam = mountBeam($("msg-beam"), theme());
 const SEND_ICON = $("send").innerHTML; // 위쪽 화살표 (답을 기다리는 동안은 ■)
+setMetalTheme(theme());
 mountMetal($("send"));
+
+// --- 라이트/다크 전환: 누르면 이 브라우저에 저장, 고른 적 없으면 기기 설정을 따라간다 ---
+const THEME_ICON = {  // 지금과 반대 테마의 아이콘 (누르면 그쪽으로)
+  light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 0 0 11 11z"/></svg>',
+  dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>',
+};
+function applyTheme(next) {
+  document.documentElement.dataset.theme = next;
+  document.querySelector('meta[name="theme-color"]').content = next === "light" ? "#203a63" : "#101116";
+  $("theme").innerHTML = THEME_ICON[next];
+  $("theme").ariaLabel = next === "light" ? "다크 모드로 전환" : "라이트 모드로 전환";
+  $("theme").title = $("theme").ariaLabel;
+  beam.setTheme(next);
+  setMetalTheme(next);
+}
+applyTheme(theme());
+$("theme").addEventListener("click", () => {
+  const next = theme() === "light" ? "dark" : "light";
+  try { localStorage.setItem("fclm-theme", next); } catch {}
+  applyTheme(next);
+});
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", (ev) => {
+  let saved = null;
+  try { saved = localStorage.getItem("fclm-theme"); } catch {}
+  if (!saved) applyTheme(ev.matches ? "light" : "dark");
+});
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
@@ -553,6 +619,7 @@ const TOOL_STATUS = {
   query_rankers: () => "상위 10,000명 랭킹을 집계하고 있어요...",
   get_formation_overview: (a) => `${a.formation || "포메이션"} 전적을 살펴보고 있어요...`,
   get_team_color_overview: (a) => `${a.team_color || "팀컬러"} 랭커들을 살펴보고 있어요...`,
+  get_team_color_info: (a) => `${a.team_color || a.player || a.effect || ""} 팀컬러 정보를 찾고 있어요...`,
   get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
   check_numbers: () => "수치를 다시 확인하고 있어요...", // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
 };

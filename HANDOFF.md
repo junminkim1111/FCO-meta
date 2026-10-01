@@ -96,7 +96,7 @@ tests/         pytest (네트워크 없음, fixtures/openapi/는 익명화된 �
 ### 주요 명령
 
 ```bash
-python -m fco_meta.daily run [--top 1000 --no-wait --ranker-stats-calls 200 --price-requests 1500 --detail-cards 600 -v]   # 매일 수집
+python -m fco_meta.daily run [--top 10000 --no-wait --ranker-stats-calls 200 --price-requests 1500 --detail-cards 600 -v]   # 매일 수집
 python -m fco_meta.daily status
 python -m fco_meta.daily schedule --at 00:00                                 # KST 자정마다 실행 (프로세스 상주)
 python -m fco_meta.pipeline squads --top 300 | meta | budget | formations | ranker-stats
@@ -113,7 +113,8 @@ python -m fco_meta.web [--backend rules] [--port 8000]
 - 랭킹 페이지 스냅샷은 약 2.5시간 늦게 갱신되고, Open API 반영은 약 2시간 늦습니다.
   그래서 자정에 실행하면 대개 대기 없이 바로 수집됩니다.
 - 랭커 1명당 호출: `id` 1회(ouid 캐시 후 0회) + `user/match` 1회 + `match-detail` 몇 회.
-  2026-09-30 넥슨 **서비스 단계 키**를 새로 발급받아(하루 2천만 회·초당 500회) 상위 **1,000명**을 수집합니다. 한도는 `.env`의 `NEXON_DAILY_LIMIT`(맥 50000)·`NEXON_RPS`(20),
+  2026-09-30 넥슨 **서비스 단계 키**를 새로 발급받아(하루 2천만 회·초당 500회) 상위 **1,000명**을, 2026-10-01부터 GitHub Actions에서 **10,000명**을 수집합니다.
+  10,000명이면 경기 원본이 하루 약 1만 경기라 원본 보관은 3일(선발 스탯은 최신 스냅샷 경기만), 사용률 집계는 8일입니다(`retention.py`). 한도는 `.env`의 `NEXON_DAILY_LIMIT`(맥 50000)·`NEXON_RPS`(20),
   기본값은 개발 키 기준(1,000회·5회)입니다. 메타데이터 3회(META_RESERVE)와 랭커 스탯 몫(최대 200회, 남은 예산의 10% 이하)을 남겨 둡니다.
 - matchId의 앞 4바이트는 경기 시작 시각(unix)입니다. 이 시각이 스냅샷 이후인 경기는 상세 호출 없이 건너뜁니다.
 - 팀컬러 소속은 필터 조회 결과(`source='filter'`)를 표시 기반 추정(`'display'`)보다 우선합니다.

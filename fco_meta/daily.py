@@ -1,6 +1,6 @@
 """Daily collection: ranking TOP N → squads → usage stats.
 
-    python -m fco_meta.daily run --top 1000           # 지금 한 번
+    python -m fco_meta.daily run --top 10000          # 지금 한 번
     python -m fco_meta.daily schedule --at 00:00      # 매일 00:00 (KST)에 반복 (프로세스를 띄워 둔다)
     python -m fco_meta.daily status                   # 수집 상태 확인
 
@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path("data/fco_meta.sqlite")
 META_RESERVE = 3  # 메타데이터 갱신용으로 남겨 둘 호출 수
-DEFAULT_TOP = 1000  # 스쿼드를 받을 랭커 수 (랭커당 2~3회 호출). 개발 키(하루 1,000회)면 남은 랭커는 다음 날 이어서 수집
+DEFAULT_TOP = 10_000  # 스쿼드를 받을 랭커 수 (랭커당 2~3회 호출). 일일 한도가 모자라면 남은 랭커는 다음 날 이어서 수집
 DEFAULT_RANK_TOP = 10_000  # 웹에서 받을 랭킹 범위 (팀컬러·포메이션·시즌 전적, API 불필요, 500페이지 ≈ 17분)
 RANK_RESTARTS = 1  # 긴 랭킹 수집 도중 정각 갱신이 일어나면 처음부터 다시 받는 횟수
 
@@ -137,7 +137,10 @@ def run_daily(
     storage = Storage(db)
     try:
         # 1. 랭킹 TOP N (스쿼드 대상, 필수) + 2. 팀컬러 소속
-        crawl = crawl_rankings(datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(top / PAGE_SIZE))
+        # TOP 10,000이면 약 17분이라 도중에 정각 갱신을 만날 수 있다 → 처음부터 다시
+        crawl = crawl_rankings(
+            datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(top / PAGE_SIZE), restarts=RANK_RESTARTS
+        )
         latest = latest_unfiltered_snapshot(storage.conn, mode)
         if latest is None:
             raise RuntimeError(f"ranking crawl failed (status={crawl.status})")

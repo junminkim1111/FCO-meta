@@ -122,7 +122,7 @@ def test_status_lines(tmp_path, fixture_html):
     run_daily(tmp_path / "db.sqlite", top=10, datacenter=dc, api=api, now=lambda: datetime(2026, 9, 29, tzinfo=timezone.utc))
     text = "\n".join(status_lines(tmp_path / "db.sqlite"))
     assert "상위 20명 수집 (웹)" in text and "상위 10명 중 10명 처리 — ok 10" not in text
-    assert "상위 1000명 중 10명 처리 — ok 10" in text  # 기본 스쿼드 범위 1,000명 중 (랭킹이 20명뿐이라 10명)
+    assert "상위 10000명 중 10명 처리 — ok 10" in text  # 기본 스쿼드 범위 10,000명 중 (랭킹이 20명뿐이라 10명)
     assert "상위 10명 중 10명 처리 — ok 10" in "\n".join(status_lines(tmp_path / "db.sqlite", top=10))
     assert "포메이션별 스쿼드(전체 랭커):" in text and "Open API 사용" in text
     assert "랭커" in text and "ouid" not in text  # 개인 식별 정보 없음

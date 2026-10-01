@@ -419,17 +419,23 @@ def usage_history(
 
 
 def squad_range(conn: sqlite3.Connection, data_as_of: str, mode: str = "1vs1") -> int:
-    """Squad collection range of a snapshot: the largest k such that ranks 1..k were all processed.
+    """Squad collection range of a snapshot: the largest k such that every ranker ranked 1..k was processed.
 
     The ranking may cover TOP 10,000 while squads cover only the top few hundred (API limit), and
-    team-color collections add scattered deeper ranks — those don't extend the range.
+    team-color collections add scattered deeper ranks — those don't extend the range. Ranks the
+    ranking skips (ties: 5956위가 둘이면 다음은 5958위) are not gaps.
     """
     UsageStore(conn)
+    processed = {
+        rank for (rank,) in conn.execute(
+            "SELECT DISTINCT rank FROM ranker_squad_status WHERE data_as_of = ? AND mode = ?", (data_as_of, mode)
+        )
+    }  # fmt: skip
     k = 0
     for (rank,) in conn.execute(
-        "SELECT DISTINCT rank FROM ranker_squad_status WHERE data_as_of = ? AND mode = ? ORDER BY rank", (data_as_of, mode)
+        "SELECT rank FROM ranker_snapshot WHERE data_as_of = ? AND mode = ? ORDER BY rank", (data_as_of, mode)
     ):
-        if rank != k + 1:
+        if rank not in processed:
             break
         k = rank
     return k
