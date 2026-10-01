@@ -35,7 +35,7 @@ def client(db, tmp_path):  # noqa: F811
 
 def test_index_and_static(client):
     res = client.get("/")
-    assert res.status_code == 200 and "<title>FCLM</title>" in res.text and "/api/formation?" in res.text
+    assert res.status_code == 200 and "<title>FCLM | FC Online 랭커 데이터 기반 AI</title>" in res.text and "/api/formation?" in res.text
     assert res.headers["cache-control"] == "no-cache"  # 수정한 화면이 바로 보이게
     assert client.get("/static/orb.js").headers["cache-control"] == "no-cache"
     examples = [q for q in client.get("/static/examples.txt").text.splitlines() if q.strip()]  # 입력창 예시 질문
