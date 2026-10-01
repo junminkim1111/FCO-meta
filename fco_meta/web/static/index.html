@@ -196,6 +196,13 @@
           color: var(--muted); font-size: 13px; }
   @media (max-width: 860px) { #asof { height: auto; justify-content: flex-start; padding: 0 2px 8px; } }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
+  /* 챗봇 칸 강조: 로고 색(보라→하늘) 그라데이션 테두리와 바깥 빛, 큰 제목 */
+  #chat { position: relative; border-color: transparent;
+          box-shadow: 0 0 36px -6px rgba(99, 102, 241, .45), 0 0 80px -20px rgba(56, 189, 248, .35); }
+  #chat::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
+                  background: linear-gradient(135deg, var(--logo-a), var(--logo-b));
+                  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+  #chat h2 { font-size: 18px; font-weight: 700; }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 10px; max-height: 60vh; }
   /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
   @media (min-width: 861px) { .side { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); }
