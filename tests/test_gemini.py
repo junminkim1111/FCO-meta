@@ -558,3 +558,45 @@ def test_final_round_without_text(toolbox):
     loop = response([{"function_call": {"name": "list_formations", "args": {"team_color": "x"}}}])
     turn = GeminiChat(FakeClient([loop] * (MAX_TOOL_ROUNDS + 1)), toolbox).ask("?")
     assert turn.finish_reason == "tool_limit" and "답을 만들지 못했습니다" in turn.text
+
+
+class BreaksMidStream(FakeModels):
+    """Per model: a list of streams, each a list of chunks or exceptions (raised when reached)."""
+
+    def __init__(self, streams):
+        super().__init__([])
+        self.streams = {m: list(s) for m, s in streams.items()}
+
+    def generate_content_stream(self, *, model, contents, config):
+        self.requests.append({"model": model, "contents": list(contents), "config": config})
+        for item in self.streams[model].pop(0):
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+
+def test_stream_broken_mid_answer_is_asked_again_on_the_next_model(toolbox):
+    from fco_meta.chatbot.gemini import RESET
+
+    client = FakeClient([])
+    client.models = BreaksMidStream({
+        "primary": [[response([{"text": "4-2-3-1이 "}], finish=None), _unavailable()]],  # 몇 글자 뒤 끊김
+        "backup": [[response([{"text": "4-2-3-1이 1위입니다."}])]],
+    })  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=lambda s: None)
+    events, turn = events_of(chat.ask_stream("포메이션 순위"))
+    assert events == ["4-2-3-1이 ", RESET, "4-2-3-1이 1위입니다."]  # 보인 글은 지우고 처음부터 다시
+    assert turn.text == "4-2-3-1이 1위입니다." and chat.last_model == "backup"  # 끊긴 모델은 잠시 건너뜀
+    assert [c.role for c in chat.contents] == ["user", "model"]  # 끊긴 답은 기록에 남지 않는다
+
+
+def test_stream_broken_twice_gives_up(toolbox):
+    from google.genai import errors
+
+    broken = [response([{"text": "앞부분"}], finish=None), _unavailable()]
+    client = FakeClient([])
+    client.models = BreaksMidStream({"primary": [list(broken)], "backup": [list(broken)]})
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=lambda s: None)
+    with pytest.raises(errors.ServerError):  # 웹은 혼잡 안내를 보인다
+        chat.ask("질문")
+    assert chat.contents == []  # 실패한 질문은 기록에서 뺀다

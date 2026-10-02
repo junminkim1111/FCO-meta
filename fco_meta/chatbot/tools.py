@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import math
 import re
 import sqlite3
@@ -47,6 +48,8 @@ from ..market.roles import ROLES, resolve_roles
 from ..market.storage import SCHEMA as MARKET_SCHEMA
 from ..pipeline.formation import FORMATIONS
 from ..storage import latest_unfiltered_snapshot, unfiltered_coverage
+
+log = logging.getLogger(__name__)
 
 # 흔한 줄임말·다른 표기 → 팀컬러 목록의 이름 (data/team_color_aliases.json, 키는 공백 제거·소문자)
 ALIASES_PATH = Path(__file__).resolve().parents[2] / "data" / "team_color_aliases.json"
@@ -471,8 +474,12 @@ class Toolbox:
             return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False), True
         try:
             return json.dumps(handler(**tool_input), ensure_ascii=False), False
-        except (ToolError, TypeError) as exc:
+        except (ToolError, TypeError, ValueError) as exc:  # 잘못된 인자·조합 → 모델이 고쳐 다시 부른다
             return json.dumps({"error": str(exc)}, ensure_ascii=False), True
+        except Exception as exc:  # 예상 못 한 오류(DB 등): 답 전체를 실패시키지 않고 도구 오류로 돌려준다
+            log.exception("tool %s(%s) failed", name, tool_input)
+            error = f"도구 실행 중 오류({type(exc).__name__}) — 조건을 바꿔 다시 부르거나 이 도구 없이 답할 것"
+            return json.dumps({"error": error}, ensure_ascii=False), True
 
     # --- helpers -----------------------------------------------------------
 

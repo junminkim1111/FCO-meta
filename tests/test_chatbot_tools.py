@@ -372,3 +372,19 @@ def test_player_detail_top10000_stats(toolbox):  # noqa: F811
     # 경기 수 가중: 태클 (3.0×100 + 1.0×300) / 400, 패스 성공률 (45×100 + 40×300) / (50×400)
     assert stats["matches"] == 400 and stats["tackle"] == 1.5 and stats["pass_success_rate"] == 0.825
     assert "top10000_stats" in r["definitions"]
+
+
+def test_unexpected_tool_failures_come_back_as_tool_errors(toolbox, monkeypatch):
+    import json as _json
+
+    # 잘못된 조합(analytics의 ValueError): 모델이 고쳐 다시 부를 수 있게 그 이유를 돌려준다
+    content, is_error = toolbox.run("query_squads", {"group_by": "role", "sort_by": "price"})
+    assert is_error and "price" in _json.loads(content)["error"]
+
+    # 예상 못 한 오류(DB 등): 답 전체를 실패시키지 않고 도구 오류로
+    def broken(**kwargs):
+        raise sqlite3.OperationalError("database disk image is malformed")
+
+    monkeypatch.setitem(toolbox._handlers, "list_formations", broken)
+    content, is_error = toolbox.run("list_formations", {})
+    assert is_error and "OperationalError" in _json.loads(content)["error"]

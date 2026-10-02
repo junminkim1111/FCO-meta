@@ -56,6 +56,7 @@ def _cooldown_until(exc: Any, now: float) -> float:
     return now + OVERLOAD_COOLDOWN
 RETRYABLE = (429, 500, 503, 504)
 RETRY_DELAYS = (1.0, 3.0)  # 같은 모델 재시도 간격(초) → 그다음 대체 모델
+MID_STREAM_RETRIES = 1  # 답이 흘러나오던 중 끊기면 그 단계를 다시 받는 횟수 (그래도 끊기면 혼잡 안내)
 MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
 MAX_EVIDENCE = 4  # GeminiTurn.evidence 줄 수
@@ -392,24 +393,44 @@ class GeminiChat:
                 kept.append(types.Content(role=content.role, parts=parts))
         self.contents = kept
 
-    def _round(self, config: Any = None) -> Generator[str, None, tuple[list[Any], str, Any]]:
+    def _round(self, config: Any = None) -> Generator[str | Reset, None, tuple[list[Any], str, Any]]:
         """One model call: yields its text as it arrives and returns (parts, finish reason, block reason).
-        The chunks' parts are kept as they came, to be recorded as one model turn (signatures intact)."""
-        received: list[Any] = []
-        finish, blocked = "None", None
-        for chunk in self._generate(config):
-            if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
-                blocked = chunk.prompt_feedback.block_reason
-            candidate = chunk.candidates[0] if chunk.candidates else None
-            if candidate is None:
-                continue
-            if candidate.finish_reason:
-                finish = str(candidate.finish_reason.value)
-            for part in (candidate.content.parts if candidate.content else None) or []:
-                received.append(part)
-                if part.text and not part.thought:
-                    yield part.text
-        return received, finish, blocked
+        The chunks' parts are kept as they came, to be recorded as one model turn (signatures intact).
+
+        A stream that breaks after it started (5xx/429, dropped connection) is asked again once — the retry
+        and fallback in `_generate` only cover opening it. Text already shown is cleared with RESET."""
+        import httpx
+        from google.genai import errors
+
+        for attempt in range(MID_STREAM_RETRIES + 1):
+            received: list[Any] = []
+            finish, blocked, started, shown = "None", None, False, False
+            try:
+                for chunk in self._generate(config):
+                    started = True
+                    if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
+                        blocked = chunk.prompt_feedback.block_reason
+                    candidate = chunk.candidates[0] if chunk.candidates else None
+                    if candidate is None:
+                        continue
+                    if candidate.finish_reason:
+                        finish = str(candidate.finish_reason.value)
+                    for part in (candidate.content.parts if candidate.content else None) or []:
+                        received.append(part)
+                        if part.text and not part.thought:
+                            shown = True
+                            yield part.text
+                return received, finish, blocked
+            except (errors.APIError, httpx.TransportError) as exc:
+                code = getattr(exc, "code", None)
+                if not started or attempt == MID_STREAM_RETRIES or (code is not None and code not in RETRYABLE):
+                    raise
+                if code is not None:  # 혼잡·한도로 끊긴 모델은 잠시 건너뛰어 다시 받을 때는 다음 모델로
+                    _COOLDOWN[self.last_model] = _cooldown_until(exc, self.now())
+                log.warning("%s: stream broke mid-answer (%s), asking again", self.last_model, describe_error(exc))
+                if shown:
+                    yield RESET
+        raise AssertionError("unreachable")
 
     def _checked(
         self, question: str, text: str, finish: str, known: list[Any]
