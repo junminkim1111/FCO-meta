@@ -561,6 +561,10 @@ const say = (who, text) => {
   return node;
 };
 const THINKING = "랭커데이터를 살펴보고 있어요...";
+const RECHECK = "보다 정확한 답을 드리기 위해 수치를 재검토 중이에요. 잠시만 기다려 주세요.";
+// 오래 걸리면 도구별 문구 대신: 1분이 넘으면 둘 중 하나(질문마다 무작위), 1분 30초가 넘으면 마지막 문구
+const LONG_WAIT = ["열심히 찾아보는 중이에요. 조금만 기다려 주세요...", "확실한 답을 드리기 위해 노력하고 있어요. 조금만 기다려 주세요..."];
+const ALMOST = "거의 다 찾아봤어요. 잠시만 기다려 주세요...";
 // 모델이 도구를 부르면 기다리는 문구를 그 도구에 맞게 바꾼다 (a = 도구 인자)
 const tc = (a) => (a.team_color ? a.team_color + " " : "");
 const TOOL_STATUS = {
@@ -576,7 +580,7 @@ const TOOL_STATUS = {
   get_team_color_overview: (a) => `${a.team_color || "팀컬러"} 랭커들을 살펴보고 있어요...`,
   get_team_color_info: (a) => `${a.team_color || a.player || a.effect || ""} 팀컬러 정보를 찾고 있어요...`,
   get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
-  check_numbers: () => "수치를 다시 확인하고 있어요...", // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
+  check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
 };
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
 let inflight = null;
@@ -616,6 +620,17 @@ async function send(text) {
     $("log").scrollTop = $("log").scrollHeight;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
   };
+  // 기다리는 문구: 도구에 맞는 문구, 1분·1분 30초가 넘으면 오래 걸린다는 안내 (수치 재검토 안내는 그대로)
+  const started = performance.now(), longWait = LONG_WAIT[Math.floor(Math.random() * LONG_WAIT.length)];
+  let waitLine = THINKING;
+  const status = (line) => {
+    waitLine = line;
+    const waited = (performance.now() - started) / 1000;
+    const text = line === RECHECK ? line : waited >= 90 ? ALMOST : waited >= 60 ? longWait : line;
+    const node = bubble.querySelector(".shimmer"); // 답이 나오기 시작했으면 없다
+    if (node && node.textContent !== text) node.replaceWith(el("span", { class: "shimmer fresh", text }));
+  };
+  const timers = [60, 90].map((sec) => setTimeout(() => status(waitLine), sec * 1000));
   const grow = (piece) => {
     if (stopOrb) { stopOrb(); stopOrb = null; bubble.className = "msg bot"; bubble.removeAttribute("title"); bubble.replaceChildren(); }
     answer += piece;
@@ -636,14 +651,12 @@ async function send(text) {
         const ev = JSON.parse(line);
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
         else if (ev.type === "delta") grow(ev.text);
-        else if (ev.type === "tool" && stopOrb) { // 기다리는 중이면 문구를 그 도구에 맞게
-          const line = TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING;
-          bubble.querySelector(".shimmer").replaceWith(el("span", { class: "shimmer fresh", text: line }));
-        }
+        else if (ev.type === "tool" && stopOrb) status(TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING); // 기다리는 중이면 문구를 그 도구에 맞게
         else if (ev.type === "reset" && !stopOrb) { // 도구를 부르기 전에 쓴 글 → 지우고 다시 기다린다
           cancelAnimationFrame(frame);
           answer = "", shown = 0, frame = 0;
           stopOrb = thinking(bubble);
+          status(THINKING); // 1분이 넘었으면 오래 걸린다는 안내로
         }
       }
     }
@@ -651,6 +664,7 @@ async function send(text) {
     // 질문 수 제한(429)은 안내 문구 그대로, 그 밖의 실패는 "오류:"를 붙여 보여 준다
     if (!ctrl.signal.aborted) grow((answer ? "\n\n" : "") + (e.status === 429 ? "" : "오류: ") + e.message);
   }
+  timers.forEach(clearTimeout);
   setBusy(null);
   if (ctrl.signal.aborted && !answer) {
     stopOrb();
