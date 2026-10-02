@@ -82,9 +82,11 @@ def test_serve_downloads_in_a_child_process(monkeypatch):
 
     calls = []
     monkeypatch.setenv("HF_DATA_REPO", "me/fclm-data")
-    monkeypatch.setattr(cloud.subprocess, "run", lambda cmd, check: calls.append(cmd))
+    envs = []
+    monkeypatch.setattr(cloud.subprocess, "run", lambda cmd, check, env: calls.append(cmd) or envs.append(env))
     monkeypatch.setattr(web_main, "main", lambda argv: calls.append(argv) or 0)
     assert cloud.serve(1234) == 0
     download, web = calls  # 받기가 끝난 뒤 웹 (받기 메모리는 자식 프로세스와 함께 반납)
     assert download[-1] == "from fco_meta.cloud import pull_db; pull_db('me/fclm-data')"
+    assert envs[0]["HF_HUB_DISABLE_XET"] == "1"  # xet 다운로더는 DB 크기만큼 메모리를 써서 512MB를 넘긴다
     assert web == ["--db", "data/fco_meta.sqlite", "--host", "0.0.0.0", "--port", "1234", "--log-to-dataset", "me/fclm-data"]

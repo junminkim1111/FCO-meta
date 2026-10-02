@@ -64,10 +64,13 @@ def pull_db(repo: str) -> str:
 def serve(port: int) -> int:
     from .web.__main__ import main as web
 
-    # 받기는 따로 프로세스에서: 다운로더(xet)가 300MB 넘게 쓰는데, 같은 프로세스면 웹을 여는 동안에도 그 메모리가
-    # 남아 Render 무료(512MB)를 넘긴다. 따로 돌리면 끝날 때 모두 반납된다.
+    # 받기는 따로 프로세스에서, xet 없이: xet 다운로더는 DB 크기만큼 메모리를 써서(369MB DB → 442MB) Render 무료(512MB)
+    # 에서 켜지다 꺼지기를 반복했다. 보통 HTTP 다운로드는 170MB 안팎이고, 따로 돌리면 끝날 때 모두 반납된다.
     repo = os.environ["HF_DATA_REPO"]
-    subprocess.run([sys.executable, "-c", f"from fco_meta.cloud import pull_db; pull_db({repo!r})"], check=True)
+    subprocess.run(
+        [sys.executable, "-c", f"from fco_meta.cloud import pull_db; pull_db({repo!r})"],
+        check=True, env={**os.environ, "HF_HUB_DISABLE_XET": "1"},
+    )  # fmt: skip
     return web(["--db", str(DB), "--host", "0.0.0.0", "--port", str(port), "--log-to-dataset", repo])
 
 
