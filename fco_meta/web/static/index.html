@@ -206,6 +206,12 @@
   .msg.cancelled { color: var(--muted); font-size: 13px; }
   .msg.intro { color: var(--muted); font-size: 13px; } /* 첫 안내 문구 */
   .msg.me + .msg { margin-top: 8px; } /* 질문과 그 답 사이 */
+  /* 채팅에 /admin → 관리자 비밀번호 입력 */
+  .admin-row { display: flex; gap: 8px; margin-top: 8px; max-width: 360px; }
+  .admin-row input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line);
+                     border-radius: 10px; padding: 8px 12px; }
+  .admin-row button { padding: 8px 14px; }
+  .admin-note { color: var(--error); font-size: 13px; margin-top: 6px; }
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--strong) 50%, var(--muted) 60%, var(--muted) 100%);
              background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -255,7 +261,7 @@
     <p class="stat">막대를 누르면 여기에 그 포메이션·팀컬러 정보가 나옵니다.</p>
   </section>
   <!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
-  <footer class="foot">Data based on NEXON Open API · 시세·선수 정보: FC온라인 데이터센터 · 질문은 Google Gemini로 처리됩니다</footer>
+  <footer class="foot">Data based on NEXON Open API · 시세·선수 정보: FC온라인 데이터센터 · 질문은 Google Gemini로 처리되며 서비스 개선을 위해 기록됩니다</footer>
   </div>
 
   <div class="side">
@@ -662,11 +668,36 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
     $("chat-form").requestSubmit();
   }
 });
+// 채팅에 "/admin": 질문으로 보내지 않고 관리자 비밀번호를 받아, 맞으면 답변 기록 페이지로 간다
+function adminPrompt() {
+  const input = el("input", { type: "password", placeholder: "관리자 비밀번호", autocomplete: "current-password", required: true });
+  const note = el("div", { class: "admin-note", role: "alert" });
+  const form = el("form", { class: "msg bot" }, el("div", { text: "관리자 비밀번호를 입력하세요." }),
+                  el("div", { class: "admin-row" }, input, el("button", { type: "submit", text: "확인" })), note);
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const res = await fetch("/api/admin/logs?days=1", { headers: { "X-Admin-Key": input.value } }).catch(() => null);
+    if (res && res.ok) {
+      try { sessionStorage.setItem("fclm-admin", input.value); } catch {} // 기록 페이지가 다시 묻지 않도록 (이 탭에만)
+      location.href = "/admin";
+      return;
+    }
+    // 3회부터 남은 기회 안내, 5회 틀리면 이 IP는 막힌다 (서버가 알려 준 문구 그대로)
+    const detail = res && res.status !== 404 ? (await res.json().catch(() => ({}))).detail : null;
+    note.textContent = !res ? "연결하지 못했습니다." : res.status === 404 ? "관리자 페이지가 꺼져 있습니다." : detail || "비밀번호가 맞지 않습니다.";
+    if (res && res.status === 403) for (const c of form.querySelectorAll("input, button")) c.disabled = true;
+    else input.select();
+  });
+  $("log").append(form);
+  $("log").scrollTop = $("log").scrollHeight;
+  input.focus();
+}
 $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
   if (!text || inflight) return; // 답을 기다리는 중에는 입력한 글을 그대로 둔다
   $("msg").value = "";
+  if (text.toLowerCase() === "/admin") return adminPrompt();
   send(text);
 });
 // 입력창 안내: 예시 질문(static/examples.txt) 중 하나를 무작위로

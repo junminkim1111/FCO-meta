@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>FCLM 관리자 | 답변 기록</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101116; --panel: rgba(255, 255, 255, .045); --line: rgba(255, 255, 255, .1); --line-strong: rgba(255, 255, 255, .18);
+    --text: #ededef; --muted: #8e8e98; --faint: #5f5f69; --accent: #a5b4fc;
+    --ok: #3987e5; --cached: #7dd3fc; --busy: #e66767; --limited: #f2cc60; --cancelled: #8e8e98;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .bar .grow { flex: 1; }
+  button, select, input { font: inherit; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid var(--line);
+                          border-radius: 8px; padding: 6px 12px; }
+  button { cursor: pointer; } button.on { border-color: var(--accent); color: var(--accent); }
+  .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 720px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .tile .k { font-size: 12px; color: var(--muted); }
+  .tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile .p { font-size: 12px; color: var(--faint); }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #days-table th:not(:first-child), #errors th:nth-child(2) { text-align: right; } /* 숫자 칸 제목도 오른쪽 */
+  td.t { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.q { min-width: 220px; }
+  td.err { color: var(--busy); font-size: 12px; word-break: break-word; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+           border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .cached { color: var(--cached); } .busy { color: var(--busy); }
+  .limited { color: var(--limited); } .cancelled { color: var(--cancelled); }
+  .error { color: var(--busy); }
+  #login { max-width: 360px; }
+  .back { color: var(--muted); text-decoration: none; font-size: 13px; } .back:hover { color: var(--text); }
+  #login form { display: flex; gap: 8px; } #login input { flex: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar"><a href="/" class="back">← FCLM</a><h1>답변 기록</h1><span class="grow"></span>
+    <select id="days" aria-label="기간"><option value="1">오늘</option><option value="7" selected>최근 7일</option><option value="30">최근 30일</option></select>
+    <button id="reload" type="button">새로고침</button>
+  </div>
+  <section id="login" hidden>
+    <h2>관리자 비밀번호</h2>
+    <form><input id="key" type="password" autocomplete="current-password" required><button type="submit">보기</button></form>
+    <p id="login-error" class="error"></p>
+  </section>
+  <div id="view" hidden>
+    <section><div id="tiles" class="tiles"></div><p id="note" class="muted"></p></section>
+    <section><h2>날짜별</h2><div class="scroll"><table id="days-table"></table></div></section>
+    <section><h2>혼잡 안내가 나간 원인</h2><div class="scroll"><table id="errors"></table></div></section>
+    <section><div class="bar"><h2>최근 질문</h2><span class="grow"></span><div id="filters" class="bar"></div></div>
+      <div class="scroll"><table id="recent"></table></div></section>
+  </div>
+</main>
+<script>
+const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김" };
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) k === "text" ? (n.textContent = v) : k === "class" ? (n.className = v) : (n[k] = v);
+  for (const k of kids) if (k != null) n.append(k);
+  return n;
+};
+const row = (cells, head) => el("tr", {}, ...cells.map((c) => (c instanceof Node ? el(head ? "th" : "td", {}, c) : el(head ? "th" : "td", { text: c ?? "" }))));
+const cell = (cls, text) => el("td", { class: cls, text });
+const badge = (o) => el("span", { class: "badge " + o, text: LABEL[o] || o });
+let data = null, filter = "all";
+// 비밀번호는 이 탭에만 기억한다 (저장소를 못 쓰는 브라우저면 이 페이지를 연 동안만)
+let adminKey = "";
+try { adminKey = sessionStorage.getItem("fclm-admin") || ""; } catch {}
+
+async function load() {
+  if (!adminKey) return showLogin("");
+  const res = await fetch("/api/admin/logs?days=" + $("days").value, { headers: { "X-Admin-Key": adminKey } });
+  if (res.status === 401 || res.status === 403) { // 3회부터 경고, 5회 틀리면 이 IP는 막힘 (서버 문구 그대로)
+    adminKey = "";
+    try { sessionStorage.removeItem("fclm-admin"); } catch {}
+    const detail = (await res.json().catch(() => ({}))).detail;
+    showLogin(detail || "비밀번호가 맞지 않습니다.");
+    if (res.status === 403) $("login").querySelector("form").hidden = true;
+    return;
+  }
+  if (!res.ok) return showLogin(`불러오지 못했습니다 (${res.status})`);
+  data = await res.json();
+  $("login").hidden = true; $("view").hidden = false;
+  render();
+}
+function showLogin(message) { $("login").hidden = false; $("view").hidden = true; $("login-error").textContent = message; }
+
+function render() {
+  const total = data.total || 0;
+  $("tiles").replaceChildren(
+    el("div", { class: "tile" }, el("div", { class: "k", text: "전체 질문" }), el("div", { class: "v", text: total.toLocaleString() })),
+    ...Object.keys(LABEL).map((o) => el("div", { class: "tile" }, el("div", { class: "k " + o, text: LABEL[o] }),
+      el("div", { class: "v", text: (data.by_outcome[o] || 0).toLocaleString() }),
+      el("div", { class: "p", text: total ? ((data.by_outcome[o] / total) * 100).toFixed(1) + "%" : "-" }))),
+  );
+  $("note").textContent = `${data.since}부터 · 기록은 10분마다(서버가 잠들 때도) 저장됩니다` +
+    (data.pending ? ` · 아직 저장 전 ${data.pending}건 포함` : "");
+  $("days-table").replaceChildren(row(["날짜", ...Object.values(LABEL)], true),
+    ...data.by_day.map((d) => el("tr", {}, cell("t", d.date), ...Object.keys(LABEL).map((o) => cell("n", d[o] || "")))));
+  $("errors").replaceChildren(row(["원인", "횟수", "마지막"], true),
+    ...(data.errors.length ? data.errors.map((e) => el("tr", {}, cell("err", e.error), cell("n", e.count), cell("t", e.last.slice(5, 16).replace("T", " "))))
+                           : [el("tr", {}, el("td", { colSpan: 3, class: "muted", text: "없음" }))]));
+  $("filters").replaceChildren(...["all", ...Object.keys(LABEL)].map((o) => {
+    const b = el("button", { type: "button", text: o === "all" ? "전체" : LABEL[o], class: o === filter ? "on" : "" });
+    b.addEventListener("click", () => { filter = o; render(); });
+    return b;
+  }));
+  const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter);
+  $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간"], true),
+    ...shown.map((r) => el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome)),
+      el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null),
+      cell("", (r.tools || []).join(", ")), cell("t", r.model || ""), cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""))));
+}
+
+$("login").querySelector("form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  adminKey = $("key").value;
+  try { sessionStorage.setItem("fclm-admin", adminKey); } catch {}
+  load();
+});
+$("reload").addEventListener("click", load);
+$("days").addEventListener("change", load);
+load();
+</script>
+</body>
+</html>

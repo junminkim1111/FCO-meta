@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--backend", choices=["gemini", "rules"], default="gemini", help="챗봇 (기본 gemini)")
     parser.add_argument("--model", help="Gemini 모델")
+    parser.add_argument("--log-to-dataset", metavar="REPO", help="답변 기록을 이 비공개 HF 데이터셋의 logs/에 올린다 (Render, cloud serve)")
     args = parser.parse_args(argv)
     # 챗봇 도구 호출·재시도 로그를 서버 터미널에 남긴다 (문제 확인용)
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -47,9 +48,19 @@ def main(argv: list[str] | None = None) -> int:
     if notice:
         print(notice, file=sys.stderr)
     print(f"http://{args.host}:{args.port} 에서 열립니다 (챗봇: {'Gemini' if backend == 'gemini' else '규칙 기반'})", flush=True)
-    app = create_app(args.db, backend=backend, gemini_model=args.model)
+    from .chatlog import ChatLog, HfLogStore
+
+    if args.log_to_dataset:
+        from huggingface_hub import HfApi
+
+        chat_log = ChatLog(HfLogStore(HfApi(), args.log_to_dataset))
+        threading.Thread(target=chat_log.run_flusher, daemon=True).start()
+    else:
+        chat_log = ChatLog()  # 기록은 이 프로세스 메모리에만
+    app = create_app(args.db, backend=backend, gemini_model=args.model, chat_log=chat_log)
     threading.Thread(target=app.state.warm, daemon=True).start()  # 첫 화면 조회를 미리 (요청은 그동안에도 받는다)
     uvicorn.run(app, host=args.host, port=args.port)
+    chat_log.flush()  # 서버가 꺼질 때(Render가 잠재울 때 포함) 남은 기록을 올린다
     return 0
 
 

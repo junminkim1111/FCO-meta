@@ -24,7 +24,10 @@ pip install -e ".[cloud]"
 python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_TOKEN, 쓰기) Render에 재배포 요청 (run_daily.command가 수집 뒤 자동 실행)
 ```
 
-- Render에서 **New → Blueprint**로 이 저장소를 고르면 `render.yaml`대로 만들어지고, `HF_DATA_REPO`·`HF_TOKEN`(데이터셋 **읽기** 토큰)·`GEMINI_API_KEY`를 묻습니다.
+- Render에서 **New → Blueprint**로 이 저장소를 고르면 `render.yaml`대로 만들어지고, `HF_DATA_REPO`·`HF_TOKEN`(데이터셋 **쓰기** 토큰 — 답변 기록을 올림)·`GEMINI_API_KEY`·`ADMIN_KEY`를 묻습니다.
+- **답변 기록**: `https://<서비스>/admin`에서 `ADMIN_KEY`로 들어가면 정상·캐시·혼잡 안내·질문 수 제한·정지 건수, 날짜별 표, 혼잡 안내가 나간 원인(오류)별 횟수, 최근 질문(원문·도구·모델·걸린 시간)을 봅니다.
+  기록은 서버 메모리에 모았다가 10분마다(서버가 잠들 때도) 데이터셋의 `logs/날짜/*.jsonl`로 올립니다. 방문자 IP는 남기지 않습니다(`web/chatlog.py`).
+  채팅창에 `/admin`을 입력해도 비밀번호 창이 뜹니다. 비밀번호를 3회 틀리면 경고, 5회 틀리면 그 IP는 관리자 페이지에 들어올 수 없습니다(서버 메모리 기준이라 재시작·재배포 때 풀림).
 - 만든 뒤 서비스 Settings의 **Deploy Hook** 주소를 맥 `.env`의 `RENDER_DEPLOY_HOOK`에 넣으면 push-db가 재배포까지 요청합니다.
 - 코드는 GitHub에 푸시하면 Render가 자동으로 다시 빌드합니다. 질문 수 제한은 프록시가 넘겨주는 `X-Forwarded-For`의 첫 주소로 셉니다.
 
@@ -34,7 +37,7 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
 - 웹 서버는 이 맥 안(127.0.0.1)에서만 열리고 밖에서는 터널로만 들어옵니다. 방문자 IP는 터널이 넘겨주는 `CF-Connecting-IP`로 셉니다.
 - 질문 수 제한(`web/app.py`의 `RateLimit`): 한 사람(IP)당 1분 6개 · 하루 60개, 서비스 전체 하루 300개(한국 시간 자정 초기화). 넘으면 429와 안내 문구.
 - 화면 아래 `Data based on NEXON Open API` 표기는 넥슨 Open API 이용 조건입니다(지우지 마세요).
-- 무료 Gemini 등급은 입력이 구글 제품 개선에 쓰일 수 있어, 화면에 "질문은 Google Gemini로 처리됩니다"를 적어 두었습니다.
+- 무료 Gemini 등급은 입력이 구글 제품 개선에 쓰일 수 있어, 화면에 "질문은 Google Gemini로 처리되며 서비스 개선을 위해 기록됩니다"를 적어 두었습니다(질문 원문을 답변 기록에 남기므로).
   공개 서비스로 넓힐 때는 유료 등급, 넥슨 서비스 단계 키(유효한 서비스 URL 필요), 상시 서버를 준비합니다.
 
 - conda 환경 `fco-meta`의 파이썬을 자동으로 찾습니다 (`~/anaconda3`, `/opt/anaconda3`, miniconda·miniforge, `.venv` 순).

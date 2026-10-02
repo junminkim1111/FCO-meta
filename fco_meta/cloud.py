@@ -5,7 +5,7 @@
     python -m fco_meta.cloud serve     # 서버에서 (Render 시작 명령): 데이터셋의 DB를 받아 웹을 연다
 
 맥 .env: HF_TOKEN(쓰기 권한), 선택으로 HF_DATA_REPO(기본 <계정>/fclm-data), RENDER_DEPLOY_HOOK(Render의 Deploy Hook 주소).
-서버 환경 변수: HF_DATA_REPO, HF_TOKEN(읽기 권한), GEMINI_API_KEY. 포트는 PORT(Render가 넣어 줌).
+서버 환경 변수: HF_DATA_REPO, HF_TOKEN(쓰기 권한 — 답변 기록을 logs/에 올림), GEMINI_API_KEY, ADMIN_KEY(/admin 비밀번호). 포트는 PORT(Render가 넣어 줌).
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def serve(port: int) -> int:
     # 남아 Render 무료(512MB)를 넘긴다. 따로 돌리면 끝날 때 모두 반납된다.
     repo = os.environ["HF_DATA_REPO"]
     subprocess.run([sys.executable, "-c", f"from fco_meta.cloud import pull_db; pull_db({repo!r})"], check=True)
-    return web(["--db", str(DB), "--host", "0.0.0.0", "--port", str(port)])
+    return web(["--db", str(DB), "--host", "0.0.0.0", "--port", str(port), "--log-to-dataset", repo])
 
 
 def main(argv: list[str] | None = None) -> int:

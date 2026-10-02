@@ -254,3 +254,86 @@ def test_page_results_are_reused_until_the_db_changes(client, tmp_path, monkeypa
     os.utime(db_file, ns=(db_file.stat().st_atime_ns, db_file.stat().st_mtime_ns + 1_000_000_000))  # 수집으로 DB가 바뀜
     client.get("/api/formation", params={"name": "4231"})
     assert calls.count("get_formation_overview") == 2
+
+
+def test_chat_outcomes_are_logged_for_the_admin_page(db, tmp_path, monkeypatch):  # noqa: F811
+    from google.genai import errors
+
+    import fco_meta.web.app as web_app
+    from fco_meta.chatbot.gemini import GeminiTurn, ToolCall
+    from fco_meta.web.app import RateLimit
+    from fco_meta.web.chatlog import ChatLog
+
+    class Bot:
+        model = last_model = "gemini-a"
+
+        def __init__(self):
+            self.contents = []
+
+        def ask_stream(self, message):
+            if "고장" in message:
+                yield "쓰다가 "
+                raise errors.ServerError(503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})
+            yield ToolCall("recommend_players", {"role": "DM"})
+            yield "라이스입니다."
+            self.contents += [message, "라이스입니다."]
+            return GeminiTurn("라이스입니다.", [("recommend_players", {"role": "DM"})], "STOP")
+
+        def remember(self, question, answer):
+            self.contents += [question, answer]
+
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda toolbox, model: Bot())
+    log = ChatLog()
+    app = create_app(tmp_path / "db.sqlite", backend="gemini", chat_log=log, admin_key="secret", limit=RateLimit(per_minute=3))
+    client = TestClient(app)
+    ask(client, "아스날 볼란치")
+    ask(client, "아스날 볼란치")  # 새 대화의 같은 첫 질문 → 캐시
+    ask(client, "고장 나는 질문")
+    assert client.post("/api/chat", json={"message": "네 번째"}).status_code == 429
+
+    rows = sorted(log.pending, key=lambda r: r["outcome"])
+    assert [(r["outcome"], r["q"]) for r in rows] == [
+        ("busy", "고장 나는 질문"), ("cached", "아스날 볼란치"), ("limited", "네 번째"), ("ok", "아스날 볼란치"),
+    ]  # fmt: skip
+    busy, _, limited, ok = rows
+    assert "503" in busy["error"] and "1분에 3개" in limited["error"]
+    assert ok["tools"] == ["recommend_players"] and ok["model"] == "gemini-a" and ok["ms"] >= 0
+
+    # 관리자 페이지: 비밀번호가 맞아야 기록을 준다
+    assert client.get("/admin").status_code == 200
+    assert client.get("/api/admin/logs").status_code == 401
+    assert client.get("/api/admin/logs", headers={"X-Admin-Key": "wrong"}).status_code == 401
+    summary = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
+    assert summary["total"] == 4 and summary["by_outcome"]["busy"] == 1
+
+
+def test_admin_page_is_hidden_without_a_key(client):
+    assert client.get("/admin").status_code == 404
+    assert client.get("/api/admin/logs", headers={"X-Admin-Key": ""}).status_code == 404
+
+
+def test_admin_warns_from_the_third_wrong_password_and_blocks_the_ip_at_the_fifth(client, db, tmp_path):  # noqa: F811
+    app = create_app(tmp_path / "db.sqlite", admin_key="secret")
+    c = TestClient(app)
+
+    def logs(key, ip="1.1.1.1"):
+        return c.get("/api/admin/logs", headers={"X-Admin-Key": key, "X-Forwarded-For": ip})
+
+    assert logs("").status_code == 401  # 입력 전은 횟수에 넣지 않는다
+    for n in (1, 2):
+        res = logs("wrong")
+        assert res.status_code == 401 and "회 틀렸습니다" not in res.json()["detail"]
+    for n in (3, 4):
+        res = logs("wrong")
+        assert res.status_code == 401 and f"{n}회 틀렸습니다" in res.json()["detail"] and "5회 틀리면" in res.json()["detail"]
+    res = logs("wrong")
+    assert res.status_code == 403 and "막혔습니다" in res.json()["detail"]
+    assert logs("secret").status_code == 403  # 막힌 뒤에는 맞는 비밀번호도 안 된다
+    assert c.get("/admin", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 403
+    assert logs("secret", ip="2.2.2.2").status_code == 200  # 다른 IP는 그대로
+
+    # 맞히면 틀린 횟수는 지운다 (2회 틀림 → 맞힘 → 다시 1회부터)
+    for _ in range(2):
+        logs("wrong", ip="3.3.3.3")
+    assert logs("secret", ip="3.3.3.3").status_code == 200
+    assert "회 틀렸습니다" not in logs("wrong", ip="3.3.3.3").json()["detail"]

@@ -12,7 +12,9 @@ services:
     envVars:  # sync: false = Render 화면에서 값을 직접 넣는다 (저장소에는 값이 없음)
       - key: HF_DATA_REPO   # 예: 계정/fclm-data
         sync: false
-      - key: HF_TOKEN       # 데이터셋 읽기 권한 토큰
+      - key: HF_TOKEN       # 데이터셋 쓰기 권한 토큰 (DB 받기 + 답변 기록을 logs/에 올림)
         sync: false
       - key: GEMINI_API_KEY
+        sync: false
+      - key: ADMIN_KEY      # /admin 답변 기록 페이지 비밀번호 (없으면 페이지가 꺼져 있음)
         sync: false

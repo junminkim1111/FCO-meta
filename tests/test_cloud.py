@@ -87,4 +87,4 @@ def test_serve_downloads_in_a_child_process(monkeypatch):
     assert cloud.serve(1234) == 0
     download, web = calls  # 받기가 끝난 뒤 웹 (받기 메모리는 자식 프로세스와 함께 반납)
     assert download[-1] == "from fco_meta.cloud import pull_db; pull_db('me/fclm-data')"
-    assert web == ["--db", "data/fco_meta.sqlite", "--host", "0.0.0.0", "--port", "1234"]
+    assert web == ["--db", "data/fco_meta.sqlite", "--host", "0.0.0.0", "--port", "1234", "--log-to-dataset", "me/fclm-data"]

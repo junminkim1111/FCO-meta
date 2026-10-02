@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -14,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,6 +24,7 @@ from pydantic import BaseModel, Field
 from ..chatbot.gemini import RESET, Recheck, ToolCall, describe_error
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
+from .chatlog import ChatLog
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +67,53 @@ class RateLimit:
             self.today[who] = self.today.get(who, 0) + 1
             self.total += 1
             return None
+
+
+class AdminGuard:
+    """Admin password checks per visitor: a warning from the WARN_AT-th wrong password, and from the BLOCK_AT-th
+    that visitor (IP) can't reach the admin page at all, even with the right password. Kept in memory: a restart
+    or redeploy (Render sleeps after 15 minutes without visitors) clears it."""
+
+    WARN_AT, BLOCK_AT = 3, 5
+
+    def __init__(self, key: str):
+        self.key = key
+        self.failures: dict[str, int] = {}
+        self.lock = threading.Lock()
+
+    def open_to(self, who: str) -> None:
+        """Raises 404 (no admin page) or 403 (this visitor is blocked)."""
+        if not self.key:
+            raise HTTPException(status_code=404)
+        if self.failures.get(who, 0) >= self.BLOCK_AT:
+            raise HTTPException(status_code=403, detail=self._blocked())
+
+    def check(self, who: str, given: str | None) -> None:
+        """Raises 404 (no admin page), 403 (blocked) or 401 (wrong or missing password)."""
+        with self.lock:
+            self.open_to(who)
+            if not given:  # 아직 입력 전 (틀린 횟수에 넣지 않음)
+                raise HTTPException(status_code=401, detail="관리자 비밀번호를 입력하세요")
+            if hmac.compare_digest(given.encode(), self.key.encode()):
+                self.failures.pop(who, None)
+                return
+            n = self.failures[who] = self.failures.get(who, 0) + 1
+        log.warning("wrong admin password from %s (%d)", who, n)
+        if n >= self.BLOCK_AT:
+            raise HTTPException(status_code=403, detail=self._blocked())
+        detail = "관리자 비밀번호가 맞지 않습니다."
+        if n >= self.WARN_AT:
+            detail += f" {n}회 틀렸습니다 — {self.BLOCK_AT}회 틀리면 이 IP에서 관리자 페이지 접근이 막힙니다."
+        raise HTTPException(status_code=401, detail=detail)
+
+    def _blocked(self) -> str:
+        return f"비밀번호를 {self.BLOCK_AT}회 틀려 이 IP에서 관리자 페이지 접근이 막혔습니다."
+
+
+def _visitor(request: Request) -> str:
+    """The visitor's IP as the tunnel (CF-Connecting-IP) or proxy (first X-Forwarded-For) passes it."""
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return request.headers.get("cf-connecting-ip") or forwarded or (request.client.host if request.client else "?")
 
 
 def _event(**fields: Any) -> str:
@@ -122,10 +172,19 @@ def _open_readonly(db_path: Path) -> sqlite3.Connection:
 
 
 def create_app(
-    db_path: Path | str, *, backend: str = "rules", gemini_model: str | None = None, limit: RateLimit | None = None
+    db_path: Path | str,
+    *,
+    backend: str = "rules",
+    gemini_model: str | None = None,
+    limit: RateLimit | None = None,
+    chat_log: ChatLog | None = None,
+    admin_key: str | None = None,
 ) -> FastAPI:
+    """`admin_key` (기본: 환경 변수 ADMIN_KEY) 가 있으면 /admin 에서 답변 기록을 볼 수 있다."""
     db_path = Path(db_path)
     limit = limit or RateLimit()
+    chat_log = chat_log or ChatLog()
+    admin = AdminGuard(admin_key if admin_key is not None else os.environ.get("ADMIN_KEY", ""))
     if not db_path.exists():
         raise FileNotFoundError(db_path)
     conn = _open_readonly(db_path)
@@ -140,6 +199,7 @@ def create_app(
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
     app.state.conn = conn
+    app.state.chat_log = chat_log
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.middleware("http")
@@ -208,14 +268,14 @@ def create_app(
         """답을 한 줄에 하나씩 JSON 이벤트로 흘려보낸다: start(session_id) → delta(text)… → done.
         reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args).
         질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
-        # 방문자: Cloudflare 터널은 CF-Connecting-IP, Hugging Face 등 프록시는 X-Forwarded-For의 첫 주소
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        who = request.headers.get("cf-connecting-ip") or forwarded or (request.client.host if request.client else "?")
+        who = _visitor(request)
         if refused := limit.check(who):
+            chat_log.record(q=req.message, outcome="limited", error=refused)
             raise HTTPException(status_code=429, detail=refused)
         if backend != "gemini":
             with lock:
                 answer = rules.ask(req.message)
+            chat_log.record(q=req.message, outcome="ok", model="rules", tools=[answer.tool] if answer.tool else [])
             lines = [_event(type="start", session_id=req.session_id), _event(type="delta", text=answer.text),
                      _event(type="done", tool_calls=[answer.tool] if answer.tool else [])]  # fmt: skip
             return StreamingResponse(iter(lines), media_type="application/x-ndjson")
@@ -230,6 +290,15 @@ def create_app(
         bot, busy = session
 
         def events():
+            # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
+            started = time.monotonic()
+            entry: dict[str, Any] = {"q": req.message, "session": session_id[:8], "outcome": "cancelled"}
+            try:
+                yield from answer_events(entry)
+            finally:
+                chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000))
+
+        def answer_events(entry: dict[str, Any]):
             yield _event(type="start", session_id=session_id)
             # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
@@ -238,6 +307,7 @@ def create_app(
                 cached = answers.get(req.message) if first else None
                 if cached is not None:
                     bot.remember(req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
+                    entry.update(outcome="cached", chars=len(cached))
                     yield _event(type="delta", text=cached)
                     yield _event(type="done", tool_calls=[], cached=True)
                     return
@@ -259,6 +329,7 @@ def create_app(
                             yield _event(type="delta", text=piece)
                 except Exception as exc:  # Gemini 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("gemini chat failed: %s", describe_error(exc))
+                    entry.update(outcome="busy", error=describe_error(exc), model=getattr(bot, "last_model", None))
                     yield _event(type="reset")
                     yield _event(type="delta", text=BUSY_MESSAGE)
                     yield _event(type="done", tool_calls=[], error="unavailable")
@@ -269,9 +340,24 @@ def create_app(
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             if first and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
                 answers.put(req.message, turn.text)
+            entry.update(outcome="ok", model=bot.last_model, tools=[n for n, _ in turn.tool_calls],
+                         finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model)
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
+
+    # --- 관리자: 답변 기록 (ADMIN_KEY가 없으면 없는 페이지, 5회 틀린 IP는 막힘) ---
+    @app.get("/admin", include_in_schema=False)
+    def admin_page(request: Request) -> FileResponse:
+        admin.open_to(_visitor(request))
+        return FileResponse(STATIC_DIR / "admin.html")  # 비밀번호는 페이지에서 입력받아 아래 API에 헤더로 보낸다
+
+    @app.get("/api/admin/logs", include_in_schema=False)
+    def admin_logs(
+        request: Request, days: int = Query(default=7, ge=1, le=90), x_admin_key: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        admin.check(_visitor(request), x_admin_key)
+        return chat_log.summary(days)
 
     return app
 
