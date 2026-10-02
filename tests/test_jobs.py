@@ -104,3 +104,18 @@ def test_stale_page_after_a_refresh_is_fetched_again(tmp_path, fixture_html):
     assert [tuple(r) for r in storage.conn.execute("SELECT data_as_of, status FROM crawl_run")] == [
         ("2026-09-28T21:00:00+09:00", "ok")
     ]
+
+
+def test_tied_ranks_keep_every_ranker(tmp_path, fixture_html):
+    """동점은 같은 순위로 표시된다 (2581, 2581, 2583) — 순위가 키라 둘째가 첫째를 덮지 않게 자리 순으로 번호를 매긴다."""
+    from dataclasses import replace
+
+    from fco_meta.crawler.jobs import _untie
+    from fco_meta.crawler.parser import parse_rank_inner
+
+    rows = parse_rank_inner(fixture_html("rank_inner_1vs1_p1.html")).rows[:5]
+    shown = [10, 10, 12, 13, 13]  # 13위 동점이 다음 페이지까지 이어진다
+    page1, tie = _untie([replace(r, rank=k) for r, k in zip(rows, shown)], (None, 0))
+    page2, tie = _untie([replace(rows[0], rank=13), replace(rows[1], rank=16)], tie)
+    assert [r.rank for r in page1 + page2] == [10, 11, 12, 13, 14, 15, 16]
+    assert [r.nickname for r in page1] == [r.nickname for r in rows]  # 순서와 내용은 그대로

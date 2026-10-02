@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..storage import Storage
 from .client import DatacenterClient
+from .models import RankerRow
 from .query import RankQuery
 
 log = logging.getLogger(__name__)
@@ -14,6 +15,20 @@ log = logging.getLogger(__name__)
 # 정각 갱신은 서버마다 조금씩 늦게 퍼져서, 갱신 직후 몇 분은 이전 기준 시각 페이지가 섞여 온다
 STALE_RETRIES = 5
 STALE_WAIT = 10.0  # 초
+
+
+def _untie(rows: list[RankerRow], tie: tuple[int | None, int]) -> tuple[list[RankerRow], tuple[int | None, int]]:
+    """Tied rankers share the displayed rank (2581, 2581, 2583) and the snapshot is keyed by rank, so the
+    second would overwrite the first. Number them by position instead (2581, 2582, 2583): the ranking skips
+    exactly as many numbers as the tie has. `tie` = (displayed rank, how many before with it), carried
+    across pages."""
+    shown, n = tie
+    out = []
+    for r in rows:
+        n = n + 1 if r.rank == shown else 0
+        shown = r.rank
+        out.append(replace(r, rank=r.rank + n) if n else r)
+    return out, (shown, n)
 
 
 @dataclass
@@ -60,6 +75,7 @@ def _crawl_once(
     as_of_seen = set()
     status = "ok"
     target = None  # 이번 수집의 기준 시각 (첫 페이지)
+    tie: tuple[int | None, int] = (None, 0)  # 동점 순위 번호 매기기 (페이지를 넘어 이어진다)
     try:
         n = 1
         while max_pages is None or n <= max_pages:
@@ -80,7 +96,8 @@ def _crawl_once(
                 return CrawlResult(run_id, total, pages, rows, "refreshed")
             as_of_seen.add(page.data_as_of)
             total = page.total_count
-            storage.save_page(run_id, query.mode, page.data_as_of, page.rows, member_of)
+            untied, tie = _untie(page.rows, tie)
+            storage.save_page(run_id, query.mode, page.data_as_of, untied, member_of)
             pages += 1
             rows += len(page.rows)
             log.info("page %d: %d rows (total %s, as of %s)", pages, len(page.rows), total, page.data_as_of)
