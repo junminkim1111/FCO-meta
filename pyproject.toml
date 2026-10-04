@@ -9,7 +9,7 @@ description = "FC Online ranker-data meta chatbot"
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
-    "selectolax>=0.3.21",
+    "selectolax>=0.3.21,<1",  # 1.0에서 쓰던 파서(selectolax.parser, Modest)가 없어졌다 (2026-10)
     "google-genai>=2.25",
 ]
 

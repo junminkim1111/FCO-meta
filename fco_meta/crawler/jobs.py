@@ -15,6 +15,9 @@ log = logging.getLogger(__name__)
 # 정각 갱신은 서버마다 조금씩 늦게 퍼져서, 갱신 직후 몇 분은 이전 기준 시각 페이지가 섞여 온다
 STALE_RETRIES = 5
 STALE_WAIT = 10.0  # 초
+# 남은 순위가 있는데 빈 페이지가 오면(사이트 일시 오류) 끝으로 보지 않고 잠시 뒤 다시 받는다
+EMPTY_RETRIES = 4
+EMPTY_WAIT = 30.0  # 초
 
 
 def _untie(rows: list[RankerRow], tie: tuple[int | None, int]) -> tuple[list[RankerRow], tuple[int | None, int]]:
@@ -86,7 +89,16 @@ def _crawl_once(
                 log.info("page %d is older (%s) than %s; retrying", n, page.data_as_of, target)
                 sleep(STALE_WAIT)
                 page = client.fetch_rank_page(query, n)
+            for _ in range(EMPTY_RETRIES if total is not None and rows < total else 0):
+                if page.rows:
+                    break
+                log.warning("page %d came back empty at %d of %d rows; retrying in %.0fs", n, rows, total, EMPTY_WAIT)
+                sleep(EMPTY_WAIT)
+                page = client.fetch_rank_page(query, n)
             if not page.rows:
+                if total is not None and rows < total:  # 다시 받아도 비면 끝이 아니라 불완전한 수집
+                    status = "partial"
+                    log.warning("page %d still empty: stopping at %d of %d rows", n, rows, total)
                 break
             if page.data_as_of is None:
                 raise ValueError(f"page {n}: data_as_of not found")
@@ -107,7 +119,7 @@ def _crawl_once(
     except Exception:
         storage.finish_run(run_id, total, status="failed")
         raise
-    if len(as_of_seen) > 1:
+    if status == "ok" and len(as_of_seen) > 1:
         # 수집 도중 정각 갱신이 일어난 경우: 순위가 밀려 누락/중복이 있을 수 있음
         status = "mixed_as_of"
         log.warning("ranking data was refreshed during the crawl: %s", sorted(as_of_seen))

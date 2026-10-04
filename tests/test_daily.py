@@ -15,9 +15,10 @@ def clients(tmp_path, fixture_html):
     dc = DatacenterClient(
         httpx.Client(
             base_url="https://fconline.nexon.com",
-            # 랭킹은 1페이지(20명)까지만 있고 그 뒤는 빈 페이지 — 전체 랭킹 수집도 20명에서 끝난다
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, text=fixture_html(
-                "rank_inner_1vs1_p1.html" if r.url.params.get("n4pageno", "1") == "1" else "rank_inner_past_last_page.html"
+            # 랭킹은 20명(1페이지)뿐이고 그 뒤는 빈 페이지 — 전체 랭킹 수집도 20명에서 끝난다
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, text=(
+                fixture_html("rank_inner_1vs1_p1.html").replace("10,000명의 구단주님이", "20명의 구단주님이")
+                if r.url.params.get("n4pageno", "1") == "1" else fixture_html("rank_inner_past_last_page.html")
             ))),
         ),
         min_interval=0,

@@ -119,3 +119,26 @@ def test_tied_ranks_keep_every_ranker(tmp_path, fixture_html):
     page2, tie = _untie([replace(rows[0], rank=13), replace(rows[1], rank=16)], tie)
     assert [r.rank for r in page1 + page2] == [10, 11, 12, 13, 14, 15, 16]
     assert [r.nickname for r in page1] == [r.nickname for r in rows]  # 순서와 내용은 그대로
+
+
+def test_empty_page_before_the_end_is_retried_then_marked_partial(tmp_path, fixture_html):
+    """남은 순위가 있는데 빈 페이지(사이트 일시 오류) → 끝으로 보지 않고 다시 받는다. 계속 비면 partial."""
+    from fco_meta.crawler import jobs
+
+    def run(empty_times):
+        served = {"2": 0}
+
+        def handler(request):
+            page = request.url.params["n4pageno"]
+            if page == "2" and served["2"] < empty_times:
+                served["2"] += 1
+                return httpx.Response(200, text=fixture_html("rank_inner_empty.html"))
+            return httpx.Response(200, text=fixture_html("rank_inner_1vs1_p1.html"))  # 총 10,000명 중 20명씩
+
+        storage = Storage(tmp_path / f"db{empty_times}.sqlite")
+        return crawl_rankings(client_for(handler), storage, RankQuery(), max_pages=3, sleep=lambda s: None)
+
+    recovered = run(empty_times=2)  # 두 번 비었다가 받아짐
+    assert (recovered.status, recovered.pages) == ("ok", 3)
+    stopped = run(empty_times=jobs.EMPTY_RETRIES + 1)  # 다시 받아도 계속 빔
+    assert (stopped.status, stopped.pages, stopped.rows) == ("partial", 1, 20)
