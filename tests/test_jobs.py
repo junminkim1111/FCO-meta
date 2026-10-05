@@ -74,6 +74,8 @@ def test_unfiltered_crawl_records_no_membership(tmp_path, fixture_html):
 
 
 def test_long_crawl_restarts_when_the_ranking_refreshes(tmp_path, fixture_html):
+    from fco_meta.crawler import jobs
+
     html = fixture_html("rank_inner_1vs1_p1.html")
     newer = html.replace("2026-09-28 20:00:00", "2026-09-28 21:00:00")
     served = []
@@ -83,8 +85,10 @@ def test_long_crawl_restarts_when_the_ranking_refreshes(tmp_path, fixture_html):
         return httpx.Response(200, text=html if len(served) == 1 else newer)
 
     storage = Storage(tmp_path / "db.sqlite")
-    result = crawl_rankings(client_for(handler), storage, RankQuery(), max_pages=2, restarts=1)
+    slept = []
+    result = crawl_rankings(client_for(handler), storage, RankQuery(), max_pages=2, restarts=1, sleep=slept.append)
     assert result.status == "ok" and served == ["1", "2", "1", "2"]
+    assert slept == [jobs.REFRESH_SETTLE]  # 새 기준 시각이 서버마다 퍼질 때까지 기다렸다 다시
     runs = [tuple(r) for r in storage.conn.execute("SELECT data_as_of, status FROM crawl_run ORDER BY id")]
     assert runs == [("2026-09-28T20:00:00+09:00", "refreshed"), ("2026-09-28T21:00:00+09:00", "ok")]
 
@@ -142,3 +146,18 @@ def test_empty_page_before_the_end_is_retried_then_marked_partial(tmp_path, fixt
     assert (recovered.status, recovered.pages) == ("ok", 3)
     stopped = run(empty_times=jobs.EMPTY_RETRIES + 1)  # 다시 받아도 계속 빔
     assert (stopped.status, stopped.pages, stopped.rows) == ("partial", 1, 20)
+
+
+def test_restart_after_a_refresh_does_not_start_on_a_stale_server(tmp_path, fixture_html):
+    """2026-10-05: 갱신을 보고 다시 받기 시작했는데 첫 페이지가 아직 갱신 전 서버에서 와 그 시각이 기준이 되고,
+    뒤 페이지는 새 시각이라 섞였다. 다시 받을 때는 앞서 본 새 시각보다 오래된 페이지를 기다렸다 다시 받는다."""
+    html = fixture_html("rank_inner_1vs1_p1.html")
+    newer = html.replace("2026-09-28 20:00:00", "2026-09-28 21:00:00")
+    replies = iter([html, newer,  # 첫 수집: 2페이지에서 갱신을 봄
+                    html, newer, newer])  # 다시: 1페이지가 갱신 전 서버 → 기다렸다 다시 → 새 시각
+    storage = Storage(tmp_path / "db.sqlite")
+    client = client_for(lambda r: httpx.Response(200, text=next(replies)))
+    result = crawl_rankings(client, storage, RankQuery(), max_pages=2, restarts=1, sleep=lambda s: None)
+    assert result.status == "ok"
+    saved = storage.conn.execute("SELECT DISTINCT data_as_of FROM ranker_snapshot WHERE run_id = ?", (result.run_id,))
+    assert [r[0] for r in saved] == ["2026-09-28T21:00:00+09:00"]  # 섞이지 않음

@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from ..storage import Storage
 from .client import DatacenterClient
@@ -18,6 +19,7 @@ STALE_WAIT = 10.0  # 초
 # 남은 순위가 있는데 빈 페이지가 오면(사이트 일시 오류) 끝으로 보지 않고 잠시 뒤 다시 받는다
 EMPTY_RETRIES = 4
 EMPTY_WAIT = 30.0  # 초
+REFRESH_SETTLE = 180.0  # 초: 갱신을 만나 처음부터 다시 받기 전, 새 기준 시각이 모든 서버에 퍼질 때까지 기다린다
 
 
 def _untie(rows: list[RankerRow], tie: tuple[int | None, int]) -> tuple[list[RankerRow], tuple[int | None, int]]:
@@ -41,6 +43,7 @@ class CrawlResult:
     pages: int
     rows: int
     status: str
+    newer: datetime | None = None  # refreshed: 도중에 본 새 기준 시각
 
 
 def crawl_rankings(
@@ -59,17 +62,20 @@ def crawl_rankings(
     up to that many times; otherwise it finishes as `mixed_as_of`. A page older than the snapshot
     being crawled (a server not yet refreshed) is fetched again after STALE_WAIT seconds.
     """
+    newest = None  # 다시 받을 때는 이보다 오래된 페이지(아직 갱신 안 된 서버)를 기준으로 삼지 않는다
     for _ in range(restarts):
-        result = _crawl_once(client, storage, query, max_pages, stop_on_refresh=True, sleep=sleep)
+        result = _crawl_once(client, storage, query, max_pages, stop_on_refresh=True, sleep=sleep, target=newest)
         if result.status != "refreshed":
             return result
-        log.warning("ranking data was refreshed during the crawl; starting over from page 1")
-    return _crawl_once(client, storage, query, max_pages, stop_on_refresh=False, sleep=sleep)
+        newest = result.newer
+        log.warning("ranking data was refreshed during the crawl (%s); starting over from page 1 in %.0fs", newest, REFRESH_SETTLE)
+        sleep(REFRESH_SETTLE)
+    return _crawl_once(client, storage, query, max_pages, stop_on_refresh=False, sleep=sleep, target=newest)
 
 
 def _crawl_once(
     client: DatacenterClient, storage: Storage, query: RankQuery, max_pages: int | None, *,
-    stop_on_refresh: bool, sleep: Callable[[float], None],
+    stop_on_refresh: bool, sleep: Callable[[float], None], target: datetime | None = None,
 ) -> CrawlResult:  # fmt: skip
     run_id = storage.start_run(query.mode, query)
     member_of = _single_team_color(query)
@@ -77,7 +83,7 @@ def _crawl_once(
     total = None
     as_of_seen = set()
     status = "ok"
-    target = None  # 이번 수집의 기준 시각 (첫 페이지)
+    # 이번 수집의 기준 시각 (첫 페이지, 다시 받는 중이면 앞서 본 새 기준 시각). 이보다 오래된 페이지는 다시 받는다
     tie: tuple[int | None, int] = (None, 0)  # 동점 순위 번호 매기기 (페이지를 넘어 이어진다)
     try:
         n = 1
@@ -105,7 +111,7 @@ def _crawl_once(
             target = target or page.data_as_of
             if stop_on_refresh and page.data_as_of > target:
                 storage.finish_run(run_id, total, status="refreshed")  # 불완전한 수집 — 범위 계산에서 빠진다
-                return CrawlResult(run_id, total, pages, rows, "refreshed")
+                return CrawlResult(run_id, total, pages, rows, "refreshed", newer=page.data_as_of)
             as_of_seen.add(page.data_as_of)
             total = page.total_count
             untied, tie = _untie(page.rows, tie)

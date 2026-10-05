@@ -141,9 +141,10 @@ def run_daily(
         crawl = crawl_rankings(
             datacenter, storage, RankQuery(mode=mode), max_pages=math.ceil(top / PAGE_SIZE), restarts=RANK_RESTARTS
         )
-        if crawl.status == "partial":
-            # 중간에 빈 페이지로 끊긴 랭킹으로 진행하면 범위가 줄어든 날이 최신이 된다 → 실패로 끝내 어제 데이터를 지킨다
-            raise RuntimeError(f"ranking crawl stopped early: {crawl.rows} of {crawl.total_count} rows")
+        if crawl.status != "ok":
+            # 끊기거나(partial) 기준 시각이 섞인(mixed_as_of) 랭킹은 범위 계산에서 빠져, 그대로 진행하면 새 데이터 없이
+            # 지난 스냅샷으로 "성공"한다 → 실패로 끝내 알리고, 사이트는 지난 데이터를 그대로 둔다
+            raise RuntimeError(f"ranking crawl not complete (status={crawl.status}, {crawl.rows} of {crawl.total_count} rows)")
         latest = latest_unfiltered_snapshot(storage.conn, mode)
         if latest is None:
             raise RuntimeError(f"ranking crawl failed (status={crawl.status})")
