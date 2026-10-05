@@ -65,7 +65,7 @@
 
   /* formation distribution */
   .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; }
-  /* 한 줄(이름·막대·명 %)이 통째로 버튼: 줄 간격 32px · 올리면 회색 테두리, 상세를 띄운 줄은 흰 테두리 */
+  /* 한 줄(이름·막대·%)이 통째로 버튼: 줄 간격 32px · 올리면 회색 테두리, 상세를 띄운 줄은 흰 테두리 */
   .fchart .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; margin: 0 -8px;
                  padding: 4px 8px; font: inherit; color: inherit; text-align: left; background: none; border: 1px solid transparent;
                  border-radius: 10px; cursor: pointer; transition: background-color .15s, border-color .15s; }
@@ -395,10 +395,10 @@ async function loadChart() {
     const rows = [];
     for (const [i, r] of shown.entries()) {
       const key = m.key(r);
-      const row = el("button", { type: "button", class: i < MAX_BARS ? "row" : "row extra", ariaLabel: `${plain(key)}, 랭커 ${r.rankers}명 (${pct(r.share)}) — 누르면 상세` },
+      const row = el("button", { type: "button", class: i < MAX_BARS ? "row" : "row extra", ariaLabel: `${plain(key)}, ${pct(r.share)} — 누르면 상세` },
         el("span", { class: "f" }, m.icon ? logo(m.icon(r)) : null, plain(key)),
         el("span", { class: "track" }, el("span", { style: `width:${(r.share / max) * 100}%` })),
-        el("span", { class: "v", text: `${r.rankers}명 · ${pct(r.share)}` }));
+        el("span", { class: "v", text: pct(r.share) }));
       row.dataset.key = key;
       row.addEventListener("click", () => showDetail(key));
       rows.push(row);
@@ -488,7 +488,7 @@ function renderPitchArea(d) {
       if (!best) return [el("p", { class: "caption", text: d.formation ? "이 포메이션으로 실제 경기한 스쿼드가 아직 없습니다." : "스쿼드 수집 랭커 중 이 팀컬러 랭커가 아직 없습니다." }),
                          pitch([], "매일 수집으로 스쿼드가 쌓이면 표시됩니다", () => "")];
       // 최상위 랭커 스쿼드의 캡션 줄만큼 띄워 버튼과 경기장 사이 간격을 맞춘다
-      return [el("p", { class: "caption", text: "\u00a0" }), pitch(best.players, "", (p) => `\n이 자리 ${p.rankers}명 사용`)];
+      return [el("p", { class: "caption", text: "\u00a0" }), pitch(best.players, "", () => "")];
     },
   };
   const body = el("div");
@@ -540,13 +540,13 @@ async function showDetail(name) {
     const r = d.ranking;
     const groups = r ? (isForm ? r.formations : r.team_colors) : 0;
     const out = [el("div", { class: "fd-head" }, el("h2", { text: isForm ? name : plain(d.team_color) }),
-      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${groups}개 · 랭킹 상위 ${d.ranking_scope}명 중 ${pct(r.share)}` : (d.note || "") }))];
+      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${groups}개 · ${pct(r.share)}` : (d.note || "") }))];
     if (r) {
       const avg = isForm ? d.all_formations_win_rate : d.all_rankers_win_rate;
       const diff = avg != null ? (r.season_win_rate - avg) * 100 : null;
       out.push(el("div", { class: "tiles" },
         tile("시즌 승률", pct(r.season_win_rate), diff != null ? `전체 평균 대비 ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}%p` : ""),
-        tile("평균 ELO", String(Math.round(r.avg_elo)), `${r.rankers.toLocaleString()}명`),
+        tile("평균 ELO", String(Math.round(r.avg_elo)), ""),
         tile("평균 구단가치", r.avg_squad_value || "-", ""),
         tile("최고 순위", `${r.best_rank}위`, "")));
     }
@@ -557,12 +557,12 @@ async function showDetail(name) {
       const [title, list] = isForm ? ["많이 쓰는 팀컬러", d.team_colors.map((t) => [t.team_color, t])]
                                    : ["많이 쓰는 포메이션", d.formations.map((f) => [f.formation, f])];
       const top5 = el("div", { class: "rows" }, ...list.flatMap(([label, t]) =>
-        [el("span", { text: label }), el("span", { class: "v", text: `${t.rankers}명 · ${pct(t.share)}` })]));
+        [el("span", { text: label }), el("span", { class: "v", text: pct(t.share) })]));
       const maxBand = Math.max(...d.rank_bands.map((b) => b.share_of_band), 0.0001);
       const bands = el("div", { class: "band" }, ...d.rank_bands.flatMap((b) => [
         el("span", { text: b.rank_band }),
         hover(el("div", { class: "track" }, el("span", { style: `width:${(b.share_of_band / maxBand) * 100}%` })),
-              `${b.rank_band}\n${b.rankers}명 (구간의 ${pct(b.share_of_band)})`),
+              `${b.rank_band}\n구간의 ${pct(b.share_of_band)}`),
         el("span", { class: "v", text: pct(b.share_of_band) })]));
       out.push(el("div", { class: "two" },
         el("div", {}, el("h3", { text: title }), top5),
