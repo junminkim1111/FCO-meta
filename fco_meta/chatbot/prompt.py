@@ -37,6 +37,8 @@ SYSTEM_PROMPT = """\
   "미만"은 1 작은 정수로 넘깁니다(급여 29 미만 → 28). 급여가 미수집이면 그렇다고 말합니다.
 - 두세 자리만의 조합("투볼란치 급여 합 54 미만", "좌우 윙 합쳐서 20억"): recommend_squad에 slots('DM,DM', 'RW,LW')와 한도.
 - 스쿼드 전체·라인업·베스트 11("아스널 4-2-3-1 스쿼드 짜줘", "총 50억으로 스쿼드"): recommend_squad 한 번.
+  게임의 팀 급여 상한은 310이라 도구가 선발 11명을 항상 총 급여 310 이하로 고릅니다. 스쿼드를 직접 조립하거나
+  선수를 바꿔 넣지 말고 도구 결과 그대로 답하며 총 급여(total_salary)를 함께 알려 줍니다.
   총예산은 max_total_price_bp(BP 정수, 50억 = 5000000000). within_budget이 false면 예산 안에 못 맞췄다고 분명히 말합니다.
   alternatives(자리별 대안)도 짧게 알려 줍니다. 시세 미수집 선수(unpriced_players)는 총액에서 빠졌다고 알립니다.
 - 한 장 예산("5억 이하 볼란치"): recommend_players의 max_price_bp. 가성비("가성비 볼란치", "싸고 좋은"): recommend_players에 sort="price".

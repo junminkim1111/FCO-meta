@@ -254,6 +254,23 @@ def test_recommend_squad_slots_with_salary_cap(toolbox):  # noqa: F811
     assert toolbox.run("recommend_squad", {"slots": "윙어"})[1] is True  # 자리마다 역할 하나
 
 
+def test_full_squad_keeps_the_game_salary_cap(toolbox):  # noqa: F811
+    # 이 픽스처의 아스널 4-2-3-1은 볼란치 두 자리만 채워진다. 가장 많이 쓴 카드로는 200 + 150 = 350 > 310,
+    # 볼란치R은 급여 100짜리 다른 시즌 카드도 쓰였다
+    toolbox.conn.executemany(
+        "INSERT INTO card (spid, pid, season_id, name, salary, updated_at) VALUES (?, ?, ?, ?, ?, 'x')",
+        [(250000009, 9, 250, "볼란치R", 200), (300000009, 9, 300, "볼란치R", 100), (101000011, 11, 101, "볼란치L", 150)],
+    )
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "formation": "4-2-3-1"}
+    r = run(toolbox, "recommend_squad", args)  # 급여를 말하지 않아도 게임 상한 310
+    assert r["total_salary"] == 250 and r["budget"]["within_budget"] and r["budget"]["salary_cap"] == 310
+    assert [(s["player"], s["card"]["season"]) for s in r["lineup"] if s["player"]] == [("볼란치R", "S300"), ("볼란치L", "ICON")]
+    assert run(toolbox, "recommend_squad", {**args, "max_total_salary": 400})["budget"]["max_total_salary"] == 310
+    # 일부 자리만 고를 때는 팀 전체 상한이 아니므로 걸지 않는다
+    assert "budget" not in run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM,DM"})
+
+
 def test_choose_finds_best_pair_within_limit():
     from fco_meta.chatbot.tools import _choose
 

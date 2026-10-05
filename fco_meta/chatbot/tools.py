@@ -77,6 +77,7 @@ TREND_MIN_RANKERS = 3  # 사용률 변화 목록에 넣을 최소 사용 랭커 
 QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 기본 최소 사용 랭커 수 (1명짜리 1위 방지)
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
+SALARY_CAP = 310  # 게임의 팀 급여 상한: 선발 11명을 짤 때는 항상 이 안에서 고른다
 MAX_TEAM_COLOR_NAMES = 40
 RANKERS_MIN_FOR_SORT = 30  # query_rankers를 승률 등으로 정렬할 때 기본 최소 랭커 수 (10,000명 규모라 넉넉히)
 
@@ -253,7 +254,8 @@ TOOLS: list[dict[str, Any]] = [
             "여러 자리를 한 번에 추천한다: 포메이션 선발 11명, 또는 slots로 준 일부 자리(예: 투볼란치 'DM,DM', 좌우 윙 'RW,LW'). "
             "포지션 구성은 그 포메이션으로 실제 경기한 랭커 스쿼드에서 가져오고, 자리마다 사용률 높은 선수를 (같은 선수 중복 없이) 넣는다. "
             "자리별 대안, 카드 시세·급여, 총액·총 급여를 준다. max_total_price_bp·max_total_salary를 주면 그 한도 안에서 "
-            "사용률 합이 가장 큰 조합을 고른다 (자리가 적으면 모든 조합을 비교). '두 명 급여 합 54 미만' = slots 'DM,DM', max_total_salary 53"
+            "사용률 합이 가장 큰 조합을 고른다 (자리가 적으면 모든 조합을 비교). '두 명 급여 합 54 미만' = slots 'DM,DM', max_total_salary 53. "
+            f"선발 11명은 게임 급여 상한 {SALARY_CAP}을 항상 지킨다 (max_total_salary를 안 줘도, 더 크게 줘도 {SALARY_CAP})"
         ),
         "input_schema": _schema(
             {
@@ -942,11 +944,16 @@ class Toolbox:
                     "team_color": tc_name, "formation": formation, "lineup": [],
                     "note": f"{formation}으로 실제 경기한 스쿼드가 수집되지 않아 포지션 구성을 알 수 없음",
                 }  # fmt: skip
+        auto_cap = not slots and max_total_salary is None
+        if not slots:  # 선발 11명은 게임의 팀 급여 상한을 넘을 수 없다
+            max_total_salary = min(int(max_total_salary), SALARY_CAP) if max_total_salary is not None else SALARY_CAP
         limits = {
             k: int(v) for k, v in (("price", max_total_price_bp), ("salary", max_total_salary)) if v is not None
         }  # fmt: skip
 
         # 자리마다 후보 = (선수, 카드). 제약이 없으면 선수당 가장 많이 쓰인 카드, 있으면 그 값이 수집된 모든 카드
+        # (사용자가 말하지 않은 자동 급여 상한은 급여 미수집 카드도 후보로 둔다 — 0으로 셈)
+        known = [k for k in limits if not (auto_cap and k == "salary")]
         slot_options: list[tuple[str, list[dict[str, Any]]]] = []
         first = None
         for role, n in layout.items():
@@ -958,7 +965,7 @@ class Toolbox:
             options = []
             for p in res.players:
                 entry = self._player_entry(res, (role,), p)
-                cards = [c for c in entry["cards"] if all(_cost(c, k) is not None for k in limits)] if limits else []
+                cards = [c for c in entry["cards"] if all(_cost(c, k) is not None for k in known)] if limits else []
                 for card in cards or entry["cards"][:1]:
                     options.append({"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"]})
             slot_options += [(role, options)] * n
@@ -1039,6 +1046,7 @@ class Toolbox:
                 "max_total_price_bp": limits.get("price"),
                 "max_total_price": format_bp(limits["price"]) if "price" in limits else None,
                 "max_total_salary": limits.get("salary"),
+                "salary_cap": None if slots else SALARY_CAP,
                 "within_budget": within,
             }
             if not within:
