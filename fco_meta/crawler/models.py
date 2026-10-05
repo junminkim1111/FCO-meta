@@ -29,6 +29,7 @@ class RankerRow:
     formation: str | None
     best_tier_icon: int | None  # 역대 최고 등급 아이콘
     prev_tier_icon: int | None  # 이전 시즌 최고 등급 아이콘
+    team_color_flag: str | None = None  # 국가 팀컬러의 국기 이미지 id (예: "f_167" = 대한민국), 엠블럼 대신 표시
 
 
 @dataclass(frozen=True)

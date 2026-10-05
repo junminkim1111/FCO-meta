@@ -255,8 +255,17 @@ def create_app(
 
     @app.get("/api/teamcolors")
     def teamcolors() -> dict[str, Any]:
-        """팀컬러 분포 (랭킹 상위 10,000명, 랭커 많은 순 30개; groups = 전체 팀컬러 수)."""
-        return tool("query_rankers", {"group_by": "team_color", "limit": 30})
+        """팀컬러 분포 (랭킹 상위 10,000명, 랭커 많은 순 30개; groups = 전체 팀컬러 수).
+        icon = 랭킹 화면의 엠블럼·국기·특수 아이콘 (넥슨 CDN externalAssets/common 아래 경로, 모르면 없음)."""
+        out = tool("query_rankers", {"group_by": "team_color", "limit": 30})
+        if (icons := pages.get("team_color_icons")) is None:
+            with lock:
+                icons = json.dumps(toolbox.team_color_icons(), ensure_ascii=False)
+            pages.put("team_color_icons", icons)
+        icon_of = json.loads(icons)
+        for r in out["rows"]:
+            r["icon"] = icon_of.get(r["team_color"])
+        return out
 
     @app.get("/api/teamcolor")
     def teamcolor(name: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:

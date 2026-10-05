@@ -542,6 +542,29 @@ class Toolbox:
         tc = self._team_color(value)
         return tc.id, self._scope_name(tc.id)
 
+    def team_color_icons(self) -> dict[str, str]:
+        """Team color display name → its icon on the ranking pages (path under the Nexon CDN's externalAssets/common):
+        club crest, special team color icon, or the nation's flag (saved since team_color_flag was added)."""
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(ranker_snapshot)")}
+        flag_col = "team_color_flag" if "team_color_flag" in cols else "NULL"
+        out: dict[str, str] = {}
+        for name, crest, boost, flag in self.conn.execute(
+            f"SELECT DISTINCT team_color_name, team_color_crest, team_color_boost, {flag_col} FROM ranker_snapshot"
+            " WHERE team_color_name IS NOT NULL"
+        ):
+            found = {t.category: t for t in reversed(self.catalog.find(name))}
+            if boost:
+                tc, path = found.get("special"), f"teamcolorboost/icon/medium/{boost}.png"
+            elif crest:
+                tc, path = found.get("club"), f"crests/light/medium/{crest}.png"
+            elif flag:  # 엠블럼 없이 국기가 보이면 국가 팀컬러 (crawler/membership.py와 같은 판단)
+                tc, path = found.get("nationality") or found.get("club"), f"countries/largeflags/{flag}.png"
+            else:
+                continue
+            if tc:
+                out.setdefault(self._scope_name(tc.id), path)
+        return out
+
     def _scope_name(self, team_color_id: int) -> str:
         """Display name that `_scope` resolves back to the same team color."""
         if team_color_id == ALL_RANKERS:

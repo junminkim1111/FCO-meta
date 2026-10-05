@@ -14,6 +14,7 @@ _AS_OF_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 기준")
 _TIER_ICON_RE = re.compile(r"ico_rank(\d+)\.png")
 _CREST_RE = re.compile(r"/crests/[^\"']*/(\w+)\.png")
 _BOOST_RE = re.compile(r"/teamcolorboost/[^\"']*/(\w+)\.png")
+_FLAG_RE = re.compile(r"/countries/[^\"']*/(\w+)\.png")
 _TEAM_COLOR_RE = re.compile(r"^(.*?)\s*\((\d+)명\)$")
 _SELECT_TC_RE = re.compile(r"select_tc\((\d+),\s*'([^']*)'\)")
 _CATALOG_CLASS_RE = re.compile(r"\b(club|nationality|special)_item\b")
@@ -63,6 +64,7 @@ def _parse_row(tr: Node) -> RankerRow:
     tc_icons = [img.attributes.get("src") or "" for img in tr.css(".td.team_color img")]
     crest = _first_match(_CREST_RE, tc_icons)
     boost = _first_match(_BOOST_RE, tc_icons)
+    flag = _first_match(_FLAG_RE, tc_icons)
 
     best_icons = [_tier_icon(img) for img in tr.css(".td.rank_best img")]
     best_icons += [None] * (2 - len(best_icons))
@@ -86,6 +88,7 @@ def _parse_row(tr: Node) -> RankerRow:
         formation=_text(tr, ".td.formation") or None,
         best_tier_icon=best_icons[0],
         prev_tier_icon=best_icons[1],
+        team_color_flag=flag,
     )
 
 

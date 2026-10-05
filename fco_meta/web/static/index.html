@@ -64,14 +64,23 @@
   textarea:focus { border-color: var(--line-strong); outline: none; }
 
   /* formation distribution */
-  .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
-  .fchart .f { font-size: 13px; font-variant-numeric: tabular-nums; }
-  .fchart .track { height: 14px; background: none; padding: 0; border-radius: 0; cursor: pointer; display: block; width: 100%; }
+  .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; }
+  /* 한 줄(이름·막대·명 %)이 통째로 버튼: 줄 간격 32px · 올리면 회색 테두리, 상세를 띄운 줄은 흰 테두리 */
+  .fchart .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; margin: 0 -8px;
+                 padding: 4px 8px; font: inherit; color: inherit; text-align: left; background: none; border: 1px solid transparent;
+                 border-radius: 10px; cursor: pointer; transition: background-color .15s, border-color .15s; }
+  .fchart .row:hover, .fchart .row:focus-visible { background: rgba(255, 255, 255, .05); border-color: var(--line-strong); }
+  .fchart .row.sel { border-color: var(--text); }
+  .fchart .f { font-size: 13px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+  .fchart .logo { width: 18px; height: 18px; flex: none; object-fit: contain; } /* 팀컬러 엠블럼·국기 (없으면 빈 자리) */
+  .fchart .track { height: 14px; display: block; width: 100%; }
   .fchart .track > span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; transition: filter .15s; }
-  .fchart .track:hover > span, .fchart .track:focus-visible > span { filter: brightness(1.2); }
-  .fchart .track.sel > span { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--text); }
+  .fchart .row:hover .track > span, .fchart .row:focus-visible .track > span { filter: brightness(1.2); }
   .fchart .v { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .fchart .other { grid-column: 1 / -1; font-size: 12px; color: var(--faint); }
+  .fchart:not(.open) .row.extra { display: none; } /* 6위부터는 더보기를 눌러야 보인다 */
+  .fchart .more { grid-column: 1 / -1; justify-self: end; margin-top: 2px; padding: 2px 0; font: inherit; font-size: 12px;
+                  color: var(--muted); background: none; border: 0; cursor: pointer; }
+  .fchart .more:hover { color: var(--text); }
 
   /* formation detail */
   .fd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -258,7 +267,7 @@
   </section>
 
   <section id="fdetail" aria-live="polite">
-    <p class="stat">막대를 누르면 여기에 그 포메이션·팀컬러 정보가 나옵니다.</p>
+    <p class="stat">항목을 누르면 여기에 그 포메이션·팀컬러 정보가 나옵니다.</p>
   </section>
   <!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
   <footer class="foot">Data based on NEXON Open API · 시세·선수 정보: FC온라인 데이터센터 · 질문은 Google Gemini로 처리되며 서비스 개선을 위해 기록됩니다</footer>
@@ -337,29 +346,36 @@ const hover = (node, text) => {
 };
 
 // --- 분포: 포메이션 / 팀컬러 (위 전환 버튼) ---
-const MAX_BARS = 8;
+const MAX_BARS = 5;  // 더보기를 누르기 전에 보이는 순위
 const MODES = {
   formation: {
     list: "/api/formations", rows: (d) => d.formations || [], key: (r) => r.formation,
     scope: (d) => "· " + d.team_color,
-    rest: (d) => {
-      const rest = (d.formations || []).slice(MAX_BARS);
-      return rest.length ? `그 외 ${rest.length}개 포메이션 ${rest.reduce((n, f) => n + f.rankers, 0)}명` : "";
-    },
+    more: 15,  // 더보기를 누르면 이 순위까지
     detail: (name) => "/api/formation?" + new URLSearchParams({ name }),
   },
   team: {
-    list: "/api/teamcolors", rows: (d) => d.rows || [], key: (r) => r.team_color,
+    list: "/api/teamcolors", rows: (d) => d.rows || [], key: (r) => r.team_color, icon: (r) => r.icon,
     scope: (d) => "· " + ((d.scope && d.scope.description) || "랭킹"),
-    rest: (d) => (d.groups > MAX_BARS ? `그 외 ${d.groups - MAX_BARS}개 팀컬러 · 랭커 한 명이 팀컬러 여럿일 수 있어 합이 100%를 넘습니다` : ""),
+    more: 20,
     detail: (name) => "/api/teamcolor?" + new URLSearchParams({ name }),
   },
 };
 let mode = "formation";
+// 국가 팀컬러는 "브라질(국가)"로 오지만 화면에는 이름만 (조회할 때는 클럽과 구분되도록 원래 이름을 쓴다)
+const plain = (name) => name.replace(/\(국가\)$/, "");
 let selected = null;
 
 function markSelected() {
-  for (const b of $("fchart").querySelectorAll(".track")) b.classList.toggle("sel", b.dataset.key === selected);
+  for (const b of $("fchart").querySelectorAll(".row")) b.classList.toggle("sel", b.dataset.key === selected);
+}
+
+// 팀컬러 엠블럼·국기 (넥슨 CDN). 모르거나 못 불러오면 같은 크기 빈 자리로 둬서 이름 줄을 맞춘다
+function logo(path) {
+  if (!path) return el("span", { class: "logo" });
+  const img = el("img", { class: "logo", src: `${IMG}/${path}`, alt: "", loading: "lazy" });
+  img.addEventListener("error", () => { img.style.visibility = "hidden"; });
+  return img;
 }
 
 async function loadChart() {
@@ -373,19 +389,25 @@ async function loadChart() {
       box.replaceChildren(el("p", { class: "stat", text: d.note || "랭킹 스냅샷이 없습니다." }));
       return;
     }
-    const shown = all.slice(0, MAX_BARS);
+    const shown = all.slice(0, m.more);
+    box.classList.remove("open");
     const max = shown[0].share || 1;
     const rows = [];
-    for (const r of shown) {
+    for (const [i, r] of shown.entries()) {
       const key = m.key(r);
-      const bar = hover(el("button", { type: "button", class: "track", ariaLabel: `${key}, 랭커 ${r.rankers}명 — 누르면 상세` },
-        el("span", { style: `width:${(r.share / max) * 100}%` })), `${key}\n랭커 ${r.rankers}명 (${pct(r.share)})`);
-      bar.dataset.key = key;
-      bar.addEventListener("click", () => { hideTip(); showDetail(key); });
-      rows.push(el("span", { class: "f", text: key }), bar, el("span", { class: "v", text: `${r.rankers}명 · ${pct(r.share)}` }));
+      const row = el("button", { type: "button", class: i < MAX_BARS ? "row" : "row extra", ariaLabel: `${plain(key)}, 랭커 ${r.rankers}명 (${pct(r.share)}) — 누르면 상세` },
+        el("span", { class: "f" }, m.icon ? logo(m.icon(r)) : null, plain(key)),
+        el("span", { class: "track" }, el("span", { style: `width:${(r.share / max) * 100}%` })),
+        el("span", { class: "v", text: `${r.rankers}명 · ${pct(r.share)}` }));
+      row.dataset.key = key;
+      row.addEventListener("click", () => showDetail(key));
+      rows.push(row);
     }
-    const rest = m.rest(d);
-    if (rest) rows.push(el("span", { class: "other", text: rest }));
+    if (shown.length > MAX_BARS) {
+      const more = el("button", { type: "button", class: "more", text: "더보기" });
+      more.addEventListener("click", () => { more.textContent = box.classList.toggle("open") ? "접기" : "더보기"; });
+      rows.push(more);
+    }
     box.replaceChildren(...rows);
     showDetail(m.key(shown[0]));
   } catch (e) {
@@ -511,13 +533,13 @@ async function showDetail(name) {
   markSelected();
   const want = mode, isForm = mode === "formation";
   const box = $("fdetail");
-  box.replaceChildren(el("p", { class: "stat", text: `${name} 불러오는 중…` }));
+  box.replaceChildren(el("p", { class: "stat", text: `${plain(name)} 불러오는 중…` }));
   try {
     const d = await api(MODES[mode].detail(name));
     if (selected !== name || mode !== want) return;  // 그사이 다른 막대를 눌렀거나 전환했으면 버린다
     const r = d.ranking;
     const groups = r ? (isForm ? r.formations : r.team_colors) : 0;
-    const out = [el("div", { class: "fd-head" }, el("h2", { text: isForm ? name : d.team_color }),
+    const out = [el("div", { class: "fd-head" }, el("h2", { text: isForm ? name : plain(d.team_color) }),
       el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${groups}개 · 랭킹 상위 ${d.ranking_scope}명 중 ${pct(r.share)}` : (d.note || "") }))];
     if (r) {
       const avg = isForm ? d.all_formations_win_rate : d.all_rankers_win_rate;

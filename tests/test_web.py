@@ -238,6 +238,15 @@ def test_team_color_endpoints(client):
     assert client.get("/api/teamcolor", params={"name": ""}).status_code == 422
 
 
+def test_team_color_distribution_has_icons(tmp_path, fixture_html):
+    from test_top_rankers import setup
+
+    setup(tmp_path, fixture_html, top=5)
+    rows = TestClient(create_app(tmp_path / "db.sqlite")).get("/api/teamcolors").json()["rows"]
+    icon = {r["team_color"]: r["icon"] for r in rows}
+    assert icon["FC 바르셀로나"] == "crests/light/medium/l241.png" and icon["대한민국(국가)"] == "countries/largeflags/f_167.png"
+
+
 def test_page_results_are_reused_until_the_db_changes(client, tmp_path, monkeypatch):
     import os
 

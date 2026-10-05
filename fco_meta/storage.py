@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS ranker_snapshot (
     formation        TEXT,
     best_tier_icon   INTEGER,
     prev_tier_icon   INTEGER,
+    team_color_flag  TEXT,
     PRIMARY KEY (data_as_of, mode, rank)
 );
 
@@ -70,7 +71,7 @@ CREATE TABLE IF NOT EXISTS ranker_team_color (
 _ROW_COLUMNS = [
     "nickname", "nexon_sn", "level", "tier_icon", "squad_value", "elo", "win_rate",
     "wins", "draws", "losses", "team_color_name", "team_color_count", "team_color_crest",
-    "team_color_boost", "formation", "best_tier_icon", "prev_tier_icon",
+    "team_color_boost", "formation", "best_tier_icon", "prev_tier_icon", "team_color_flag",
 ]  # fmt: skip
 
 
@@ -89,6 +90,9 @@ class Storage:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(ranker_team_color)")}
         if "source" not in cols:
             self.conn.execute("ALTER TABLE ranker_team_color ADD COLUMN source TEXT NOT NULL DEFAULT 'filter'")
+            self.conn.commit()
+        if "team_color_flag" not in {r[1] for r in self.conn.execute("PRAGMA table_info(ranker_snapshot)")}:
+            self.conn.execute("ALTER TABLE ranker_snapshot ADD COLUMN team_color_flag TEXT")
             self.conn.commit()
 
     def close(self) -> None:

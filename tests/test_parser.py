@@ -33,6 +33,9 @@ def test_parses_full_page(fixture_html):
     assert first.team_color_count == 11
     assert first.team_color_crest == "l241"
     assert first.team_color_boost is None
+    assert first.team_color_flag is None
+    korea = next(r for r in page.rows if r.team_color_name == "대한민국")  # 국가 팀컬러: 엠블럼 대신 국기
+    assert (korea.team_color_crest, korea.team_color_flag) == (None, "f_167")
     assert first.formation == "4-2-3-1"
     assert first.tier_icon == 0
     assert (first.best_tier_icon, first.prev_tier_icon) == (0, 0)

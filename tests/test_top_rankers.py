@@ -121,3 +121,19 @@ def test_empty_role_reports_sample(tmp_path, fixture_html):
     # 3-4-3은 데이터가 없어도 전체 포메이션으로 대체되므로, 대체할 데이터도 없는 팀컬러(첼시)로 확인
     r = json.loads(tb.run("recommend_players", {"role": "DM", "team_color": "첼시"})[0])
     assert r["players"] == [] and r["sample_size"] == 0 and "수집·집계되지 않음" in r["note"]
+
+
+def test_team_color_icons(tmp_path, fixture_html):
+    storage, _, _ = setup(tmp_path, fixture_html, top=5)
+    icons = Toolbox(storage.conn).team_color_icons()
+    assert icons["FC 바르셀로나"] == "crests/light/medium/l241.png"  # 클럽 엠블럼
+    assert icons["대한민국(국가)"] == "countries/largeflags/f_167.png"  # 국가는 국기 (이름은 분포 화면과 같은 표기)
+    assert icons["프랑스(국가)"] == "countries/largeflags/f_18.png"
+
+    # 국기 칸이 생기기 전의 DB: 열을 다시 만들고, 그 전에도 클럽 엠블럼은 그대로 나온다
+    storage.conn.execute("ALTER TABLE ranker_snapshot DROP COLUMN team_color_flag")
+    old = Toolbox(storage.conn).team_color_icons()
+    assert "대한민국(국가)" not in old and old["FC 바르셀로나"] == "crests/light/medium/l241.png"
+    storage.close()
+    reopened = Storage(tmp_path / "db.sqlite")
+    assert "team_color_flag" in {r[1] for r in reopened.conn.execute("PRAGMA table_info(ranker_snapshot)")}
