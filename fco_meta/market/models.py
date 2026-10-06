@@ -56,3 +56,4 @@ class CardDetail:
     summary: dict[str, int] = field(default_factory=dict)  # 스피드·슛·패스·드리블·수비·피지컬
     stats: dict[str, int] = field(default_factory=dict)  # 세부 능력치 34개 (속력, 가속력 …)
     clubs: list[dict[str, str]] = field(default_factory=list)  # 클럽 경력 [{"years", "club", "loan"}]
+    nation: str | None = None  # 국적 ("잉글랜드") — 국가 팀컬러 소속 판단

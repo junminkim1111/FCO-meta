@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS card_detail (
     summary     TEXT NOT NULL,          -- {"스피드": 121, …}
     stats       TEXT NOT NULL,          -- {"속력": 124, … 34개}
     clubs       TEXT NOT NULL,
-    fetched_at  TEXT NOT NULL
+    fetched_at  TEXT NOT NULL,
+    nation      TEXT                    -- 국적 (국가 팀컬러 소속)
 );
 
 CREATE VIEW IF NOT EXISTS card_price_latest AS
@@ -95,6 +96,9 @@ class MarketStorage:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        if "nation" not in {r[1] for r in self.conn.execute("PRAGMA table_info(card_detail)")}:
+            self.conn.execute("ALTER TABLE card_detail ADD COLUMN nation TEXT")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -136,10 +140,10 @@ class MarketStorage:
     def save_card_detail(self, d: CardDetail, fetched_at: str | None = None) -> None:
         dump = lambda v: json.dumps(v, ensure_ascii=False)  # noqa: E731
         self.conn.execute(
-            "INSERT OR REPLACE INTO card_detail VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO card_detail VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (d.spid, d.grade, dump(d.positions), d.birth, d.height, d.weight, d.body_type, d.skill_moves,
              d.left_foot, d.right_foot, d.reputation, dump(d.traits), dump(d.summary), dump(d.stats), dump(d.clubs),
-             fetched_at or _now()),
+             fetched_at or _now(), d.nation),
         )  # fmt: skip
         self.conn.commit()
 

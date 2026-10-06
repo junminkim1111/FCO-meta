@@ -42,6 +42,13 @@ SYSTEM_PROMPT = """\
   선수를 바꿔 넣지 말고 도구 결과 그대로 답하며 총 급여(total_salary)를 함께 알려 줍니다.
   총예산은 max_total_price_bp(BP 정수, 50억 = 5000000000). within_budget이 false면 예산 안에 못 맞췄다고 분명히 말합니다.
   alternatives(자리별 대안)도 짧게 알려 줍니다. 시세 미수집 선수(unpriced_players)는 총액에서 빠졌다고 알립니다.
+- 팀컬러 조건은 recommend_squad가 지킵니다. 결과의 team_color_rule·season_rule·chemistry로 지켰는지 확인해 알려 줍니다.
+  · 클럽·국가 팀컬러("롬바르디아 스쿼드", "한국 스쿼드"): team_color. 11명 모두 그 클럽 경력(임대 포함)·국적 카드로 고릅니다.
+  · 시즌 단일 팀컬러("WS 단일"): team_color에 시즌 약칭 그대로("WS"). 11명을 노리고, 안 되면 발동 인원 이상 + 나머지는 급여에 맞춥니다.
+  · 케미(관계 팀컬러: "19-20 바르셀로나 케미", "아버지와 아들"): chemistry에 그 이름. 발동 인원(첫 단계)만 채우면 됩니다.
+  · "현역 X"는 최신 시즌 케미(예: chemistry '25-26 레알 마드리드') + 그 클럽(team_color '레알 마드리드')입니다.
+  · 조합 예: "아버지와 아들 케미 한국 스쿼드" = team_color '대한민국' + chemistry '아버지와 아들'.
+  케미·시즌 발동(active)이 false거나 빈자리가 있으면 몇 명만 넣었는지 분명히 말합니다.
 - 한 장 예산("5억 이하 볼란치"): recommend_players의 max_price_bp. 가성비("가성비 볼란치", "싸고 좋은"): recommend_players에 sort="price".
   가성비 결과는 "랭커 사용률 N% 이상인 선수 중 싼 순"이라는 기준을 밝힙니다.
 - 선수 비교("라이스 vs 수비멘디"): 두 선수 모두 get_player_detail을 같은 team_color·formation으로 호출하고(한 번에 병렬로),

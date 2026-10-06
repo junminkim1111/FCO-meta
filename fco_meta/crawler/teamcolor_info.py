@@ -89,17 +89,23 @@ def fetch_players(client: DatacenterClient, team_color_id: int) -> tuple[list[di
     return [{"pid": pid, "name": name} for pid, name in found.items()], complete
 
 
-def collect(client: DatacenterClient) -> list[dict[str, Any]]:
-    out = []
+def collect(client: DatacenterClient, path: Path | None = None) -> list[dict[str, Any]]:
+    """With `path`: saves after every team color and skips those already in the file (a stopped run resumes)."""
+    out = load(path) if path else []
+    done = {(e["type"], e["id"]) for e in out}
     for kind in TYPES:
         items = parse_list(client.get("/datacenter/teamcolor", {"strTeamColorType": f",{kind},"}))
         log.info("%s: %d team colors", kind, len(items))
         for n, (tc_id, name) in enumerate(items, 1):
+            if (kind, tc_id) in done:
+                continue
             detail = parse_detail(client.get("/datacenter/TeamColorDetail", {"teamcolorid": str(tc_id)}, referer="/datacenter/teamcolor"))
             entry = {"id": tc_id, "name": name, "type": kind, **detail}
             if kind == "relation":
                 entry["players"], entry["players_complete"] = fetch_players(client, tc_id)
             out.append(entry)
+            if path:
+                save(out, path)
             if n % 50 == 0:
                 log.info("%s: %d/%d", kind, n, len(items))
     return out

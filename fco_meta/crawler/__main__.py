@@ -65,8 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "teamcolor-info":
-            entries = teamcolor_info.collect(client)
-            teamcolor_info.save(entries, args.out)
+            entries = teamcolor_info.collect(client, args.out)  # 받는 대로 저장, 다시 실행하면 이어 받음
             partial = sum(1 for e in entries if e.get("players_complete") is False)
             print(f"{len(entries)} team colors → {args.out}" + (f" (선수 목록 일부만: {partial}개)" if partial else ""))
             return 0

@@ -42,6 +42,7 @@ from ..analytics import (
     usage_history,
 )
 from ..crawler import teamcolor_info
+from ..crawler.models import TeamColor
 from ..crawler.teamcolors import TeamColorCatalog
 from ..market.money import format_bp
 from ..market.roles import ROLES, resolve_roles
@@ -112,23 +113,31 @@ def _cost(card: dict[str, Any], kind: str) -> int | None:
 MAX_EXHAUSTIVE = 300_000  # 자리 조합 수가 이 이하면 전부 따져 최적 조합을 고른다 (보통 2~3자리)
 
 
-def _choose(slot_options: list[tuple[str, list[dict[str, Any]]]], limits: dict[str, int]) -> list[dict[str, Any] | None]:
+def _choose(
+    slot_options: list[tuple[str, list[dict[str, Any]]]], limits: dict[str, int], reqs: dict[str, int] | None = None
+) -> list[dict[str, Any] | None]:
     """One option per slot, never the same player twice.
 
     Without limits: the most used player per slot. With limits (total price/salary): among the
     combinations within every limit, the one with the highest summed usage rate — exhaustively when
     the combinations are few, otherwise by greedy swaps that cut the overrun per usage lost.
-    Unknown costs count as 0 (the caller reports those players).
+    Unknown costs count as 0 (the caller reports those players). `reqs` (tag → n, 케미·시즌 단일): at least n chosen
+    options whose "tags" hold the tag — a shortfall counts like going over a limit, so the same swaps fill it. Limits
+    weigh far more, so a swap never buys a tag by going over the salary cap or budget.
     """
+    reqs = reqs or {}
     chosen: list[dict[str, Any] | None] = []
     for _, options in slot_options:
         used = {c["entry"]["pid"] for c in chosen if c}
         chosen.append(next((o for o in options if o["entry"]["pid"] not in used), None))
-    if not limits:
+    if not limits and not reqs:
         return chosen
 
     def overrun(combo) -> float:
-        return sum(max(0, sum(c[k] or 0 for c in combo if c) - v) / max(v, 1) for k, v in limits.items())
+        over = 100 * sum(max(0, sum(c[k] or 0 for c in combo if c) - v) / max(v, 1) for k, v in limits.items())
+        for tag, need in reqs.items():  # ponytail: 탐욕 교체라 조건을 채우는 최적 조합은 아닐 수 있음
+            over += max(0, need - sum(1 for c in combo if c and tag in c["tags"])) / need
+        return over
 
     if all(options for _, options in slot_options) and math.prod(len(o) for _, o in slot_options) <= MAX_EXHAUSTIVE:
         best, best_key = None, None
@@ -285,7 +294,7 @@ TOOLS: list[dict[str, Any]] = [
         ),
         "input_schema": _schema(
             {
-                "team_color": {"type": "string", "description": "팀컬러. 생략하면 상위 랭커 전체"},
+                "team_color": {"type": "string", "description": "팀컬러. 클럽·국가면 11명 모두 그 소속 카드, 시즌 단일(예: 'WS')이면 그 시즌 카드를 최대한. 생략하면 상위 랭커 전체"},
                 "formation": {"type": "string", "description": "포메이션 (예: 4-2-3-1). 생략하면 그 범위에서 가장 많이 쓰인 포메이션"},
                 "strict": {"type": "boolean", "description": "true면 실제 배치가 포메이션과 일치한 스쿼드만 집계"},
                 "max_total_price_bp": {"type": "integer", "description": "고른 선수들의 총 예산(BP). 예: 50억 = 5000000000"},
@@ -293,6 +302,11 @@ TOOLS: list[dict[str, Any]] = [
                 "slots": {
                     "type": "string",
                     "description": "일부 자리만 고를 때, 자리마다 역할 하나를 쉼표로 (예: 'DM,DM', 'RW,LW', 'ST,ST'). 생략하면 포메이션 11명",
+                },
+                "chemistry": {
+                    "type": "string",
+                    "description": "관계(케미) 팀컬러 이름 (예: '19-20 FC 바르셀로나', '25-26 레알 마드리드'). 주면 그 명단 선수를 "
+                    "케미 발동 인원(첫 단계) 이상 넣는다. 결과의 chemistry.active로 발동 여부 확인",
                 },
             },
             [],
@@ -524,6 +538,9 @@ class Toolbox:
         if not candidates:
             alias = TEAM_COLOR_ALIASES.get("".join(text.split()).casefold())
             candidates = self.catalog.find(alias) if alias else []
+        if not candidates:  # 시즌 약칭 → 시즌 단일 팀컬러 ("WS" → "WS (Winning Streak)" → Winning Streak)
+            row = self.conn.execute("SELECT class_name FROM meta_season WHERE class_name LIKE ?", (f"{text} (%",)).fetchone()
+            candidates = self.catalog.find(row[0].partition(" (")[2].rstrip(")")) if row else []
         if not candidates:
             # "롬바르디아" → "롬바르디아 FC": 이름 일부가 한 팀컬러 이름에만 들어 있으면 그 팀컬러
             key = "".join(text.split()).casefold()
@@ -569,6 +586,46 @@ class Toolbox:
             return ALL_RANKERS, "전체 랭커"
         tc = self._team_color(value)
         return tc.id, self._scope_name(tc.id)
+
+    def _team_color_cards(self, tc: TeamColor) -> Callable[[int], bool] | None:
+        """sp_id → belongs to the team color: club = club history (loans count), nation = nationality (card details),
+        special = its season(s) (e.g. "Winning Streak" = WS). Cards without details count as outside."""
+        key = lambda t: "".join((t or "").split()).casefold()  # noqa: E731
+        want = key(tc.name)
+        if tc.category == "special":
+            seasons = set()
+            for season_id, cls in self.conn.execute("SELECT season_id, class_name FROM meta_season"):
+                code, _, long = cls.partition(" (")  # "WS (Winning Streak)", "19 TOTY (19 Team Of The Year)"
+                if want in (key(code), key(long.rstrip(")"))) or tc.name.upper() in code.upper().split():
+                    seasons.add(season_id)
+            return lambda sp_id: sp_id // 1_000_000 in seasons
+        if tc.category == "club":
+            ok = {spid for spid, clubs in self.conn.execute("SELECT spid, clubs FROM card_detail")
+                  if any(key(c["club"]) == want for c in json.loads(clubs))}  # fmt: skip
+        else:
+            try:
+                ok = {spid for spid, nation in self.conn.execute("SELECT spid, nation FROM card_detail") if key(nation) == want}
+            except sqlite3.OperationalError:  # 국적 칸이 생기기 전의 DB
+                ok = set()
+        return ok.__contains__
+
+    def _special_need(self, name: str) -> int:
+        """Players needed for a special (시즌 단일) team color's top level, from the collected info (else 8)."""
+        entry = next((e for e in self.team_color_info if e["type"] == "special" and e["name"] == name), None)
+        return max((lv["players"] for lv in entry["levels"]), default=8) if entry else 8
+
+    def _chemistry(self, name: str) -> dict[str, Any]:
+        """관계(케미) 팀컬러 이름 → 수집한 정보 (이름이 정확히 같거나, 한 팀컬러 이름에만 들어 있으면)."""
+        key = lambda t: "".join(t.split()).casefold()  # noqa: E731
+        relation = [e for e in self.team_color_info if e["type"] == "relation"]
+        if not relation:
+            raise ToolError("관계(케미) 팀컬러 정보를 아직 수집하지 않음 — chemistry 없이 다시 호출")
+        want = key(name)
+        hits = [e for e in relation if key(e["name"]) == want] or [e for e in relation if want in key(e["name"])]
+        if len(hits) != 1:
+            names = ", ".join(e["name"] for e in hits[:10])
+            raise ToolError(f"케미 팀컬러 '{name}'를 하나로 정할 수 없음" + (f": {names} 중 하나로" if hits else " — get_team_color_info로 이름 확인"))
+        return hits[0]
 
     def team_color_icons(self) -> dict[str, str]:
         """Team color display name → its icon on the ranking pages (path under the Nexon CDN's externalAssets/common):
@@ -951,8 +1008,17 @@ class Toolbox:
         max_total_price_bp: int | None = None,
         max_total_salary: int | None = None,
         slots: str | None = None,
+        chemistry: str | None = None,
     ) -> dict[str, Any]:
         tc_id, tc_name = self._scope(team_color)
+        tc = next((t for t in self.catalog.entries if t.id == tc_id), None)
+        # 팀컬러 규칙: 클럽·국가는 11명 전원 그 소속 카드만, 시즌 단일(스페셜)은 11명을 노리되 발동 인원 이상
+        fits = self._team_color_cards(tc) if tc else None
+        season_rule = tc is not None and tc.category == "special"
+        # 시즌 단일은 그 팀컬러 랭커가 적은 경우가 많아, 후보는 전체 랭커가 쓴 카드에서 그 시즌 카드를 찾는다
+        usage_id = ALL_RANKERS if season_rule else tc_id
+        chem = self._chemistry(chemistry) if chemistry else None
+        members = frozenset(p["pid"] for p in chem["players"]) if chem else frozenset()
         formation = normalize_formation(formation)
         source = "requested"
         layout_squads = None
@@ -961,7 +1027,7 @@ class Toolbox:
             source = "slots"
         else:
             if formation is None:
-                formation, source = self._most_used_formation(tc_id), "most_used"
+                formation, source = self._most_used_formation(usage_id), "most_used"
             if formation is None:
                 return {"team_color": tc_name, "lineup": [], "note": "이 범위는 스쿼드가 수집·집계되지 않음"}
             layout, layout_squads = role_slots(self.conn, formation)
@@ -970,6 +1036,9 @@ class Toolbox:
                     "team_color": tc_name, "formation": formation, "lineup": [],
                     "note": f"{formation}으로 실제 경기한 스쿼드가 수집되지 않아 포지션 구성을 알 수 없음",
                 }  # fmt: skip
+        reqs = {"chem": min(lv["players"] for lv in chem["levels"])} if chem else {}  # 케미: 첫 단계 발동 인원
+        if season_rule:
+            reqs["season"] = sum(layout.values())
         auto_cap = not slots and max_total_salary is None
         if not slots:  # 선발 11명은 게임의 팀 급여 상한을 넘을 수 없다
             max_total_salary = min(int(max_total_salary), SALARY_CAP) if max_total_salary is not None else SALARY_CAP
@@ -983,22 +1052,33 @@ class Toolbox:
         slot_options: list[tuple[str, list[dict[str, Any]]]] = []
         first = None
         for role, n in layout.items():
+            top = n + (25 if slots else 8)
             res = top_players(
-                self.conn, tc_id, formation or ALL_FORMATIONS, role, top=n + (25 if slots else 8), by="pid",
+                self.conn, usage_id, formation or ALL_FORMATIONS, role, top=200 if (chem or fits) else top, by="pid",
                 strict=bool(strict), min_sample=self.min_sample,
             )  # fmt: skip
             first = first or res
             options = []
-            for p in res.players:
+            # 상위 후보에 더해, 사용률이 낮아도 그 자리에 쓰인 케미 명단 선수·팀컬러 카드는 모두 후보
+            for i, p in enumerate(res.players):
+                if not (i < top or p.key in members or (fits and any(fits(x.sp_id) for x in p.seasons))):
+                    continue
                 entry = self._player_entry(res, (role,), p)
-                cards = [c for c in entry["cards"] if all(_cost(c, k) is not None for k in known)] if limits else []
-                for card in cards or entry["cards"][:1]:
-                    options.append({"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"]})
+                cards = entry["cards"]
+                if fits and not season_rule:  # 클럽·국가: 그 소속 카드만
+                    cards = [c for c in cards if fits(c["sp_id"])]
+                    if not cards:
+                        continue
+                if limits:
+                    cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
+                for card in cards if limits else cards[:1]:
+                    tags = {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(card["sp_id"]))) if ok}
+                    options.append({"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags})
             slot_options += [(role, options)] * n
         if first is None or not first.sample_size:
             return {"team_color": tc_name, "formation": formation, "lineup": [], "note": "이 조합은 스쿼드가 수집·집계되지 않음"}
 
-        chosen = _choose(slot_options, limits)
+        chosen = _choose(slot_options, limits, reqs)
 
         def total(kind: str) -> int:
             return sum(c[kind] for c in chosen if c and c[kind] is not None)
@@ -1064,8 +1144,27 @@ class Toolbox:
         if no_salary:
             out["no_salary_players"] = no_salary
             notes.append(f"급여 미수집 {len(no_salary)}명은 총 급여에서 빠짐")
-        if tc_id == ALL_RANKERS and first.data_as_of:
+        if usage_id == ALL_RANKERS and first.data_as_of:
             out["ranking_scope"] = squad_range(self.conn, first.data_as_of)
+        if fits and not season_rule:
+            empty = sum(1 for c in chosen if c is None)
+            out["team_color_rule"] = f"{tc_name}: 11명 모두 그 {'클럽 경력(임대 포함)' if tc.category == 'club' else '국적'} 카드"
+            if empty:
+                notes.append(f"{tc_name} 소속 카드 중 랭커들이 그 자리에 쓴 선수가 없어 {empty}자리를 비움")
+        if season_rule:
+            count = sum(1 for c in chosen if c and "season" in c["tags"])
+            least = self._special_need(tc.name)
+            out["season_rule"] = {"team_color": tc_name, "players": count, "target": reqs["season"], "need": least,
+                                  "active": count >= least}  # fmt: skip
+            if count < reqs["season"]:
+                notes.append(f"{tc_name} 카드로 {count}명 (전원은 못 채움 — 발동 인원 {least}명 {'충족' if count >= least else '미달'})")
+        if chem:
+            need = reqs["chem"]
+            inside = [c["entry"]["name"] for c in chosen if c and "chem" in c["tags"]]
+            out["chemistry"] = {"team_color": chem["name"], "need": need, "players_in_lineup": inside,
+                                "active": len(inside) >= need, "levels": chem["levels"]}  # fmt: skip
+            if len(inside) < need:
+                notes.append(f"케미 발동 인원 {need}명 중 {len(inside)}명만 넣음 (명단 선수 중 이 범위 랭커들이 그 자리에 쓴 선수가 부족하거나 급여·예산 한도 때문)")
         if limits:
             within = all(total(k) <= v for k, v in limits.items())
             out["budget"] = {

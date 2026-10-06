@@ -52,7 +52,7 @@ def test_players_are_grouped_by_player_and_split_at_the_cap(fixture_html):
     assert len(asked) == 7 and len(players) == 100 * 4 + 1 * 3  # 전체·GK 2번·DF 2번·MF·FW
 
 
-def test_collect_relation_with_players_and_special_without(fixture_html):
+def test_collect_relation_with_players_and_special_without(fixture_html, tmp_path):
     def handler(request):
         path, params = request.url.path, request.url.params
         if path == "/datacenter/teamcolor":
@@ -68,6 +68,15 @@ def test_collect_relation_with_players_and_special_without(fixture_html):
         entries = tci.collect(c)
     assert [(e["id"], e["type"]) for e in entries] == [(30007, "relation"), (30003, "relation"), (40149, "special")]
     assert len(entries[0]["players"]) == 3 and entries[0]["players_complete"] and "players" not in entries[2]
+
+    # 파일을 주면 받는 대로 저장하고, 다시 실행하면 이미 받은 팀컬러는 건너뛴다 (목록만 다시 받음)
+    out = tmp_path / "info.json"
+    with client(handler) as c:
+        tci.collect(c, out)
+    seen = []
+    with client(lambda r: seen.append(r.url.path) or handler(r)) as c:
+        assert len(tci.collect(c, out)) == 3
+    assert set(seen) == {"/datacenter/teamcolor"}
 
 
 INFO = [

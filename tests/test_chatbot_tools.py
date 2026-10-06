@@ -294,6 +294,35 @@ def test_choose_finds_best_pair_within_limit():
     assert [c["entry"]["pid"] for c in _choose([("DM", options), ("DM", options)], {})] == [1, 2]
 
 
+def test_choose_fills_chemistry_with_least_usage_loss():
+    from fco_meta.chatbot.tools import _choose
+
+    def opt(pid, usage, salary=0, chem=False):
+        return {"entry": {"pid": pid, "usage_rate": usage}, "price": None, "salary": salary, "tags": {"chem"} if chem else set()}
+
+    # 자리 3개, 케미 명단에서 2명: 사용률 손해가 가장 적은 자리부터 명단 선수로
+    slots = [("ST", [opt(1, 0.9), opt(3, 0.2, chem=True)]), ("CAM", [opt(2, 0.8), opt(5, 0.7, chem=True)]), ("GK", [opt(4, 0.9)])]
+    chosen = _choose(slots, {}, {"chem": 2})
+    assert [c["entry"]["pid"] for c in chosen] == [3, 5, 4]
+    # 급여 상한도 같이 지킨다: 명단 선수(급여 40)를 넣고 한도 안으로
+    slots = [("ST", [opt(1, 0.9, 30), opt(3, 0.5, 40, chem=True)]), ("CAM", [opt(2, 0.8, 30), opt(6, 0.1, 10)])]
+    chosen = _choose(slots, {"salary": 55}, {"chem": 1})
+    assert [c["entry"]["pid"] for c in chosen] == [3, 6]
+    # 급여 상한을 넘겨야만 채울 수 있으면 상한이 먼저 (명단 선수를 넣지 않음)
+    slots = [("ST", [opt(1, 0.9, 30), opt(3, 0.5, 40, chem=True)]), ("CAM", [opt(2, 0.8, 30)])]
+    assert [c["entry"]["pid"] for c in _choose(slots, {"salary": 60}, {"chem": 1})] == [1, 2]
+
+
+def test_recommend_squad_chemistry(toolbox):  # noqa: F811
+    toolbox.team_color_info = [{"name": "19-20 아스널", "type": "relation", "description": "",
+                                "levels": [{"level": 1, "players": 2, "effects": ["짧은 패스 +3"]}],
+                                "players": [{"pid": 9, "name": "볼란치R"}, {"pid": 11, "name": "볼란치L"}], "players_complete": True}]  # fmt: skip
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4-2-3-1", "chemistry": "19-20 아스널"})
+    assert r["chemistry"]["active"] and sorted(r["chemistry"]["players_in_lineup"]) == ["볼란치L", "볼란치R"]
+    content, is_error = toolbox.run("recommend_squad", {"team_color": "아스널", "chemistry": "없는 케미"})
+    assert is_error and "하나로 정할 수 없음" in json.loads(content)["error"]
+
+
 def test_query_season_win_rate_and_costs(toolbox):  # noqa: F811
     add_salaries(toolbox.conn)
     # A·B·D = 스냅샷 4-2-3-1, C = 4-4-2
@@ -344,6 +373,7 @@ def test_query_by_stat(toolbox, fixture_html):  # noqa: F811
 
 
 def test_card_profiles_in_detail(toolbox, fixture_html):  # noqa: F811
+    toolbox.conn.execute("DELETE FROM card_detail WHERE spid = 300000009")  # S300은 상세 미수집
     add_details(toolbox.conn, fixture_html)
     r = run(toolbox, "get_player_detail", {"name": "볼란치R", "team_color": "아스널"})
     (profile,) = r["players"][0]["card_profiles"]  # S300은 상세 미수집
@@ -431,3 +461,19 @@ def test_model_view_formats_rates_decimals_and_times():
         "rows": [{"usage_rate": "52.8%", "season_win_rate": "55.7%", "share_change": "-1.2%p", "avg_elo": 2769.9,
                   "avg_rating": 6.21, "avg_salary": 31.0, "rankers": 9996, "match_stat": 1.59, "pass_success_rate": "89.8%", "avg_season_win_rate_of_users": "55.2%"}],
     }  # fmt: skip
+
+
+def test_team_color_rules(toolbox):  # noqa: F811
+    from fco_meta.crawler.models import TeamColor
+
+    # 클럽 팀컬러: 11명 모두 그 클럽 경력 카드 — 첼시 경력뿐인 볼란치L 카드는 아스널 스쿼드에 못 들어간다
+    toolbox.conn.execute("UPDATE card_detail SET clubs = '[{\"club\": \"첼시\"}]' WHERE spid = 101000011")
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4-2-3-1"})
+    assert "볼란치L" not in [s["player"] for s in r["lineup"]] and "11명 모두" in r["team_color_rule"]
+
+    # 시즌 단일(스페셜) 팀컬러 = 그 시즌 카드: "Winning Streak" → WS, "TOTY" → 19 TOTY
+    toolbox.conn.executemany("INSERT OR REPLACE INTO meta_season (season_id, class_name) VALUES (?, ?)",
+                             [(848, "WS (Winning Streak)"), (211, "19 TOTY (19 Team Of The Year)")])  # fmt: skip
+    fits = toolbox._team_color_cards(TeamColor(id=1, name="Winning Streak", category="special", group_id=1))
+    assert fits(848000009) and not fits(211000009)
+    assert toolbox._team_color_cards(TeamColor(id=2, name="TOTY", category="special", group_id=2))(211000009)

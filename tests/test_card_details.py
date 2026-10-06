@@ -22,6 +22,7 @@ def test_parse_player_preview(fixture_html):
     assert d.summary == {"스피드": 121, "슛": 116, "패스": 128, "드리블": 121, "수비": 124, "피지컬": 125}
     assert len(d.stats) == 34 and d.stats["속력"] == 124 and d.stats["GK 위치 선정"] == 22
     assert d.clubs[0] == {"years": "2023 ~", "club": "아스널", "loan": ""}
+    assert d.nation == "잉글랜드"  # "잉글랜드, 국가대표"
 
 
 def datacenter(fixture_html, requested, fail=()):

@@ -15,6 +15,13 @@ def toolbox(db):  # noqa: F811
         "INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (?, 5, ?, '2026-09-28T12:00:00+00:00')",
         [(101000011, 900_000_000), (250000009, 300_000_000), (300000009, 50_000_000)],
     )
+    # 카드 상세: 테스트 랭커들이 쓴 카드는 모두 아스널 경력 (스쿼드 추천은 클럽 팀컬러면 그 경력 카드만 쓴다)
+    db.conn.executemany(
+        "INSERT INTO card_detail (spid, grade, positions, traits, summary, stats, clubs, fetched_at, nation)"
+        " VALUES (?, 1, '{}', '[]', '{}', '{}', ?, 'x', '잉글랜드')",
+        [(sp_id, '[{"years": "2020 ~", "club": "아스널", "loan": ""}]')
+         for (sp_id,) in db.conn.execute("SELECT DISTINCT sp_id FROM usage_stats")],
+    )  # fmt: skip
     db.conn.commit()
     return tb
 

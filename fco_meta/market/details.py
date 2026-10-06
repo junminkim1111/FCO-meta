@@ -47,7 +47,7 @@ def cards_needing_details(conn: sqlite3.Connection, now: datetime) -> list[int]:
         sp_id for (sp_id,) in conn.execute(
             "SELECT u.sp_id FROM usage_stats u LEFT JOIN card_detail d ON d.spid = u.sp_id"
             " WHERE u.team_color_id = 0 AND u.formation = '*' AND u.strict = 0 AND u.data_as_of = ?"
-            " AND (d.spid IS NULL OR d.fetched_at < ?)"
+            " AND (d.spid IS NULL OR d.fetched_at < ? OR d.nation IS NULL)"  # 국적은 2026-10에 추가 → 한 번 다시 받는다
             " GROUP BY u.sp_id ORDER BY SUM(u.ranker_count) DESC, u.sp_id",
             (row[0], cutoff),
         )

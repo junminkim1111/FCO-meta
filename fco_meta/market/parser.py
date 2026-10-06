@@ -111,6 +111,8 @@ def parse_player_preview(html: str, spid: int, grade: int) -> CardDetail:
         summary=stat_list(".content_middle li.ab"),
         stats=stat_list(".content_bottom li.ab"),
         clubs=clubs,
+        # "잉글랜드, 국가대표" → "잉글랜드". 없으면 "" (None이면 다음 실행에 다시 받으므로)
+        nation=_text(tree.body, ".info_line .etc.nation .txt").split(",")[0].strip(),
     )
 
 
