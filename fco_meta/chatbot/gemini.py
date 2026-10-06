@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from .numbers import unsupported_numbers
 from .prompt import SYSTEM_PROMPT
-from .tools import TOOLS, Toolbox
+from .tools import TOOLS, Toolbox, model_view
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,10 @@ class CoolingDown(Exception):
     """A model skipped because it recently ran out of quota or was unavailable."""
 
 
+class AnswerTimeout(Exception):
+    """The question used up ANSWER_DEADLINE (retries, fallbacks and tool rounds together)."""
+
+
 def _cooldown_until(exc: Any, now: float) -> float:
     if exc.code in UNAVAILABLE:
         return now + 24 * 3600
@@ -60,6 +64,9 @@ MID_STREAM_RETRIES = 1  # 답이 흘러나오던 중 끊기면 그 단계를 다
 MAX_QUOTA_WAIT = 15.0  # 429(분당 한도)에서 구글이 알려 준 대기 시간이 이 이하면 한 번 기다렸다 재시도
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
 MAX_EVIDENCE = 4  # GeminiTurn.evidence 줄 수
+# 한 질문의 전체 대기 상한(초): 재시도·대체 모델·도구 단계를 모두 합쳐. 넘으면 그 질문은 실패(화면에는 혼잡 안내).
+# 요청마다 남은 시간을 타임아웃으로 걸어, 응답이 늦은 요청도 이 안에서 끊는다
+ANSWER_DEADLINE = 120.0
 
 
 class Reset:
@@ -87,7 +94,7 @@ class Recheck:
 # 답에 도구 결과에 없는 수치가 있을 때 한 번 다시 쓰게 하는 요청
 RECHECK_REQUEST = (
     "방금 답에 쓴 수치 중 {numbers}는 이번 도구 결과에 없습니다. 도구 결과에 있는 값만 써서 답 전체를 다시 쓰세요. "
-    "결과에 없는 값은 '미수집'이라고 쓰고, 다시 쓴다는 말은 하지 마세요."
+    "결과에 없는 값은 빼고, 결과에 있는 값은 미수집이라고 하지 말고 그대로 쓰세요. 다시 쓴다는 말은 하지 마세요."
 )
 
 
@@ -179,6 +186,8 @@ def describe_error(exc: Exception) -> str:
         from google.genai import errors
     except ImportError:  # pragma: no cover
         errors = None
+    if isinstance(exc, AnswerTimeout):
+        return f"답변 대기 시간 상한({ANSWER_DEADLINE:.0f}초) 초과 — {exc}"
     if isinstance(exc, GeminiUnavailable):
         per_model = " / ".join(
             f"{m}: {_api_error_text(e) if errors and isinstance(e, errors.APIError) else e}" for m, e in exc.failures
@@ -264,6 +273,8 @@ class GeminiChat:
         self.sleep = sleep
         self.now = now
         self.last_model: str | None = None  # 마지막 응답을 만든 모델 (대체 모델로 바뀌었는지 확인용)
+        self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
+        self._ends_at = float("inf")  # 이번 질문을 끝내야 하는 시각 (ask_stream이 정한다)
         self.discover = True  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 찾아 시도
         self._discovered: list[str] | None = None
         self.contents: list[Any] = []
@@ -278,9 +289,23 @@ class GeminiChat:
             update={"tool_config": types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))}
         )
 
+    def _left(self) -> float:
+        """Seconds left for this question."""
+        return self._ends_at - self.now()
+
     def _open(self, model: str, config: Any) -> Iterator[Any]:
-        stream = self.client.models.generate_content_stream(model=model, contents=self.contents, config=config or self.config)
-        return _started(stream)
+        left = self._left()
+        if left <= 0:
+            raise AnswerTimeout(f"{model} 요청 전")
+        config = config or self.config
+        if left != float("inf"):  # 응답이 늦어도 남은 시간 안에서 끊는다 (밀리초)
+            config = config.model_copy(update={"http_options": _types().HttpOptions(timeout=max(int(left * 1000), 1000))})
+        import httpx
+
+        try:
+            return _started(self.client.models.generate_content_stream(model=model, contents=self.contents, config=config))
+        except httpx.TimeoutException as exc:
+            raise AnswerTimeout(f"{model} 응답 없음") from exc
 
     def _generate(self, config: Any = None) -> Iterator[Any]:
         """A response stream (chunks), with retries on overload/quota, then the fallback models in order."""
@@ -323,6 +348,9 @@ class GeminiChat:
                         fail(model, exc)
                         log.warning("%s: %s %s, trying next model", model, exc.code, exc.status)
                         break
+                    if wait >= self._left():  # 기다리면 상한을 넘는다
+                        fail(model, exc)
+                        raise AnswerTimeout(f"{model} 재시도 대기 중")
                     log.warning("%s: %s %s, retrying in %.0fs", model, exc.code, exc.status, wait)
                     self.sleep(wait)
                     continue
@@ -367,6 +395,7 @@ class GeminiChat:
         returns the GeminiTurn. On an error or when the caller stops early (closes the generator), the
         history is rolled back so the next question starts clean."""
         self._drop_tool_history()
+        self._ends_at = self.now() + self.deadline
         checkpoint = len(self.contents)
         try:
             return (yield from self._ask(question))
@@ -439,6 +468,9 @@ class GeminiChat:
         without tools. The flagged answer and the request are then dropped from the history."""
         missing = unsupported_numbers(text, known, question)
         if not missing:
+            return text, finish
+        if self._left() <= 0:  # 다시 쓸 시간이 없으면 처음 답을 그대로 둔다
+            log.warning("numbers not in tool results %s — no time left for a rewrite", missing)
             return text, finish
         log.warning("numbers not in tool results %s — asking for one rewrite", missing)
         yield RESET
@@ -516,7 +548,7 @@ class GeminiChat:
                         payload = {"error": result["error"]}
                     else:
                         log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
-                        payload = {"result": result}
+                        payload = {"result": model_view(result)}  # 비율은 %, 소수는 반올림해 모델이 그대로 쓰게
                         results.append(result)
                         line = self.toolbox.evidence(fc.name, result)
                         if line and line not in evidence:

@@ -23,6 +23,7 @@ from typing import Any
 from ..config import load_env
 from .gemini import choose_backend
 from .numbers import unsupported_numbers
+from .prompt import SYSTEM_PROMPT
 from .rules import RuleBot
 from .tools import Toolbox
 
@@ -116,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
             a = RuleBot(toolbox).ask(question)
             answer, calls = a.text, [(a.tool, a.tool_input)] if a.tool else []
         elapsed = time.monotonic() - started
-        missing = unsupported_numbers(answer, results, question)
+        # 지시문의 예시 문장("레알 5억 미만 공격수…")을 그대로 쓴 안내는 지어낸 수치가 아니다
+        missing = unsupported_numbers(answer, [*results, SYSTEM_PROMPT], question)
         flagged += bool(missing)
         print(f"[{n}/{len(questions)}] #{i} {question} — {elapsed:.1f}s, 도구 {len(calls)}회" + (f", 확인 필요 {missing}" if missing else ""))
 

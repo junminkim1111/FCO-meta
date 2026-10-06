@@ -130,6 +130,12 @@ def test_meta_trends(tmp_path, fixture_html):
     evidence = tb.evidence("get_meta_trends", r)
     assert evidence.startswith("전체 랭커 메타 — 랭킹 상위 20명") and "과 비교" in evidence
 
+    # 이전 스냅샷의 스쿼드 표본이 지금의 절반도 안 되면 선수 변화는 비교하지 않는다 (모두 급상승으로 보이므로)
+    conn.execute("UPDATE usage_sample SET squads = 1 WHERE data_as_of = ? AND formation = '*'", (OLDER,))
+    conn.commit()
+    r = run(tb, "get_meta_trends", {})
+    assert "rising" not in r and "1명만 집계" in r["note"] and r["formations"][0].get("share_change") is not None
+
     # 스냅샷이 하나뿐이면 변화량 없이 안내
     conn.execute("DELETE FROM crawl_run WHERE data_as_of = ?", (OLDER,))
     r = run(tb, "get_meta_trends", {})
@@ -166,6 +172,11 @@ def test_unsupported_numbers_flags_made_up_figures():
         "[근거] 99.9% 무시되는 줄"
     )
     assert unsupported_numbers(answer, results, "볼란치 2명 추천") == ["35.1%", "7억", "12명"]
+
+    # 쉼표 있는 수를 잘라 읽지 않는다 ("9,996명" ≠ "996명"), 이미 %인 값을 반올림한 것도 결과에 있는 값
+    results = [{"squads": 9996, "rows": [{"rankers": 1718, "pass_success_rate": 94.88}]}]
+    assert unsupported_numbers("9,996명 중 1,718명, 패스 성공률 94.9%", results) == []
+    assert unsupported_numbers("9,996명 중 2,718명", results) == ["2,718명"]
 
 
 def test_evaluate_cli_rules(db, tmp_path, capsys):  # noqa: F811
@@ -405,3 +416,18 @@ def test_unexpected_tool_failures_come_back_as_tool_errors(toolbox, monkeypatch)
     monkeypatch.setitem(toolbox._handlers, "list_formations", broken)
     content, is_error = toolbox.run("list_formations", {})
     assert is_error and "OperationalError" in _json.loads(content)["error"]
+
+
+def test_model_view_formats_rates_decimals_and_times():
+    from fco_meta.chatbot.tools import model_view
+
+    raw = {
+        "data_as_of": "2026-10-01T09:00:00+09:00",
+        "rows": [{"usage_rate": 0.528, "season_win_rate": 0.5568, "share_change": -0.0117, "avg_elo": 2769.9251,
+                  "avg_rating": 6.2118, "avg_salary": 31.001, "rankers": 9996, "match_stat": 1.59, "pass_success_rate": 0.8976, "avg_season_win_rate_of_users": 0.5523}],
+    }  # fmt: skip
+    assert model_view(raw) == {
+        "data_as_of": "2026-10-01 09:00",
+        "rows": [{"usage_rate": "52.8%", "season_win_rate": "55.7%", "share_change": "-1.2%p", "avg_elo": 2769.9,
+                  "avg_rating": 6.21, "avg_salary": 31.0, "rankers": 9996, "match_stat": 1.59, "pass_success_rate": "89.8%", "avg_season_win_rate_of_users": "55.2%"}],
+    }  # fmt: skip

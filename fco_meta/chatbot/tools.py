@@ -168,6 +168,32 @@ def _choose(slot_options: list[tuple[str, list[dict[str, Any]]]], limits: dict[s
     return chosen
 
 
+_ISO_TIME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$")
+
+
+def _is_rate(key: str) -> bool:
+    # avg_season_win_rate_of_users·win_rate_of_those_matches처럼 rate가 중간에 있는 이름도 비율
+    return "rate" in key or "share" in key or key.endswith("coverage") or key == "change"
+
+
+def model_view(value: Any, key: str = "") -> Any:
+    """A tool result as the model sees it: rates as "52.8%" (changes as "+3.4%p"), other decimals rounded
+    (ELO 2769.9, 평점 6.21), times as "2026-10-01 09:00". The web and the number check use the raw result;
+    the model then writes these values as they are instead of "사용률 0.528" or "ELO 2769.9251"."""
+    if isinstance(value, dict):
+        return {k: model_view(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [model_view(v, key) for v in value]
+    if isinstance(value, float):
+        if _is_rate(key) and -1 <= value <= 1:
+            pct = round(value * 100, 1)
+            return f"{pct:+.1f}%p" if key.endswith("change") else f"{pct:.1f}%"
+        return round(value, 1) if abs(value) >= 100 else round(value, 2)
+    if isinstance(value, str) and (m := _ISO_TIME_RE.match(value)):
+        return f"{m.group(1)} {m.group(2)}"
+    return value
+
+
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     """Plain JSON Schema (LLM 제공자와 무관). 선택 항목은 required에서 뺀다."""
     return {"type": "object", "properties": properties, "required": required}
@@ -1277,7 +1303,9 @@ class Toolbox:
             for p in sorted(now_p.values(), key=lambda p: -p["rankers"])[:10]
         ]
         prev_sample, before_p = self._player_usage(tc_id, prev[0]) if prev else (0, {})
-        if prev_sample:
+        # 이전 표본이 지금의 절반도 안 되면(예: 그날 스쿼드 1명만 집계) 비교하면 모든 선수가 "급상승"으로 보인다
+        comparable = prev_sample and prev_sample * 2 >= sample
+        if comparable:
             out["player_compared_sample_size"] = prev_sample
             changes = []
             for pid in now_p.keys() | before_p.keys():
@@ -1297,7 +1325,9 @@ class Toolbox:
             notes.append("비교할 이전 스냅샷이 없어 변화량은 없음 (매일 수집이 쌓이면 생김)")
         elif not prev_sample:
             notes.append("이전 스냅샷은 스쿼드가 집계되지 않아 선수 사용률 변화는 없음")
-        notes.append(f"share_change·change는 비율 차이(0.05 = 5%p). 선수 변화는 사용 랭커 {TREND_MIN_RANKERS}명 이상만")
+        elif not comparable:
+            notes.append(f"이전 스냅샷은 스쿼드가 {prev_sample}명만 집계돼(지금 {sample}명) 선수 사용률 변화는 비교하지 않음")
+        notes.append(f"share_change·change는 이전 스냅샷 대비 차이(%p). 선수 변화는 사용 랭커 {TREND_MIN_RANKERS}명 이상만")
         out["note"] = " / ".join(notes)
         return out
 
@@ -1489,6 +1519,9 @@ class Toolbox:
             value = r["avg_squad_value"]
             rows.append({**label, **{k: r[k] for k in ("rankers", "share", "season_win_rate", "season_games", "avg_elo")},
                          "avg_squad_value": format_bp(int(value)) if value is not None else None})  # fmt: skip
+            if group_by == "rank_band":  # 그 구간(순위 범위로 잘린 만큼) 랭커 중 조건에 맞는 비율
+                last = min(key + band - 1, res["covered"], int(rank_max) if rank_max else res["covered"])
+                rows[-1]["share_of_band"] = round(r["rankers"] / max(last - max(key, int(rank_min or 1)) + 1, 1), 4)
         notes = []
         if res["total_groups"] > len(rows) and min_rankers > 1:
             notes.append(f"랭커 {min_rankers}명 미만 묶음은 뺌 (전체 {res['total_groups']}개)")
@@ -1503,6 +1536,8 @@ class Toolbox:
             "rows": rows,
             "definitions": {
                 "rankers·share": "조건에 맞는 랭커 중 그 묶음의 랭커 수와 비율",
+                **({"share_of_band": "그 순위 구간 랭커 전체 중 조건(포메이션·팀컬러 등)에 맞는 랭커 비율 — '구간별로 몇 %가 쓰나'는 이 값"}
+                   if group_by == "rank_band" else {}),
                 "season_win_rate": "그 랭커들의 이번 시즌 전적(승/무/패)을 합친 승률, season_games = 경기 수 합",
                 "avg_squad_value": "랭킹 화면의 구단가치 평균",
                 "note": "선수·스쿼드 정보는 없음 — 선수 질문은 스쿼드 기반 도구(상위 수백 명)",
@@ -1624,7 +1659,11 @@ class Toolbox:
             k: r[k] for k in ("rankers", "usage_rate", "avg_rating", "season_win_rate", "season_games", "win_rate",
                               "avg_grade", "avg_elo", "avg_salary", "salary_coverage", "price_coverage")
         }  # fmt: skip
-        metrics["avg_price"] = format_bp(round(r["avg_price"])) if r["avg_price"] is not None else None
+        # 평균은 만 단위로 ("23억 821만 2,756"처럼 원 단위까지 쓰지 않게)
+        avg_price = r["avg_price"]
+        if avg_price is not None:
+            avg_price = int(round(avg_price, -4) if avg_price >= 100_000 else round(avg_price))
+        metrics["avg_price"] = format_bp(avg_price) if avg_price is not None else None
         if "stat" in r:
             metrics["stat"], metrics["stat_coverage"] = r["stat"], r["stat_coverage"]
         if "match_stat" in r:

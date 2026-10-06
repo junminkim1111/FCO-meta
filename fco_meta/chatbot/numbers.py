@@ -10,9 +10,10 @@ from typing import Any
 
 from ..market.money import parse_bp
 
-_PERCENT_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*%")
+# 앞에 숫자·쉼표·점이 붙은 경우는 잘라 읽지 않는다 ("9,996명"을 "996명"으로 읽지 않게)
+_PERCENT_RE = re.compile(r"(?<![\d,.])([+-]?\d[\d,]*(?:\.\d+)?)\s*%")
 _MONEY_RE = re.compile(r"\d[\d,.]*\s*(?:조|억|만)(?:\s*\d[\d,.]*\s*(?:억|만))*")
-_COUNT_RE = re.compile(r"(\d+)\s*명")
+_COUNT_RE = re.compile(r"(?<![\d,.])(\d[\d,]*)\s*명")
 _PLAIN_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
@@ -47,8 +48,9 @@ def unsupported_numbers(answer: str, results: list[Any], question: str = "") -> 
     text = "\n".join(line for line in answer.splitlines() if not line.startswith("[근거]"))
     missing = []
     for m in _PERCENT_RE.finditer(text):
-        v = abs(float(m.group(1)))
-        if not any(abs(v - r) <= 0.051 for r in rates) and v not in known:
+        v = abs(float(m.group(1).replace(",", "")))
+        # 비율(0.948) 또는 이미 %인 값(94.88)을 반올림해 쓴 것도 결과에 있는 값
+        if not any(abs(v - r) <= 0.051 for r in rates) and not any(abs(v - k) <= 0.051 for k in known if 1 < k <= 100):
             missing.append(m.group(0))
     for m in _MONEY_RE.finditer(text):
         try:
@@ -58,7 +60,7 @@ def unsupported_numbers(answer: str, results: list[Any], question: str = "") -> 
         if not any(abs(bp - k) <= max(k * 0.005, 1) for k in known if k >= 10_000) and bp not in asked:
             missing.append(m.group(0).strip())
     for m in _COUNT_RE.finditer(text):
-        n = float(m.group(1))
+        n = float(m.group(1).replace(",", ""))
         if n not in known and n not in asked:
             missing.append(m.group(0))
     return missing

@@ -36,6 +36,12 @@ def test_rank_bands_filters_and_team_colors(tmp_path, fixture_html):
     tb = Toolbox(storage.conn)
     r = run(tb, {"group_by": "rank_band", "band": 10})
     assert [(x["rank_band"], x["rankers"]) for x in r["rows"]] == [("1~10위", 10), ("11~20위", 10)]
+    assert [x["share_of_band"] for x in r["rows"]] == [1.0, 1.0] and "share_of_band" in r["definitions"]
+    # 포메이션 하나: share는 그 포메이션 랭커 중 구간 비율, share_of_band는 구간 랭커 중 그 포메이션 비율
+    top = run(tb, {"group_by": "formation"})["rows"][0]
+    r = run(tb, {"group_by": "rank_band", "band": 10, "formation": top["formation"], "rank_min": 6})
+    first = r["rows"][0]
+    assert first["share_of_band"] == round(first["rankers"] / 5, 4)  # 6~10위 다섯 명 중
     r = run(tb, {"group_by": "formation", "rank_min": 11, "rank_max": 20})
     assert r["rankers"] == 10 and "순위 11~20위" in r["scope"]["description"]
 

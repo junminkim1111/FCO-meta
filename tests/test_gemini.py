@@ -600,3 +600,25 @@ def test_stream_broken_twice_gives_up(toolbox):
     with pytest.raises(errors.ServerError):  # 웹은 혼잡 안내를 보인다
         chat.ask("질문")
     assert chat.contents == []  # 실패한 질문은 기록에서 뺀다
+
+
+def test_question_gives_up_at_the_answer_deadline(toolbox):
+    from fco_meta.chatbot.gemini import ANSWER_DEADLINE, AnswerTimeout
+
+    clock = [0.0]
+
+    class Slow(ByModel):
+        def generate_content(self, **kwargs):
+            clock[0] += 50  # 혼잡해서 오류도 늦게 온다
+            return super().generate_content(**kwargs)
+
+    client = FakeClient([])
+    client.models = Slow({"primary": [_unavailable()] * 3, "backup": [_unavailable()] * 3})
+    chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"],
+                      sleep=lambda s: clock.__setitem__(0, clock[0] + s), now=lambda: clock[0])  # fmt: skip
+    with pytest.raises(AnswerTimeout):
+        chat.ask("질문")
+    timeouts = [r["config"].http_options.timeout for r in client.models.requests]
+    assert timeouts[0] == ANSWER_DEADLINE * 1000  # 요청마다 남은 시간을 타임아웃으로
+    assert len(timeouts) == 3 and timeouts == sorted(timeouts, reverse=True)  # 상한(120초) 안에서 멈춘다
+    assert "대기 시간 상한" in describe_error(AnswerTimeout("x"))
