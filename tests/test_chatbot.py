@@ -187,3 +187,23 @@ def test_squad_spends_salary_left_under_the_cap():
     chosen = _choose(slots, {"salary": 300})
     assert [c["entry"]["pid"] for c in chosen] == list(range(11))  # 주전은 그대로
     assert sum(c["salary"] for c in chosen) == 300  # 남는 급여로 같은 선수의 급여 높은 카드로 올림 (220 → 300)
+
+
+def test_model_gets_tool_results_without_screen_only_values():
+    from fco_meta.chatbot.tools import for_model
+
+    card = {"sp_id": 1, "season": "25 UCL (25 UEFA Champions League)", "season_img": "https://x/y.png", "usage_rate": 0.5,
+            "price_at_most_used_grade": {"grade": 8, "price_bp": 930_000_000, "price": "9억 3,000만", "fetched_at": "t"}}  # fmt: skip
+    assert for_model("recommend_players", {"players": [{"pid": 7, "name": "라이스", "cards": [card]}]}) == {
+        "players": [{"name": "라이스", "cards": [{"season": "25 UCL", "usage_rate": "50.0%", "price_at_most_used_grade": {"grade": 8, "price": "9억 3,000만"}}]}]
+    }  # fmt: skip
+    detail = {
+        "players": [{"name": "라이스", "roles": [{"role": "DM", "rankers": 300, "cards": [card] * 9}, {"role": "CM", "rankers": 50, "cards": []},
+                                                {"role": "RB", "rankers": 2, "cards": []}]}],
+        "usage": [{"rankers": n} for n in range(20)],
+        "prices": [{"sp_id": 1, "grade": g, "price_bp": g, "price": f"{g}억"} for g in (1, 8)],
+    }  # fmt: skip
+    brief = for_model("get_player_detail", detail)
+    assert [r["role"] for r in brief["players"][0]["roles"]] == ["DM", "CM"]  # 2명만 쓴 역할은 빠짐
+    assert len(brief["players"][0]["roles"][0]["cards"]) == 6 and len(brief["usage"]) == 10
+    assert brief["prices"] == [{"season": "25 UCL", "price_by_grade": {"1": "1억", "8": "8억"}}]  # 강화별 시세를 카드 하나로

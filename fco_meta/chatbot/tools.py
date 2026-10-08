@@ -273,6 +273,57 @@ def model_view(value: Any, key: str = "") -> Any:
     return value
 
 
+# 화면·내부용 값: 모델의 답에는 쓰이지 않아 모델에게는 보내지 않는다 (입력 토큰을 줄인다)
+SCREEN_ONLY = {"season_img", "sp_id", "pid", "fetched_at", "mode"}
+MAX_DETAIL_ROLES, MAX_DETAIL_CARDS, MAX_DETAIL_USAGE = 6, 6, 10  # get_player_detail을 모델에게 줄 때 남기는 수
+
+
+def for_model(name: str, result: Any) -> Any:
+    """A tool result as the model gets it: model_view without screen-only values (image URLs, ids, fetch times, BP
+    integers next to their formatted price), short season names ("25 UCL"), and get_player_detail cut to what answers
+    use. The web and the number check keep the full result."""
+    if name == "get_player_detail" and isinstance(result, dict):
+        result = _brief_player_detail(result)
+    return model_view(_strip(result))
+
+
+def _strip(value: Any, key: str = "") -> Any:
+    if isinstance(value, dict):
+        return {k: _strip(v, k) for k, v in value.items()
+                if k not in SCREEN_ONLY and not (k == "price_bp" and "price" in value)}  # fmt: skip
+    if isinstance(value, list):
+        return [_strip(v, key) for v in value]
+    if key == "season" and isinstance(value, str):
+        return value.split(" (")[0]  # "25 UCL (25 UEFA Champions League)" → "25 UCL"
+    return value
+
+
+def _brief_player_detail(result: dict[str, Any]) -> dict[str, Any]:
+    """Roles the player is really used in (3+ rankers, at least the top one), their most used cards, the biggest
+    per-formation rows, and each card's prices by grade as one map instead of a row per grade."""
+    season_of: dict[int, str] = {}
+    players = []
+    for p in result.get("players", []):
+        roles = sorted(p.get("roles", []), key=lambda r: -r.get("rankers", 0))
+        kept = [r for i, r in enumerate(roles) if i == 0 or r.get("rankers", 0) >= 3][:MAX_DETAIL_ROLES]
+        for r in roles:
+            for c in r.get("cards", []):
+                season_of[c.get("sp_id")] = c.get("season")
+        for c in p.get("card_profiles") or []:
+            season_of.setdefault(c.get("sp_id"), c.get("season"))
+        players.append({**p, "roles": [{**r, "cards": r.get("cards", [])[:MAX_DETAIL_CARDS]} for r in kept]})
+    prices: dict[str, dict[str, str]] = {}
+    for row in result.get("prices", []):
+        card = season_of.get(row.get("sp_id")) or str(row.get("sp_id"))
+        prices.setdefault(card, {})[str(row.get("grade"))] = row.get("price")
+    out = {**result, "players": players}
+    if "usage" in result:
+        out["usage"] = sorted(result["usage"], key=lambda u: -u.get("rankers", 0))[:MAX_DETAIL_USAGE]
+    if "prices" in result:
+        out["prices"] = [{"season": season, "price_by_grade": by_grade} for season, by_grade in prices.items()]
+    return out
+
+
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     """Plain JSON Schema (LLM 제공자와 무관). 선택 항목은 required에서 뺀다."""
     return {"type": "object", "properties": properties, "required": required}

@@ -27,7 +27,7 @@ from .gemini import (
 )  # fmt: skip
 from .numbers import unsupported_numbers
 from .prompt import SYSTEM_PROMPT
-from .tools import TOOLS, Toolbox, model_view
+from .tools import TOOLS, Toolbox, for_model
 
 log = logging.getLogger(__name__)
 
@@ -139,12 +139,12 @@ class ToolChat:
                 yield ToolCall(name, args)
                 content, is_error = self.toolbox.run(name, args)
                 result = json.loads(content)
-                yield ToolResult(name, not is_error, _preview(result.get("error") if is_error else model_view(result)))
+                yield ToolResult(name, not is_error, _preview(result.get("error") if is_error else for_model(name, result)))
                 if is_error:
                     out.append((call_id, result["error"], True))
                     continue
                 results.append(result)
-                out.append((call_id, json.dumps(model_view(result), ensure_ascii=False), False))
+                out.append((call_id, json.dumps(for_model(name, result), ensure_ascii=False), False))
                 line = self.toolbox.evidence(name, result)
                 if line and line not in evidence:
                     evidence.append(line)
@@ -246,6 +246,8 @@ class OpenAIChat(ToolChat):
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
         if reasoning := (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"):
             self.tokens.update(reasoning=reasoning)
+        if cached := (usage.get("prompt_tokens_details") or {}).get("cached_tokens"):  # 입력 중 캐시에서 읽은 부분
+            self.tokens.update(cached=cached)
         choice = data["choices"][0]
         msg = choice["message"]
         uses = []

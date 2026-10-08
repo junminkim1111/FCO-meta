@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from .numbers import unsupported_numbers
 from .prompt import SYSTEM_PROMPT
-from .tools import TOOLS, Toolbox, model_view
+from .tools import TOOLS, Toolbox, for_model
 
 log = logging.getLogger(__name__)
 
@@ -505,6 +505,8 @@ class GeminiChat:
                     self.tokens.update(input=usage.prompt_token_count or 0, output=usage.candidates_token_count or 0)
                     if usage.thoughts_token_count:  # 생각 토큰은 출력 단가로 청구되지만 candidates에 안 들어간다
                         self.tokens.update(reasoning=usage.thoughts_token_count)
+                    if usage.cached_content_token_count:  # 입력 중 캐시에서 읽은 부분 (싼 단가)
+                        self.tokens.update(cached=usage.cached_content_token_count)
                 return received, finish, blocked
             except (errors.APIError, httpx.TransportError) as exc:
                 code = getattr(exc, "code", None)
@@ -612,7 +614,7 @@ class GeminiChat:
                         payload = {"error": result["error"]}
                     else:
                         log.info("tool %s(%s) → %d chars", fc.name, args, len(content))
-                        payload = {"result": model_view(result)}  # 비율은 %, 소수는 반올림해 모델이 그대로 쓰게
+                        payload = {"result": for_model(fc.name, result)}  # 비율은 %, 소수는 반올림, 화면용 값은 빼고
                         results.append(result)
                         line = self.toolbox.evidence(fc.name, result)
                         if line and line not in evidence:
