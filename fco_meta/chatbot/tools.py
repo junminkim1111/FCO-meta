@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import json
 import logging
@@ -9,7 +10,7 @@ import math
 import re
 import sqlite3
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,6 @@ from ..analytics import (
     ALL_RANKERS,
     GROUP_BY,
     MATCH_STATS,
-    MIN_SAMPLE,
     RANKER_GROUP_BY,
     RANKER_SORT_BY,
     SORT_BY,
@@ -79,7 +79,18 @@ QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
 SALARY_CAP = 310  # 게임의 팀 급여 상한: 선발 11명을 짤 때는 항상 이 안에서 고른다
+# 신규특성(금특·신특): 8강(금카) 이상이면 어떤 카드든 하나를 더 달 수 있다. 줄임말 → 카드 상세의 특성 이름
+NEW_TRAITS = {
+    "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
+    "크로스 포쳐": ["크포", "크로스포처"], "아크로바틱 피니셔": ["아크로", "아크로바틱"], "타이탄": [], "블로커": [],
+    "프레데터": [], "레이저 슈터": ["레이저"], "커맨더": [],
+}  # fmt: skip
+TRAIT_NAMES = {"".join(k.split()): k for k in NEW_TRAITS} | {a: k for k, v in NEW_TRAITS.items() for a in v}
+ADD_TRAIT_GRADE = 8
 MAX_TEAM_COLOR_NAMES = 40
+# 포메이션을 지정해도 그 포메이션 스쿼드가 이보다 적으면 팀컬러 전체 포메이션의 같은 역할로 본다
+# (롬바르디아 4-1-4-1 16명보다 롬바르디아 전체 479명의 ST가 낫다 — 원톱은 4-1-4-1이든 4-2-3-1이든 같은 역할)
+FORMATION_MIN_SAMPLE = 50
 RANKERS_MIN_FOR_SORT = 30  # query_rankers를 승률 등으로 정렬할 때 기본 최소 랭커 수 (10,000명 규모라 넉넉히)
 
 
@@ -101,9 +112,46 @@ def normalize_formation(value: str | None) -> str | None:
     return matches[0] if len(matches) == 1 else text
 
 
+def parse_traits(text: str) -> list[str]:
+    """"라브, 트릭" / "체 파" / "크로스 포처" → 신규특성 이름들."""
+    out = []
+    for part in re.split(r"[,+/·]+", text):
+        words = part.split()
+        if not words:
+            continue
+        # 띄어 쓴 한 이름("크로스 포처")이면 붙여서, 아니면 낱말마다("체 파")
+        for word in [w for w in ["".join(words)] if w in TRAIT_NAMES] or words:
+            if word not in TRAIT_NAMES:
+                raise ToolError(f"알 수 없는 신규특성: {word} (가능: {', '.join(NEW_TRAITS)})")
+            out.append(TRAIT_NAMES[word])
+    return list(dict.fromkeys(out))
+
+
+def _arg_name(key: str, known: Iterable[str]) -> str:
+    """모델이 망가뜨린 인자 이름을 실제 이름으로: 'top_n`' / 'team_color」 string=' / 'Role' / 'team_color_rankers'
+    → 'top_n' / 'team_color' / 'role' / 'team_color' (영문·숫자·밑줄 앞부분, 그래도 모르면 가장 길게 겹치는 실제 이름)."""
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", key)
+    name = m.group(1).lower() if m else key
+    if name in known:
+        return name
+    return max((k for k in known if name.startswith(k + "_")), key=len, default=name)
+
+
 def _price_bp(card: dict[str, Any]) -> int | None:
-    price = card.get("price_at_most_used_grade")
+    price = card["price_for_traits"] if "price_for_traits" in card else card.get("price_at_most_used_grade")
     return price["price_bp"] if price else None
+
+
+MIN_CARD_SHARE = 0.1  # 스쿼드 후보 카드: 그 선수를 쓴 랭커 중 이 비율 이상이 쓴 카드만 (UP 3강처럼 한두 명만 쓴 카드 제외)
+
+
+def _common_cards(cards: list[dict[str, Any]], users: int, keep: Callable[[dict[str, Any]], bool] = lambda c: False) -> list[dict[str, Any]]:
+    """Cards enough of the player's users picked — the most used one always stays, and so do cards `keep` asks for.
+
+    Every card option scores the player's whole usage rate, so without this a card one ranker used (cheap, low grade)
+    beats the card everyone uses as soon as there is a budget or salary limit."""
+    top = max(cards, key=lambda c: c["rankers"], default=None)
+    return [c for c in cards if c is top or c["rankers"] >= MIN_CARD_SHARE * users or keep(c)]
 
 
 def _cost(card: dict[str, Any], kind: str) -> int | None:
@@ -145,8 +193,7 @@ def _choose(
             pids = [o["entry"]["pid"] for o in combo]
             if len(set(pids)) < len(pids) or overrun(combo) > 0:
                 continue
-            key = (round(sum(o["entry"]["usage_rate"] for o in combo), 6),
-                   -sum((o[k] or 0) / max(v, 1) for o in combo for k, v in limits.items()))  # fmt: skip
+            key = (round(sum(o["entry"]["usage_rate"] for o in combo), 6), sum(o["salary"] or 0 for o in combo))
             if best_key is None or key > best_key:
                 best, best_key = list(combo), key
         if best is not None:
@@ -174,7 +221,30 @@ def _choose(
             break
         _, i, o, current = best
         chosen[i] = o
-    return chosen
+    return _fill(chosen, slot_options, overrun) if current == 0 else chosen
+
+
+def _fill(chosen: list[dict[str, Any] | None], slot_options, overrun: Callable[[Any], float]) -> list[dict[str, Any] | None]:
+    """Spend what the limits leave, as rankers do (급여 310이면 308~310): keep swapping while every limit and
+    requirement still holds and the summed usage goes up — or stays the same and the salary goes up, i.e. the same
+    player's higher-salary (better) card. Usage first, so this never trades a popular player for a pricier one."""
+
+    def key(combo) -> tuple[float, int]:
+        return round(sum(c["entry"]["usage_rate"] for c in combo if c), 6), sum(c["salary"] or 0 for c in combo if c)
+
+    while True:
+        best = None
+        for i, (_, options) in enumerate(slot_options):
+            used = {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i}
+            for o in options:
+                if o is chosen[i] or o["entry"]["pid"] in used:
+                    continue
+                combo = chosen[:i] + [o] + chosen[i + 1:]
+                if overrun(combo) == 0 and key(combo) > key(chosen) and (best is None or key(combo) > best[0]):
+                    best = (key(combo), i, o)
+        if best is None:
+            return chosen
+        chosen[best[1]] = best[2]
 
 
 _ISO_TIME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$")
@@ -245,7 +315,8 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "팀컬러×포메이션 랭커들이 특정 역할(여러 역할 가능)에 선발로 기용한 선수 순위(사용률). 선수별 시즌 카드 내역, 강화 분포, "
             "사용 랭커 평균 ELO·시즌 승률, 시세·급여(수집된 경우)를 함께 준다. 표본이 적으면 팀컬러 전체 포메이션으로 자동 폴백하고 표시한다. "
-            f"role: {ROLE_HELP}. 한 장 예산은 max_price_bp, 급여 상한은 max_salary로 걸러낸다."
+            f"role: {ROLE_HELP}. 한 장 예산은 max_price_bp, 급여 상한은 max_salary로 걸러낸다. "
+            "신규특성 조건은 traits로 건다."
         ),
         "input_schema": _schema(
             {
@@ -278,6 +349,17 @@ TOOLS: list[dict[str, Any]] = [
                 "min_usage_rate": {
                     "type": "number",
                     "description": f"sort=price일 때 최소 사용률 (기본 {DEFAULT_MIN_USAGE_FOR_PRICE_SORT})",
+                },
+                "traits": {
+                    "type": "string",
+                    "description": "신규특성(금특·신특) 조건, 쉼표로 (예: '라인 브레이커,트릭스터', 줄임말 '라브,트릭'). "
+                    f"가능: {', '.join(NEW_TRAITS)}",
+                },
+                "can_add_trait": {
+                    "type": "boolean",
+                    "description": f"'달 수 있는'이면 true: {ADD_TRAIT_GRADE}강(금카) 이상은 신규특성을 하나 더 달 수 있으므로, "
+                    f"하나가 모자란 카드도 {ADD_TRAIT_GRADE}강 이상 기준(시세도 그 강화)으로 넣는다. "
+                    "'달린'(원래 가진 카드만)이면 false(기본)",
                 },
             },
             ["role"],
@@ -484,7 +566,7 @@ class Toolbox:
         conn: sqlite3.Connection,
         catalog: TeamColorCatalog | None = None,
         *,
-        min_sample: int = MIN_SAMPLE,
+        min_sample: int = FORMATION_MIN_SAMPLE,
         team_color_info: list[dict[str, Any]] | None = None,
     ):
         self.conn = conn
@@ -514,6 +596,9 @@ class Toolbox:
         handler = self._handlers.get(name)
         if handler is None:
             return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False), True
+        # 모델이 인자 이름에 표기 찌꺼기를 붙여 보낼 때가 있다 ("top_n`", "team_color」 string=", "Role") → 이름 부분만
+        known = inspect.signature(handler).parameters
+        tool_input = {_arg_name(k, known): v for k, v in tool_input.items()}
         try:
             return json.dumps(handler(**tool_input), ensure_ascii=False), False
         except (ToolError, TypeError, ValueError) as exc:  # 잘못된 인자·조합 → 모델이 고쳐 다시 부른다
@@ -803,8 +888,11 @@ class Toolbox:
         max_salary: int | None = None,
         sort: str = "usage",
         min_usage_rate: float | None = None,
+        traits: str | None = None,
+        can_add_trait: bool = False,
     ) -> dict[str, Any]:
         tc_id, tc_name = self._scope(team_color)
+        wanted = parse_traits(traits) if traits else []
         roles = self._roles(role)
         role_label = "+".join(roles)
         formation = normalize_formation(formation)
@@ -821,7 +909,7 @@ class Toolbox:
         # 예산·급여 필터와 가격순 정렬은 후보를 넉넉히 받아 거른다
         res = top_players(
             self.conn, tc_id, formation or ALL_FORMATIONS, roles,
-            top=100 if (need_price or need_salary) else top_n, by="pid", strict=bool(strict), min_sample=self.min_sample,
+            top=100 if (need_price or need_salary or wanted) else top_n, by="pid", strict=bool(strict), min_sample=self.min_sample,
         )  # fmt: skip
         if not res.players:
             out_empty: dict[str, Any] = {
@@ -846,6 +934,10 @@ class Toolbox:
         players = []
         for p in res.players:
             entry = self._player_entry(res, roles, p)
+            if wanted:
+                entry["cards"] = [c for c in entry["cards"] if self._with_traits(c, wanted, bool(can_add_trait))]
+                if not entry["cards"]:
+                    continue
             if need_price or need_salary:
                 entry["cards"] = [c for c in entry["cards"] if affordable(c)]
                 if not entry["cards"]:
@@ -892,6 +984,13 @@ class Toolbox:
                 "max_price_bp": max_price_bp, "max_price": format_bp(max_price_bp) if max_price_bp is not None else None,
                 "max_salary": max_salary,
             }  # fmt: skip
+        if wanted:
+            out["traits"] = {"wanted": wanted, "can_add_trait": bool(can_add_trait)}
+            out["definitions"]["new_traits"] = "카드가 원래 가진 신규특성 (카드 상세 기준, 상세 미수집 카드는 빠짐)"
+            if can_add_trait:
+                out["definitions"]["added_trait"] = (
+                    f"{ADD_TRAIT_GRADE}강 이상에서 새로 달 특성. price_for_traits는 그 강화(가장 많이 쓴 강화와 {ADD_TRAIT_GRADE} 중 큰 쪽)의 시세"
+                )
         notes = []
         if need_price and not self._has_prices(res):
             notes.append("이 역할 카드의 시세가 수집되지 않아 예산·가격으로 거를 수 없음")
@@ -933,6 +1032,22 @@ class Toolbox:
                 "salary": self._salary(s.sp_id),
             })  # fmt: skip
         return cards
+
+    def _with_traits(self, card: dict[str, Any], wanted: list[str], can_add: bool) -> bool:
+        """Keep a card that has the wanted new traits — or, with can_add, lacks one that 8강+ can add (then priced at 8강+)."""
+        row = self.conn.execute("SELECT traits FROM card_detail WHERE spid = ?", (card["sp_id"],)).fetchone()
+        if row is None:
+            return False
+        own = [t for t in json.loads(row["traits"]) if t in NEW_TRAITS]
+        missing = [t for t in wanted if t not in own]
+        if len(missing) > (1 if can_add else 0):
+            return False
+        card["new_traits"] = own
+        if missing:
+            grade = max(card["most_used_grade"] or 0, ADD_TRAIT_GRADE)
+            card["added_trait"] = missing[0]
+            card["price_for_traits"] = self._price(card["sp_id"], grade)
+        return True
 
     def _card_profile(self, sp_id: int) -> dict[str, Any] | None:
         """Card details (1강 기준): 포지션별 능력치·신체·개인기·주발·특성·요약/세부 능력치·클럽 경력."""
@@ -1069,6 +1184,7 @@ class Toolbox:
                     cards = [c for c in cards if fits(c["sp_id"])]
                     if not cards:
                         continue
+                cards = _common_cards(cards, entry["rankers"], keep=lambda c: season_rule and fits(c["sp_id"]))
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
                 for card in cards if limits else cards[:1]:
@@ -1148,7 +1264,8 @@ class Toolbox:
             out["ranking_scope"] = squad_range(self.conn, first.data_as_of)
         if fits and not season_rule:
             empty = sum(1 for c in chosen if c is None)
-            out["team_color_rule"] = f"{tc_name}: 11명 모두 그 {'클럽 경력(임대 포함)' if tc.category == 'club' else '국적'} 카드"
+            who = "고른 선수 모두" if slots else "11명 모두"  # slots면 그 자리들만
+            out["team_color_rule"] = f"{tc_name}: {who} 그 {'클럽 경력(임대 포함)' if tc.category == 'club' else '국적'} 카드"
             if empty:
                 notes.append(f"{tc_name} 소속 카드 중 랭커들이 그 자리에 쓴 선수가 없어 {empty}자리를 비움")
         if season_rule:

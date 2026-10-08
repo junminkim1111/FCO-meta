@@ -49,8 +49,8 @@ def test_records_are_written_as_new_files_and_summarized(tmp_path, monkeypatch):
     log.record(q="안녕", outcome="ok")  # 아직 올리지 않은 기록도 요약에 들어간다
     s = log.summary(days=7)
     assert s["total"] == 3 and s["pending"] == 1
-    assert s["by_outcome"] == {"ok": 2, "cached": 0, "busy": 1, "limited": 0, "cancelled": 0}
-    assert s["by_day"] == [{"date": "2026-10-02", "ok": 2, "cached": 0, "busy": 1, "limited": 0, "cancelled": 0}]
+    assert s["by_outcome"] == {"ok": 2, "cached": 0, "busy": 1, "limited": 0, "cancelled": 0, "compare": 0}
+    assert s["by_day"] == [{"date": "2026-10-02", "ok": 2, "cached": 0, "busy": 1, "limited": 0, "cancelled": 0, "compare": 0}]
     assert s["errors"] == [{"error": "Gemini API 오류 503 UNAVAILABLE", "count": 1, "last": "2026-10-02T12:00:00+09:00"}]
     assert [r["q"] for r in s["recent"]] == ["안녕", "4-2-3-1 어때", "레알 공격수"]  # 최근 것부터
 

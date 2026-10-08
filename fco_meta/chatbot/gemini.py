@@ -9,6 +9,7 @@ import json
 import logging
 import time
 import itertools
+from collections import Counter
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -21,11 +22,12 @@ from .tools import TOOLS, Toolbox, model_view
 
 log = logging.getLogger(__name__)
 
-# 2026-09 기준: gemini-2.5-flash는 신규 사용자에게 404, API가 gemini-3.8-flash를 권장
-DEFAULT_MODEL = "gemini-3.8-flash"
+# 2026-10: 응답 속도 때문에 lite가 기본. flash 계열은 생각하는 시간이 길고(한 단어 답에 8~17초) 무료 등급에서 혼잡(503)이
+# 잦아 질문 하나에 수십 초가 걸렸고, lite는 같은 질문에 5~6초
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 # 기본 모델이 과부하(503)·한도(429)로 계속 실패하거나 사용 불가(404)면 차례로 시도할 모델
 # 무료 한도는 모델마다 따로라 여러 개를 차례로 쓴다 (--list-models로 확인한 이 키의 모델, 2026-09-30)
-DEFAULT_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite")
+DEFAULT_FALLBACK_MODELS = ("gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash")
 UNAVAILABLE = (404,)  # 이 모델을 쓸 수 없음 → 재시도 없이 다음 모델
 MAX_DISCOVERED = 3  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 추가로 시도할 수
 # 채팅·도구 호출에 맞지 않는 모델 (이미지·음성·임베딩 등)
@@ -67,6 +69,7 @@ MAX_EVIDENCE = 4  # GeminiTurn.evidence 줄 수
 # 한 질문의 전체 대기 상한(초): 재시도·대체 모델·도구 단계를 모두 합쳐. 넘으면 그 질문은 실패(화면에는 혼잡 안내).
 # 요청마다 남은 시간을 타임아웃으로 걸어, 응답이 늦은 요청도 이 안에서 끊는다
 ANSWER_DEADLINE = 120.0
+MIN_REQUEST_TIMEOUT = 10.0  # 구글이 받는 최소 요청 타임아웃(초): 더 짧으면 400 "deadline is too short"
 
 
 class Reset:
@@ -89,6 +92,38 @@ class Recheck:
     """The answer had figures no tool result backs up; a rewrite follows (ask_stream event, after RESET)."""
 
     numbers: list[str]
+
+
+@dataclass
+class Thought:
+    """What the model thought before answering (ask_stream event, only when asked for with thoughts=True)."""
+
+    text: str
+
+
+@dataclass
+class ToolResult:
+    """A tool just ran (ask_stream event, after its ToolCall): a short preview of what the model receives."""
+
+    name: str
+    ok: bool
+    preview: str
+
+
+@dataclass
+class Escalate:
+    """The question moved to a heavier model mid-turn (ask_stream event); the tool results so far carry over."""
+
+    model: str
+    reason: str
+
+
+TRACE_PREVIEW = 600  # ToolResult.preview 길이 (관리자 생각 표시용)
+
+
+def _preview(payload: Any) -> str:
+    text = json.dumps(payload, ensure_ascii=False)
+    return text if len(text) <= TRACE_PREVIEW else text[:TRACE_PREVIEW] + "…"
 
 
 # 답에 도구 결과에 없는 수치가 있을 때 한 번 다시 쓰게 하는 요청
@@ -195,7 +230,7 @@ def describe_error(exc: Exception) -> str:
         return f"Gemini 모델을 모두 쓸 수 없습니다 — {per_model}"
     if errors is not None and isinstance(exc, errors.APIError):
         return f"Gemini API 오류 {_api_error_text(exc)}"
-    return f"Gemini 처리 중 오류 ({type(exc).__name__}): {exc}"
+    return f"모델 처리 중 오류 ({type(exc).__name__}): {exc}"
 
 
 def available_models(client: Any) -> list[str]:
@@ -273,7 +308,10 @@ class GeminiChat:
         self.sleep = sleep
         self.now = now
         self.last_model: str | None = None  # 마지막 응답을 만든 모델 (대체 모델로 바뀌었는지 확인용)
+        self.tokens: Counter[str] = Counter()  # 입력·출력·생각 토큰 합 (비용 비교용)
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
+        self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
+        self._escalate: str | None = None  # 두 번째 도구부터 이 모델이 이어받는다 (ask_stream이 정한다)
         self._ends_at = float("inf")  # 이번 질문을 끝내야 하는 시각 (ask_stream이 정한다)
         self.discover = True  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 찾아 시도
         self._discovered: list[str] | None = None
@@ -295,11 +333,13 @@ class GeminiChat:
 
     def _open(self, model: str, config: Any) -> Iterator[Any]:
         left = self._left()
-        if left <= 0:
+        if left < MIN_REQUEST_TIMEOUT:  # 남은 시간으로는 요청을 보낼 수도 없다
             raise AnswerTimeout(f"{model} 요청 전")
         config = config or self.config
         if left != float("inf"):  # 응답이 늦어도 남은 시간 안에서 끊는다 (밀리초)
-            config = config.model_copy(update={"http_options": _types().HttpOptions(timeout=max(int(left * 1000), 1000))})
+            config = config.model_copy(update={"http_options": _types().HttpOptions(timeout=int(left * 1000))})
+        if self.thoughts:  # 생각 요약을 함께 받는다 (생각하지 않는 모델은 빈 채로 온다)
+            config = config.model_copy(update={"thinking_config": _types().ThinkingConfig(include_thoughts=True)})
         import httpx
 
         try:
@@ -389,19 +429,28 @@ class GeminiChat:
         """One user turn, without streaming."""
         return _drain(self.ask_stream(question))
 
-    def ask_stream(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
+    def ask_stream(
+        self, question: str, *, model: str | None = None, escalate_to: str | None = None, thoughts: bool = False,
+        deadline: float | None = None,
+    ) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         """One user turn: yields answer text as it arrives (RESET = drop what was yielded so far,
         ToolCall = a tool is about to run, Recheck = figures are being rewritten) and
         returns the GeminiTurn. On an error or when the caller stops early (closes the generator), the
-        history is rolled back so the next question starts clean."""
+        history is rolled back so the next question starts clean.
+
+        For this question only: `model` answers instead of the usual one, `escalate_to` takes over from the second
+        tool call on (Escalate event), `thoughts` adds Thought events, `deadline` replaces the time cap."""
         self._drop_tool_history()
-        self._ends_at = self.now() + self.deadline
-        checkpoint = len(self.contents)
+        self._ends_at = self.now() + (deadline or self.deadline)
+        checkpoint, usual = len(self.contents), self.model
+        self.model, self._escalate, self.thoughts = model or usual, escalate_to, thoughts
         try:
             return (yield from self._ask(question))
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
+        finally:
+            self.model, self._escalate, self.thoughts = usual, None, False
 
     def remember(self, question: str, answer: str) -> None:
         """Add a question answered without the model (answer cache), so follow-ups keep the context."""
@@ -433,10 +482,11 @@ class GeminiChat:
 
         for attempt in range(MID_STREAM_RETRIES + 1):
             received: list[Any] = []
-            finish, blocked, started, shown = "None", None, False, False
+            finish, blocked, started, shown, usage = "None", None, False, False, None
             try:
                 for chunk in self._generate(config):
                     started = True
+                    usage = chunk.usage_metadata or usage  # 마지막 조각에 이 요청의 합계가 온다
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
                         blocked = chunk.prompt_feedback.block_reason
                     candidate = chunk.candidates[0] if chunk.candidates else None
@@ -449,6 +499,12 @@ class GeminiChat:
                         if part.text and not part.thought:
                             shown = True
                             yield part.text
+                        elif part.text and self.thoughts:
+                            yield Thought(part.text)
+                if usage is not None:
+                    self.tokens.update(input=usage.prompt_token_count or 0, output=usage.candidates_token_count or 0)
+                    if usage.thoughts_token_count:  # 생각 토큰은 출력 단가로 청구되지만 candidates에 안 들어간다
+                        self.tokens.update(reasoning=usage.thoughts_token_count)
                 return received, finish, blocked
             except (errors.APIError, httpx.TransportError) as exc:
                 code = getattr(exc, "code", None)
@@ -512,6 +568,14 @@ class GeminiChat:
             self.contents.append(types.Content(role="model", parts=received))
 
             function_calls = [p.function_call for p in received if p.function_call]
+            if function_calls and not final and self._escalate and len(calls) + len(function_calls) > 1:
+                # 두 번째 도구부터는 더 무거운 모델이 이어받는다: 이번 응답은 버리고, 받은 도구 결과는 그대로 넘긴다
+                self.contents.pop()
+                self.model, self._escalate = self._escalate, None
+                if any(p.text and not p.thought for p in received):
+                    yield RESET
+                yield Escalate(self.model, "두 번째 도구 호출")
+                continue
             if not function_calls or final:
                 text = "".join(p.text for p in received if p.text and not p.thought).strip()
                 if not text:  # 도구를 끈 마지막 요청에서도 글이 없으면
@@ -553,6 +617,7 @@ class GeminiChat:
                         line = self.toolbox.evidence(fc.name, result)
                         if line and line not in evidence:
                             evidence.append(line)
+                    yield ToolResult(fc.name, not is_error, _preview(payload.get("result", payload)))
                 part = types.Part.from_function_response(name=fc.name, response=payload)
                 if fc.id:
                     part.function_response.id = fc.id

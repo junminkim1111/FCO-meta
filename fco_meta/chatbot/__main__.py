@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         "--backend", choices=["gemini", "rules"], default="gemini",
         help="gemini: LLM (기본, .env의 GEMINI_API_KEY 필요 — 없으면 규칙 기반), rules: 규칙 기반",
     )  # fmt: skip
-    parser.add_argument("--model", help="Gemini 모델 (기본: .env의 GEMINI_MODEL 또는 gemini-3.8-flash)")
+    parser.add_argument("--model", help="Gemini 모델 (기본: .env의 GEMINI_MODEL 또는 gemini-3.5-flash-lite)")
     parser.add_argument("--ask", help="질문 하나만 하고 종료")
     parser.add_argument("--tool", nargs=2, metavar=("NAME", "JSON"), help="도구 하나를 직접 실행해 결과 출력")
     parser.add_argument("--list-models", action="store_true", help="이 Gemini 키로 쓸 수 있는 채팅 모델 목록")

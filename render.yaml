@@ -18,3 +18,5 @@ services:
         sync: false
       - key: ADMIN_KEY      # /admin 답변 기록 페이지 비밀번호 (없으면 페이지가 꺼져 있음)
         sync: false
+      - key: OPENROUTER_API_KEY  # /deep·/compare의 DeepSeek (없으면 그 명령어만 꺼짐)
+        sync: false

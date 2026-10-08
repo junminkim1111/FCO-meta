@@ -16,6 +16,7 @@ import json
 import sqlite3
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -61,8 +62,12 @@ def main(argv: list[str] | None = None) -> int:
     load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.chatbot.evaluate")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--backend", choices=["gemini", "rules"], default="gemini")
-    parser.add_argument("--model", help="Gemini 모델 (기본: .env의 GEMINI_MODEL)")
+    parser.add_argument("--backend", choices=["gemini", "claude", "openai", "rules"], default="gemini",
+                        help="모델 비교용: claude (.env의 ANTHROPIC_API_KEY), openai = OpenAI 호환 API "
+                             "(기본 OpenRouter, .env의 OPENROUTER_API_KEY; --model 예: qwen/qwen3.8-flash)")
+    parser.add_argument("--model", help="모델 (기본: Gemini는 .env의 GEMINI_MODEL, Claude는 claude-sonnet-5-5)")
+    parser.add_argument("--extra", type=json.loads, default=None,
+                        help='openai: 요청 본문에 더할 JSON (예: \'{"reasoning": {"enabled": false}}\')')
     parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS, help="질문 파일 (기본 eval/questions.txt)")
     parser.add_argument("--only", help="이 번호의 질문만 (예: 1-5,12)")
     parser.add_argument("--out", type=Path, help=f"보고서 경로 (기본: {DEFAULT_OUT_DIR}/chatbot-eval-날짜.md)")
@@ -95,6 +100,27 @@ def main(argv: list[str] | None = None) -> int:
 
         primary, fallbacks = models_from_env(args.model)
         client = genai.Client()
+    elif backend in ("claude", "openai"):
+        import os
+
+        from .gemini import describe_error
+        from .llm import ClaudeChat, OpenAIChat
+
+        if backend == "claude":
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                print(".env에 ANTHROPIC_API_KEY가 필요합니다 (https://console.anthropic.com 에서 발급)", file=sys.stderr)
+                return 2
+            import anthropic
+
+            client = anthropic.Anthropic()
+        else:
+            if not args.model or not (os.environ.get("OPENAI_COMPAT_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
+                print("--model과 .env의 OPENROUTER_API_KEY(또는 OPENAI_COMPAT_API_KEY)가 필요합니다", file=sys.stderr)
+                return 2
+            import httpx
+
+            client = httpx.Client()
+    tokens: Counter[str] = Counter()
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
     out = args.out or DEFAULT_OUT_DIR / f"chatbot-eval-{stamp}.md"
@@ -105,14 +131,21 @@ def main(argv: list[str] | None = None) -> int:
         results.clear()
         started = time.monotonic()
         calls: list[tuple[str, dict[str, Any]]] = []
-        model = None
-        if backend == "gemini":
-            chat = GeminiChat(client, toolbox, model=primary, fallback_models=fallbacks)  # 질문마다 새 대화
+        model, used = None, Counter()
+        if backend in ("gemini", "claude", "openai"):
+            if backend == "gemini":  # 질문마다 새 대화
+                chat = GeminiChat(client, toolbox, model=primary, fallback_models=fallbacks)
+            elif backend == "claude":
+                chat = ClaudeChat(client, toolbox, model=args.model)
+            else:
+                chat = OpenAIChat(client, toolbox, model=args.model, extra=args.extra)
             try:
                 turn = chat.ask(question)
                 answer, calls, model = turn.text, turn.tool_calls, chat.last_model
             except Exception as exc:  # 한 질문 실패가 전체 평가를 멈추지 않게
                 answer = f"⚠ {describe_error(exc)}"
+            used = chat.tokens
+            tokens.update(used)
         else:
             a = RuleBot(toolbox).ask(question)
             answer, calls = a.text, [(a.tool, a.tool_input)] if a.tool else []
@@ -125,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         report += [f"## {i}. {question}", ""]
         meta = f"{elapsed:.1f}초" + (f" · {model}" if model else "")
         report.append(f"- {meta}")
+        if used:
+            report.append("- 토큰: " + ", ".join(f"{k} {v:,}" for k, v in used.items()))
         if expected:
             report.append(f"- 기대: {expected}")
         for name, tool_input in calls:
@@ -135,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(args.pause)
 
     report.insert(3, f"확인 필요 숫자가 있는 답: {flagged}/{len(questions)}")
+    if tokens:  # 비용 비교용 (모델 가격 × 토큰)
+        report.insert(4, "토큰 합계: " + ", ".join(f"{k} {v:,}" for k, v in tokens.items()))
     out.write_text("\n".join(report) + "\n", encoding="utf-8")
     print(f"보고서: {out}")
     return 0

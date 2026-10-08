@@ -28,6 +28,13 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
 - **답변 기록**: `https://<서비스>/admin`에서 `ADMIN_KEY`로 들어가면 정상·캐시·혼잡 안내·질문 수 제한·정지 건수, 날짜별 표, 혼잡 안내가 나간 원인(오류)별 횟수, 최근 질문(원문·도구·모델·걸린 시간)을 봅니다.
   기록은 서버 메모리에 모았다가 10분마다(서버가 잠들 때도) 데이터셋의 `logs/날짜/*.jsonl`로 올립니다. 방문자 IP는 남기지 않습니다(`web/chatlog.py`).
   채팅창에 `/admin`을 입력해도 비밀번호 창이 뜹니다. 비밀번호를 3회 틀리면 경고, 5회 틀리면 그 IP는 관리자 페이지에 들어올 수 없습니다(서버 메모리 기준이라 재시작·재배포 때 풀림).
+- **답하는 모델**: 기본은 Gemini 3.5 Flash-Lite. 스쿼드·복잡한 질문에 자주 나오는 말(짜줘·스쿼드·업그레이드·대신·케미·현역 …, `web/app.py`의 `HEAVY_WORDS`)이 있으면
+  처음부터 3.5 Flash, 없더라도 Flash-Lite가 두 번째 도구를 부르면 그때부터 3.5 Flash가 받은 도구 결과로 이어서 답합니다.
+- **채팅 명령어** (`/`로 시작하면 모델에 보내지 않고, 모르는 명령어는 *invalid command.*):
+  `/admin` 기록 페이지 · `/admin --l` 비밀번호 확인 뒤 새로고침 전까지 모델 선택·생각·도구 결과를 답 위에 표시 ·
+  `/deep` 다음 질문만 DeepSeek V4 Pro(생각 끔), `--r` 생각 켬, `--a` 새로고침 전까지 유지 ·
+  `/compare` 다음 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 전체 화면 세 칸에서 동시에 답함(IP당 1시간 2회).
+  `/deep`·`/compare`는 질문당 상한 5분(일반 120초)이고, Render에 `OPENROUTER_API_KEY`가 있어야 DeepSeek이 답합니다.
 - 만든 뒤 서비스 Settings의 **Deploy Hook** 주소를 맥 `.env`의 `RENDER_DEPLOY_HOOK`에 넣으면 push-db가 재배포까지 요청합니다.
 - 코드는 GitHub에 푸시하면 Render가 자동으로 다시 빌드합니다. 질문 수 제한은 프록시가 넘겨주는 `X-Forwarded-For`의 첫 주소로 셉니다.
 
@@ -250,7 +257,7 @@ python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널",
   이 키로 쓸 수 없는 모델(404)은 바로 다음 모델로 넘어갑니다.
 - **한도가 소진된 모델은 기억해 두고 건너뜁니다**: 하루 한도 소진은 태평양 시간 자정(한도 초기화)까지, 분당 한도·혼잡은 1~2분.
   그래서 도구 호출마다 소진된 모델을 다시 두드리지 않습니다. 모두 소진되면 언제까지 건너뛰는지 안내합니다.
-  기본 모델은 `gemini-3.8-flash`이고, `.env`의 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.
+  기본 모델은 `gemini-3.5-flash-lite`(빠른 답을 위해)이고, `.env`의 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.
 - 설정한 모델이 모두 혼잡하면 **이 키로 쓸 수 있는 모델 목록을 조회해** 다른 모델(최대 3개, 예: lite)을 한 번씩 더 시도합니다.
   목록 확인: `python -m fco_meta.chatbot --list-models`
 - 그 밖의 Gemini 오류: 터미널 챗봇은 원인(키·권한·모델·한도)을 보여 주고, 웹은 "지금 서버가 혼잡해…" 안내만 보여 줍니다(원인은 서버 로그).

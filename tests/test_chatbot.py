@@ -137,3 +137,53 @@ def test_recommend_cards_carry_season_icon(db):  # noqa: F811
     r = json.loads(Toolbox(db.conn, min_sample=1).run("recommend_players", {"team_color": "아스널", "formation": "4-2-3-1", "role": "DM"})[0])
     imgs = {c["sp_id"]: c["season_img"] for p in r["players"] for c in p["cards"]}
     assert imgs[250000009] == "https://example.test/s250.png" and imgs[300000009] is None
+
+
+def test_recommend_players_new_traits(toolbox):
+    conn = toolbox.conn
+    conn.execute("UPDATE card_detail SET traits = '[\"라인 브레이커\", \"긴 패스 선호\"]' WHERE spid = 250000009")
+    conn.execute("UPDATE card_detail SET traits = '[\"트릭스터\", \"라인 브레이커\"]' WHERE spid = 101000011")
+    conn.execute("INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (250000009, 8, 2000000000, 'x')")
+    args = {"team_color": "아스널", "formation": "4-2-3-1", "role": "DM"}
+    cards = lambda r: [(p["name"], [c["sp_id"] for c in p["cards"]]) for p in r["players"]]  # noqa: E731
+
+    r = json.loads(toolbox.run("recommend_players", {**args, "traits": "라브"})[0])  # 달린 = 원래 가진 카드만
+    assert cards(r) == [("볼란치R", [250000009]), ("볼란치L", [101000011])]
+    r = json.loads(toolbox.run("recommend_players", {**args, "traits": "라브 트릭"})[0])
+    assert cards(r) == [("볼란치L", [101000011])]
+    # 달 수 있는 = 하나 모자라면 8강 이상 기준 → 그 강화 시세로 예산 비교 (S250 8강 20억)
+    r = json.loads(toolbox.run("recommend_players", {**args, "traits": "라인브레이커,트릭스터", "can_add_trait": True})[0])
+    card = r["players"][0]["cards"][0]
+    assert card["added_trait"] == "트릭스터" and card["price_for_traits"]["grade"] == 8
+    r = json.loads(toolbox.run("recommend_players", {**args, "traits": "라브,트릭", "can_add_trait": True, "max_price_bp": 1e9})[0])
+    assert cards(r) == [("볼란치L", [101000011])]
+    assert toolbox.run("recommend_players", {**args, "traits": "없는특성"})[1] is True
+
+
+def test_common_cards_drop_rarely_used_cards():
+    from fco_meta.chatbot.tools import _common_cards
+
+    cards = [{"sp_id": 1, "rankers": 300}, {"sp_id": 2, "rankers": 36}, {"sp_id": 3, "rankers": 1}]
+    assert [c["sp_id"] for c in _common_cards(cards, 337)] == [1, 2]  # 1명만 쓴 카드(UP 3강 같은)는 빠짐
+    assert [c["sp_id"] for c in _common_cards(cards, 337, keep=lambda c: c["sp_id"] == 3)] == [1, 2, 3]  # 시즌 단일 카드는 남김
+    assert [c["sp_id"] for c in _common_cards(cards[2:], 337)] == [3]  # 가장 많이 쓴 카드는 항상 남김
+
+
+def test_tool_args_with_markup_debris(toolbox):
+    # DeepSeek이 보낸 실제 인자 이름: 백틱·「 string=」 찌꺼기, 대문자
+    args = {"team_color`": "아스널", "Role": "DM", "top_n」 string=": 1, "max_price_bp_rankers": 10**10}
+    content, is_error = toolbox.run("recommend_players", args)
+    assert not is_error and len(json.loads(content)["players"]) == 1
+
+
+def test_squad_spends_salary_left_under_the_cap():
+    from fco_meta.chatbot.tools import _choose
+
+    def opt(pid, usage, salary):
+        return {"entry": {"pid": pid, "usage_rate": usage}, "card": {}, "price": None, "salary": salary, "tags": set()}
+
+    # 11자리, 자리마다 주전 선수의 급여 20·28 카드 + 덜 쓰인 선수 둘 → 조합이 많아 탐욕 교체 경로
+    slots = [("ST", [opt(i, 0.5, 20), opt(i, 0.5, 28), opt(100 + i, 0.1, 25), opt(200 + i, 0.05, 25)]) for i in range(11)]
+    chosen = _choose(slots, {"salary": 300})
+    assert [c["entry"]["pid"] for c in chosen] == list(range(11))  # 주전은 그대로
+    assert sum(c["salary"] for c in chosen) == 300  # 남는 급여로 같은 선수의 급여 높은 카드로 올림 (220 → 300)

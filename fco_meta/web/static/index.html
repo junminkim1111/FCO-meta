@@ -221,6 +221,30 @@
                      border-radius: 10px; padding: 8px 12px; }
   .admin-row button { padding: 8px 14px; }
   .admin-note { color: var(--error); font-size: 13px; margin-top: 6px; }
+  /* 명령어 안내 (/deep, /compare …) */
+  .msg.note { color: var(--muted); font-size: 13px; }
+  .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
+  .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/deep·/compare) */
+  .pane .pick { align-self: flex-start; padding: 6px 14px; font-size: 13px; }
+  /* /admin --l: 모델 선택·생각·도구 결과를 답 위에 */
+  .trace { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
+           display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+  .trace .tr { white-space: pre-wrap; word-break: break-word; }
+  .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
+  .trace .tr.thought span { color: var(--text); opacity: .75; }
+  /* /compare: 챗봇 칸이 화면 전체로 커지고 세 모델이 나란히 답한다 */
+  #chat.comparing { position: fixed; inset: 12px; z-index: 20; height: auto; min-height: 0; background: var(--bg); }
+  #chat.comparing #log { display: none; }
+  #compare-close { display: none; margin-left: auto; padding: 4px 12px; font-size: 13px; }
+  #chat.comparing #compare-close { display: inline-block; }
+  #chat-title { display: flex; align-items: baseline; gap: 8px; }
+  #compare { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .pane h3 { margin: 0; color: var(--text); display: flex; justify-content: space-between; gap: 8px; }
+  .pane h3 .stat { font-size: 12px; }
+  .pane .body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  @media (max-width: 860px) { #chat.comparing { inset: 0; border-radius: 0; } #compare { grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; overflow-y: auto; }
+                              .pane .body { overflow: visible; } }
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--strong) 50%, var(--muted) 60%, var(--muted) 100%);
              background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -276,8 +300,9 @@
   <div class="side">
   <p id="asof">데이터 불러오는 중…</p>
   <section id="chat" aria-labelledby="chat-title">
-    <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span></h2>
+    <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span><button type="button" id="compare-close">비교 닫기</button></h2>
     <div id="log" aria-live="polite"></div>
+    <div id="compare" hidden></div>
     <form id="chat-form">
       <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button></div>
     </form>
@@ -603,7 +628,25 @@ const TOOL_STATUS = {
   get_team_color_info: (a) => `${a.team_color || a.player || a.effect || ""} 팀컬러 정보를 찾고 있어요...`,
   get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
+  escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
+// 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /admin --l = 생각 표시, /compare = 다음 질문을 셋이 비교
+let deepNext = null, deepAll = null, traceKey = null, compareArmed = false;
+const DEEP_NAME = { deep: "DeepSeek V4 Pro(생각 끔)", deep_r: "DeepSeek V4 Pro(생각 켬)" };
+const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사" };
+// 생각 표시 줄 하나 (이어서 오는 생각 조각은 한 줄로 붙인다)
+function addTrace(box, ev) {
+  const last = box.lastElementChild;
+  if (ev.kind === "thought" && last?.classList.contains("thought")) { last.lastChild.textContent += ev.text; return; }
+  const text = ev.kind === "tool" ? `${ev.name} ${JSON.stringify(ev.args || {})}`
+             : ev.kind === "result" ? `${ev.name}${ev.ok ? "" : " (오류)"} ${ev.text}` : ev.text;
+  box.append(el("div", { class: "tr " + ev.kind }, el("b", { text: TRACE_LABEL[ev.kind] || ev.kind }), el("span", { text })));
+  box.scrollTop = box.scrollHeight;
+}
+function traceBox() {
+  return el("div", { class: "trace", ariaLabel: "모델의 생각" });
+}
+const headers = () => ({ "Content-Type": "application/json", ...(traceKey ? { "X-Admin-Key": traceKey } : {}) });
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
 let inflight = null;
 function setBusy(ctrl) {
@@ -632,6 +675,10 @@ async function send(text) {
   const ctrl = new AbortController();
   setBusy(ctrl);
   say("me", text);
+  const mode = deepNext || deepAll || "auto";
+  deepNext = null;
+  const trace = traceKey ? traceBox() : null;
+  if (trace) $("log").append(trace);
   const bubble = el("div");
   $("log").append(bubble);
   $("log").scrollTop = $("log").scrollHeight;
@@ -659,8 +706,8 @@ async function send(text) {
     if (!frame) frame = requestAnimationFrame(draw);
   };
   try {
-    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-                                           body: JSON.stringify({ message: text, session_id: sessionId }), signal: ctrl.signal });
+    const res = await fetch("/api/chat", { method: "POST", headers: headers(), signal: ctrl.signal,
+                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, trace: !!trace }) });
     if (!res.ok) throw await failure(res);
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let rest = "";
@@ -671,6 +718,7 @@ async function send(text) {
       rest = lines.pop();
       for (const line of lines) {
         const ev = JSON.parse(line);
+        if (trace && (ev.type === "trace" || ev.type === "tool")) addTrace(trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
         else if (ev.type === "delta") grow(ev.text);
         else if (ev.type === "tool" && stopOrb) status(TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING); // 기다리는 중이면 문구를 그 도구에 맞게
@@ -697,6 +745,7 @@ async function send(text) {
   }
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
+  if (mode !== "auto") bubble.after(el("div", { class: "applied", text: `/deep 적용: ${DEEP_NAME[mode]}가 답했습니다` }));
 }
 $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Enter는 줄바꿈 (한글 조합 중인 Enter는 무시)
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
@@ -704,8 +753,8 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
     $("chat-form").requestSubmit();
   }
 });
-// 채팅에 "/admin": 질문으로 보내지 않고 관리자 비밀번호를 받아, 맞으면 답변 기록 페이지로 간다
-function adminPrompt() {
+// 채팅에 "/admin": 질문으로 보내지 않고 관리자 비밀번호를 받아, 맞으면 답변 기록 페이지로 간다 (onOk가 있으면 그것을 한다)
+function adminPrompt(onOk) {
   const input = el("input", { type: "password", placeholder: "관리자 비밀번호", autocomplete: "current-password", required: true });
   const note = el("div", { class: "admin-note", role: "alert" });
   const form = el("form", { class: "msg bot" }, el("div", { text: "관리자 비밀번호를 입력하세요." }),
@@ -714,7 +763,9 @@ function adminPrompt() {
     ev.preventDefault();
     const res = await fetch("/api/admin/logs?days=1", { headers: { "X-Admin-Key": input.value } }).catch(() => null);
     if (res && res.ok) {
+      if (onOk) return onOk(input.value, form);
       try { sessionStorage.setItem("fclm-admin", input.value); } catch {} // 기록 페이지가 다시 묻지 않도록 (이 탭에만)
+      form.replaceWith(el("div", { class: "msg bot note done", text: "/admin 적용: 답변 기록 페이지로 이동합니다." }));
       location.href = "/admin";
       return;
     }
@@ -728,12 +779,119 @@ function adminPrompt() {
   $("log").scrollTop = $("log").scrollHeight;
   input.focus();
 }
+const note = (text) => say("bot note done", text); // 명령어가 적용됐다는 안내
+// "/"로 시작하면 모델에 보내지 않는다: 아는 명령어면 실행, 아니면 invalid command.
+function command(text) {
+  const [name, ...flags] = text.split(/\s+/);
+  const cmd = name.toLowerCase();
+  const only = (allowed) => new Set(flags).size === flags.length && flags.every((f) => allowed.includes(f));
+  if (cmd === "/admin" && !flags.length) return adminPrompt();
+  if (cmd === "/admin" && flags.length === 1 && flags[0] === "--l") {
+    return adminPrompt((key, form) => {
+      traceKey = key; // 이 페이지에서 새로고침하기 전까지
+      form.replaceWith(el("div", { class: "msg bot note done", text: "/admin --l 적용: 지금부터 모델의 생각·도구 결과를 답 위에 함께 보여 줍니다. 새로고침하면 꺼집니다." }));
+    });
+  }
+  if (cmd === "/deep" && only(["--r", "--a"])) {
+    const mode = flags.includes("--r") ? "deep_r" : "deep";
+    if (flags.includes("--a")) { deepAll = mode; deepNext = null; return note(`${text} 적용: 새로고침하기 전까지 ${DEEP_NAME[mode]}가 답합니다. 답마다 최대 5분 걸릴 수 있어요.`); }
+    deepNext = mode;
+    return note(`${text} 적용: 다음 질문 하나만 ${DEEP_NAME[mode]}가 답합니다. 최대 5분 걸릴 수 있어요.`);
+  }
+  if (cmd === "/compare" && !flags.length) {
+    note("/compare 적용: 다음 질문을 Gemini 3.5 Flash·DeepSeek 생각 켬·끔이 동시에 답합니다. 마음에 드는 답을 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
+    return openCompare();
+  }
+  $("log").append(el("div", { class: "msg bot note" }, el("em", { text: "invalid command." })));
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+const PANES = [["flash", "Gemini 3.5 Flash"], ["deep_r", "DeepSeek 생각 켬"], ["deep", "DeepSeek 생각 끔"]];
+function openCompare() {
+  compareArmed = true;
+  $("chat").classList.add("comparing");
+  $("compare").hidden = false;
+  $("compare").replaceChildren(...PANES.map(([, label]) => el("section", { class: "pane" }, el("h3", { text: label }),
+    el("div", { class: "body" }, el("p", { class: "caption", text: "질문을 입력하면 세 모델이 동시에 답합니다. (1시간에 2번)" })))));
+  $("msg").focus();
+}
+function closeCompare() {
+  if (inflight && !compareArmed) inflight.abort();
+  compareArmed = false;
+  $("chat").classList.remove("comparing");
+  $("compare").hidden = true;
+}
+$("compare-close").addEventListener("click", closeCompare);
+
+// /compare 다음 질문: 세 칸이 같은 질문에 동시에 답한다 (/api/compare, 이벤트마다 pane)
+let compareId = null;
+// 비교에서 고른 답: 서버가 그 질문·답을 대화에 남기고(이어지는 질문의 맥락), 화면은 원래 채팅으로 돌아가 그 답을 보여 준다
+function choiceButton(p, question) {
+  const b = el("button", { type: "button", class: "pick", text: "이 답 선택" });
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    const res = await fetch("/api/compare/choice", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                     body: JSON.stringify({ compare_id: compareId, pane: p.key }) }).catch(() => null);
+    if (!res || !res.ok) { b.disabled = false; b.textContent = "고르지 못했어요. 다시 눌러 주세요"; return; }
+    closeCompare();
+    say("me", question);
+    const bubble = el("div", { class: "msg bot" });
+    renderMarkdown(bubble, p.text);
+    $("log").append(bubble, el("div", { class: "applied", text: `/compare 적용: ${p.label}의 답을 골랐습니다` }));
+    $("log").scrollTop = $("log").scrollHeight;
+  });
+  return b;
+}
+async function sendCompare(text) {
+  compareArmed = false;
+  const ctrl = new AbortController();
+  setBusy(ctrl);
+  const panes = {}, started = performance.now();
+  $("compare").replaceChildren(...PANES.map(([key, label]) => {
+    const stat = el("span", { class: "stat", text: "" }), body = el("div", { class: "body" });
+    const trace = traceKey ? traceBox() : null, answer = el("div", { class: "msg bot" });
+    body.append(el("div", { class: "msg me", text }), ...(trace ? [trace] : []), answer);
+    answer.append(el("span", { class: "shimmer", text: THINKING }));
+    panes[key] = { key, label, stat, body, trace, answer, text: "" };
+    return el("section", { class: "pane" }, el("h3", {}, el("span", { text: label }), stat), body);
+  }));
+  try {
+    const res = await fetch("/api/compare", { method: "POST", headers: headers(), signal: ctrl.signal,
+                                              body: JSON.stringify({ message: text, session_id: sessionId, trace: !!traceKey }) });
+    if (!res.ok) throw await failure(res);
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let rest = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const lines = (rest + value).split("\n");
+      rest = lines.pop();
+      for (const line of lines) {
+        const ev = JSON.parse(line), p = panes[ev.pane];
+        if (ev.type === "start") { sessionId = ev.session_id ?? sessionId; compareId = ev.compare_id; }
+        if (ev.type === "all_done") for (const q of Object.values(panes)) if (q.ok && q.text) q.body.append(choiceButton(q, text)); // 세 칸이 다 끝나면 고를 수 있다
+        if (!p) continue;
+        if (p.trace && (ev.type === "trace" || ev.type === "tool")) addTrace(p.trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
+        if (ev.type === "delta") { p.text += ev.text; renderMarkdown(p.answer, p.text); }
+        else if (ev.type === "reset") { p.text = ""; p.answer.replaceChildren(el("span", { class: "shimmer", text: THINKING })); }
+        else if (ev.type === "tool" && !p.text) p.answer.replaceChildren(el("span", { class: "shimmer", text: TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING }));
+        else if (ev.type === "done") { p.stat.textContent = `${((performance.now() - started) / 1000).toFixed(1)}초`; p.ok = !ev.error; }
+      }
+    }
+  } catch (e) {
+    if (!ctrl.signal.aborted) for (const p of Object.values(panes)) if (!p.text) p.answer.textContent = (e.status === 429 ? "" : "오류: ") + e.message;
+  }
+  setBusy(null);
+}
+
 $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
   if (!text || inflight) return; // 답을 기다리는 중에는 입력한 글을 그대로 둔다
   $("msg").value = "";
-  if (text.toLowerCase() === "/admin") return adminPrompt();
+  if (text.startsWith("/")) return command(text);
+  if (compareArmed) return sendCompare(text);
+  if ($("chat").classList.contains("comparing")) closeCompare(); // 비교를 본 뒤 다음 질문은 원래 채팅으로
   send(text);
 });
 // 입력창 안내: 예시 질문(static/examples.txt) 중 하나를 무작위로

@@ -26,7 +26,9 @@ FLUSH_EVERY = 600.0  # 초: 이만큼마다 모아 둔 기록을 데이터셋에
 MAX_PENDING = 2000  # 올리지 못한 기록을 이 이상 쌓지 않는다 (오래된 것부터 버림)
 RECENT = 300  # 관리자 페이지에 보여 줄 최근 기록 수
 # 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(Gemini·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
-OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled")
+# · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
+OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare")
+MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
 
 
 class HfLogStore:
@@ -99,7 +101,11 @@ class ChatLog:
         stored = self.store.read(since) if self.store else []
         with self.lock:
             pending = list(self.pending)
-        records = sorted((r for r in stored + pending if r["t"][:10] >= since), key=lambda r: r["t"])
+        everything = sorted((r for r in stored + pending if r["t"][:10] >= since), key=lambda r: r["t"])
+        picks = {r["compare_id"]: r["pane"] for r in everything if r["outcome"] == "compare_pick"}
+        records = [{**r, "chosen": picks.get(r["compare_id"])} if r["outcome"] == "compare" else r
+                   for r in everything if r["outcome"] != "compare_pick"]  # fmt: skip
+        compares = [r for r in records if r["outcome"] == "compare"]
         by_day: dict[str, Counter[str]] = {}
         errors: dict[str, dict[str, Any]] = {}
         for r in records:
@@ -113,5 +119,6 @@ class ChatLog:
             "by_outcome": {o: sum(1 for r in records if r["outcome"] == o) for o in OUTCOMES},
             "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}} for d, c in sorted(by_day.items(), reverse=True)],
             "errors": sorted(errors.values(), key=lambda e: (-e["count"], e["error"])),
-            "recent": records[::-1][:RECENT],
+            "recent": [{k: v for k, v in r.items() if k != "panes"} for r in records[::-1][:RECENT]],
+            "compares": compares[::-1][:MAX_COMPARES],
         }  # fmt: skip

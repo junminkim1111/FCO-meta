@@ -3,6 +3,8 @@
 import json
 
 import pytest
+
+from fco_meta.chatbot.gemini import ToolResult
 from test_analytics import db  # noqa: F401
 
 pytest.importorskip("google.genai")
@@ -93,6 +95,7 @@ def test_made_up_figures_are_rewritten_once(toolbox):
     chat = GeminiChat(client, toolbox, model="gemini-test")
     events, turn = events_of(chat.ask_stream("포메이션 순위"))
 
+    events = [e for e in events if not isinstance(e, ToolResult)]  # 도구 결과 미리보기는 관리자 생각 표시용
     assert events[:2] == [ToolCall("recommend_players", args), f"4-2-3-1이 99.9%, 랭커 {rankers}명입니다."]
     assert events[2:] == [RESET, Recheck(["99.9%"]), f"4-2-3-1이 1위, 랭커 {rankers}명입니다."]
     assert turn.text == f"4-2-3-1이 1위, 랭커 {rankers}명입니다."
@@ -137,7 +140,7 @@ def test_answer_streams_in_pieces_and_preamble_is_reset(toolbox):
             turn = stop.value
             break
     # 도구를 부르기 전 글은 RESET으로 지우고, 도구를 부를 때 ToolCall을 알린다 (화면의 진행 문구)
-    assert events == ["찾아볼게요.", RESET, ToolCall("list_formations", {}), "4-2-3-1이 ", "1위입니다."]
+    assert [e for e in events if not isinstance(e, ToolResult)] == ["찾아볼게요.", RESET, ToolCall("list_formations", {}), "4-2-3-1이 ", "1위입니다."]
     assert turn.text == "4-2-3-1이 1위입니다." and turn.tool_calls == [("list_formations", {})]
     # 조각들은 한 응답으로 기록되고, 도구 호출의 서명도 그대로 남는다
     first = chat.contents[1]
@@ -291,7 +294,7 @@ def test_describe_error():
 
     e = errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
     assert describe_error(e) == "Gemini API 오류 429 RESOURCE_EXHAUSTED: quota — 사용량 한도 초과 (잠시 후 다시 시도)"
-    assert describe_error(ValueError("bad")) == "Gemini 처리 중 오류 (ValueError): bad"
+    assert describe_error(ValueError("bad")) == "모델 처리 중 오류 (ValueError): bad"
 
 
 class ByModel(FakeModels):
@@ -622,3 +625,30 @@ def test_question_gives_up_at_the_answer_deadline(toolbox):
     assert timeouts[0] == ANSWER_DEADLINE * 1000  # 요청마다 남은 시간을 타임아웃으로
     assert len(timeouts) == 3 and timeouts == sorted(timeouts, reverse=True)  # 상한(120초) 안에서 멈춘다
     assert "대기 시간 상한" in describe_error(AnswerTimeout("x"))
+
+
+def test_second_tool_call_hands_the_question_to_the_heavier_model(toolbox):
+    from fco_meta.chatbot.gemini import Escalate, Thought
+
+    one = {"function_call": {"name": "list_formations", "args": {}}}
+    two = {"function_call": {"name": "recommend_players", "args": {"role": "DM"}}}
+    client = FakeClient([
+        response([one]),  # lite: 첫 도구는 그대로 실행
+        response([two]),  # lite: 두 번째 도구 → 버리고 flash가 이어받는다
+        response([{"text": "생각 중", "thought": True}, {"text": "라이스입니다."}]),  # flash: 받은 결과로 답
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="lite", fallback_models=[])
+    events, gen = [], chat.ask_stream("볼란치", escalate_to="flash", thoughts=True)
+    while True:
+        try:
+            events.append(next(gen))
+        except StopIteration as stop:
+            turn = stop.value
+            break
+    assert [r["model"] for r in client.models.requests] == ["lite", "lite", "flash"]
+    # flash는 lite가 받은 첫 도구 결과를 그대로 보고, lite가 부르려던 두 번째 호출은 넘겨받지 않는다
+    last = client.models.requests[-1]["contents"]
+    assert last[-1].parts[0].function_response.name == "list_formations"
+    assert Escalate("flash", "두 번째 도구 호출") in events and Thought("생각 중") in events
+    assert turn.text == "라이스입니다." and turn.tool_calls == [("list_formations", {})]
+    assert chat.model == "lite"  # 다음 질문은 다시 lite부터

@@ -90,7 +90,7 @@ def test_gemini_errors_show_only_a_busy_notice(db, tmp_path, monkeypatch):  # no
     class Broken:
         contents: list = []
 
-        def ask_stream(self, message):
+        def ask_stream(self, message, **_):
             yield "쓰다가 "  # 도중에 실패해도 쓰던 글은 지우고 안내로 바꾼다
             raise errors.ClientError(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
 
@@ -109,7 +109,7 @@ def test_gemini_answer_hides_evidence_and_fallback_model(db, tmp_path, monkeypat
         model, last_model = "gemini-a", "gemini-b"  # 대체 모델로 답한 경우
         contents: list = []
 
-        def ask_stream(self, message):
+        def ask_stream(self, message, **_):
             yield from ["찾아볼게요.", RESET, ToolCall("recommend_players", {"role": "DM"}), "라이스가 ", "1순위입니다."]
             return GeminiTurn("라이스가 1순위입니다.", [("recommend_players", {})], "STOP", ["아스널 DM — 랭커 3명"])
 
@@ -136,7 +136,7 @@ def test_panels_answer_while_gemini_is_thinking(db, tmp_path, monkeypatch):  # n
         def __init__(self, tools):
             self.tools = tools
 
-        def ask_stream(self, message):
+        def ask_stream(self, message, **_):
             thinking.set()
             release.wait(5)  # 모델 응답을 기다리는 중
             content, _ = self.tools.run("list_formations", {})  # 도구는 그 뒤에도 실행된다
@@ -173,7 +173,7 @@ def test_repeated_first_question_is_answered_from_cache(db, tmp_path, monkeypatc
         def __init__(self):
             self.contents = []
 
-        def ask_stream(self, message):
+        def ask_stream(self, message, **_):
             asked.append(message)
             answer = f"답 {len(asked)}"
             self.remember(message, answer)
@@ -279,7 +279,7 @@ def test_chat_outcomes_are_logged_for_the_admin_page(db, tmp_path, monkeypatch):
         def __init__(self):
             self.contents = []
 
-        def ask_stream(self, message):
+        def ask_stream(self, message, **_):
             if "고장" in message:
                 yield "쓰다가 "
                 raise errors.ServerError(503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})
@@ -346,3 +346,117 @@ def test_admin_warns_from_the_third_wrong_password_and_blocks_the_ip_at_the_fift
         logs("wrong", ip="3.3.3.3")
     assert logs("secret", ip="3.3.3.3").status_code == 200
     assert "회 틀렸습니다" not in logs("wrong", ip="3.3.3.3").json()["detail"]
+
+
+class Recorder:
+    """A chat that records how it was asked and answers with its name (for routing tests)."""
+
+    def __init__(self, name, asked):
+        self.name, self.asked, self.contents, self.model, self.last_model = name, asked, [], name, name
+        self.remembered = []
+
+    def remember(self, question, answer):
+        self.remembered.append((question, answer))
+
+    def ask_stream(self, message, **options):
+        from fco_meta.chatbot.gemini import GeminiTurn, Thought
+
+        self.asked.append((self.name, message, options))
+        if options.get("thoughts"):
+            yield Thought("생각")
+        yield f"{self.name} 답"
+        return GeminiTurn(f"{self.name} 답", [], "STOP")
+
+
+def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):  # noqa: F811
+    import json
+
+    import fco_meta.web.app as web_app
+
+    asked, bots = [], {}
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: bots.setdefault("gemini", Recorder("gemini", asked)))
+    monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: bots.setdefault(f"deep{reasoning}", Recorder(f"deep{reasoning}", asked)))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret"))
+
+    _, done = ask(client, "아스널 볼란치 추천")  # 일반 → Flash-Lite, 두 번째 도구부터 3.5 Flash
+    sid = done["session_id"]
+    ask(client, "리버풀 100억으로 짜 줘", session_id=sid)  # 스쿼드 말 → 처음부터 3.5 Flash
+    res = client.post("/api/chat", json={"message": "업그레이드 추천", "session_id": sid, "mode": "deep_r"})
+    assert [(n, q, o) for n, q, o in asked] == [
+        ("gemini", "아스널 볼란치 추천", {"escalate_to": web_app.FLASH_MODEL}),
+        ("gemini", "리버풀 100억으로 짜 줘", {"model": web_app.FLASH_MODEL}),
+        ("deepTrue", "업그레이드 추천", {"deadline": web_app.LONG_DEADLINE}),  # /deep --r: 시간 상한 5분
+    ]  # fmt: skip
+    assert bots["deepTrue"].remembered == [("아스널 볼란치 추천", "gemini 답"), ("리버풀 100억으로 짜 줘", "gemini 답")]  # 앞 대화를 맥락으로
+    ask(client, "그럼 더 싼 걸로", session_id=sid)
+    assert bots["gemini"].remembered == [("업그레이드 추천", "deepTrue 답")]  # DeepSeek이 답한 턴도 이어서 안다
+    assert "deepTrue 답" in res.text
+
+    # 생각 표시(/admin --l)는 관리자 비밀번호가 있어야 한다
+    assert client.post("/api/chat", json={"message": "q", "trace": True}).status_code == 401
+    res = client.post("/api/chat", json={"message": "볼란치", "trace": True}, headers={"X-Admin-Key": "secret"})
+    traces = [json.loads(line) for line in res.text.splitlines() if '"trace"' in line]
+    assert [t["kind"] for t in traces] == ["route", "thought"] and "Flash-Lite" in traces[0]["text"]
+
+
+def test_heavy_words():
+    from fco_meta.web.app import heavy_word
+
+    assert heavy_word("19-20 리버풀 케미를 받는 리버풀 100억 미만으로 짜") == "케미"
+    assert heavy_word("4-1-4-1 롬바르디아 짜줘") == "짜줘"
+    assert heavy_word("UC마네 대신 급여를 1 줄일 수 있는 윙어") == "대신"
+    assert heavy_word("체 파를 달 수 있는 수비수") == "달수있"
+    assert heavy_word("아스널 볼란치 추천해줘") is None and heavy_word("짜증나") is None
+
+
+def test_compare_answers_in_three_panes_twice_an_hour(db, tmp_path, monkeypatch):  # noqa: F811
+    import json
+
+    import fco_meta.web.app as web_app
+
+    asked = []
+    monkeypatch.setattr(web_app, "_flash_chat", lambda tools: Recorder("flash", asked))
+    monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder(f"deep{reasoning}", asked))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
+
+    res = client.post("/api/compare", json={"message": "리버풀 짜줘"})
+    events = [json.loads(line) for line in res.text.splitlines()]
+    answers = {e["pane"]: e["text"] for e in events if e["type"] == "delta"}
+    assert answers == {"flash": "flash 답", "deep_r": "deepTrue 답", "deep": "deepFalse 답"}
+    assert events[-1]["type"] == "all_done" and sum(e["type"] == "done" for e in events) == 3
+    assert all(o == {"deadline": web_app.LONG_DEADLINE, "thoughts": False} for _, _, o in asked)
+    assert client.post("/api/compare", json={"message": "2"}).status_code == 200
+    third = client.post("/api/compare", json={"message": "3"})
+    assert third.status_code == 429 and "1시간에 2번" in third.json()["detail"]
+
+
+def test_compare_choice_continues_the_chat_and_shows_on_the_admin_page(db, tmp_path, monkeypatch):  # noqa: F811
+    import json
+
+    import fco_meta.web.app as web_app
+
+    asked = []
+    monkeypatch.setattr(web_app, "_flash_chat", lambda tools: Recorder("flash", asked))
+    monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder(f"deep{reasoning}", asked))
+    gemini = Recorder("gemini", asked)
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: gemini)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret"))
+
+    events = [json.loads(line) for line in client.post("/api/compare", json={"message": "리버풀 짜줘"}).text.splitlines()]
+    start = events[0]
+    res = client.post("/api/compare/choice", json={"compare_id": start["compare_id"], "pane": "deep_r"})
+    assert res.json() == {"ok": True, "pane": "deep_r", "label": web_app.DEEP_LABEL["deep_r"]}
+    ask(client, "그럼 더 싸게", session_id=start["session_id"])  # 고른 답이 대화의 맥락이 된다
+    assert gemini.remembered == [("리버풀 짜줘", "deepTrue 답")]
+    assert client.post("/api/compare/choice", json={"compare_id": "nope", "pane": "flash"}).status_code == 404
+
+    summary = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
+    (c,) = summary["compares"]
+    assert c["q"] == "리버풀 짜줘" and c["chosen"] == "deep_r" and summary["by_outcome"]["compare"] == 1
+    assert {p: (v["answer"], v["model"]) for p, v in c["panes"].items()} == {
+        "flash": ("flash 답", "flash"), "deep_r": ("deepTrue 답", "deepTrue"), "deep": ("deepFalse 답", "deepFalse"),
+    }  # fmt: skip
+    assert all(v["ms"] >= 0 for v in c["panes"].values())

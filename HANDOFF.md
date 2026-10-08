@@ -124,7 +124,7 @@ python -m fco_meta.web [--backend rules] [--port 8000]
   응답에 모든 시즌 카드가 오지만 랭커가 쓴 카드만 저장하고, 20시간 안에 받은 것은 건너뜁니다.
 
 ### Gemini
-- 기본 모델은 `gemini-3.8-flash`, 폴백은 `3.7-flash → 3.6-flash → 3.5-flash → 3.5-flash-lite`입니다 (무료 한도가 모델별이라 길게).
+- 기본 모델은 `gemini-3.5-flash-lite`(답이 5~6초; flash 계열은 생각 시간과 혼잡으로 수십 초), 폴백은 `3.1-flash-lite → 3.8-flash → 3.7-flash → 3.5-flash`입니다 (무료 한도가 모델별이라 길게).
   한도 소진·혼잡 모델은 `_COOLDOWN`(프로세스 공유)에 기록해 건너뜁니다: 하루 한도는 태평양 자정까지, 분당·혼잡은 1~2분.
   `gemini-2.5-flash`는 신규 사용자에게 404가 납니다.
   환경 변수 `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`로 바꿀 수 있습니다.

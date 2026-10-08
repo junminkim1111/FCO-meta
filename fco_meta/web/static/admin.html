@@ -10,7 +10,7 @@
     color-scheme: dark;
     --bg: #101116; --panel: rgba(255, 255, 255, .045); --line: rgba(255, 255, 255, .1); --line-strong: rgba(255, 255, 255, .18);
     --text: #ededef; --muted: #8e8e98; --faint: #5f5f69; --accent: #a5b4fc;
-    --ok: #3987e5; --cached: #7dd3fc; --busy: #e66767; --limited: #f2cc60; --cancelled: #8e8e98;
+    --ok: #3987e5; --cached: #7dd3fc; --busy: #e66767; --limited: #f2cc60; --cancelled: #8e8e98; --compare: #c4b5fd;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -25,8 +25,7 @@
   button, select, input { font: inherit; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid var(--line);
                           border-radius: 8px; padding: 6px 12px; }
   button { cursor: pointer; } button.on { border-color: var(--accent); color: var(--accent); }
-  .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-  @media (max-width: 720px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
   .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
   .tile .k { font-size: 12px; color: var(--muted); }
   .tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -43,7 +42,22 @@
   .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
            border: 1px solid currentColor; }
   .ok { color: var(--ok); } .cached { color: var(--cached); } .busy { color: var(--busy); }
-  .limited { color: var(--limited); } .cancelled { color: var(--cancelled); }
+  .limited { color: var(--limited); } .cancelled { color: var(--cancelled); } .compare { color: var(--compare); }
+  /* /compare 기록: 비교마다 접는 칸, 안에 세 모델의 답을 나란히 */
+  details.cmp { border-top: 1px solid var(--line); padding: 10px 0; }
+  details.cmp > summary { cursor: pointer; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+  details.cmp > summary .q { font-weight: 600; }
+  .panes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+  @media (max-width: 900px) { .panes { grid-template-columns: minmax(0, 1fr); } }
+  .pane { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  .pane.chosen { border-color: var(--compare); box-shadow: 0 0 0 1px var(--compare); }
+  .pane h3 { margin: 0 0 4px; font-size: 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .pane .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; word-break: break-word; }
+  .md { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md table { margin: 0 0 8px; } .md ul, .md ol { padding-left: 20px; }
+  .md h1, .md h2, .md h3, .md h4 { font-size: 13px; margin: 10px 0 4px; }
+  .md table { display: block; overflow-x: auto; font-size: 12px; } .md th, .md td { padding: 4px 8px; white-space: nowrap; }
   .error { color: var(--busy); }
   #login { max-width: 360px; }
   .back { color: var(--muted); text-decoration: none; font-size: 13px; } .back:hover { color: var(--text); }
@@ -65,12 +79,15 @@
     <section><div id="tiles" class="tiles"></div><p id="note" class="muted"></p></section>
     <section><h2>날짜별</h2><div class="scroll"><table id="days-table"></table></div></section>
     <section><h2>혼잡 안내가 나간 원인</h2><div class="scroll"><table id="errors"></table></div></section>
+    <section><h2>모델 비교 (/compare)</h2><p class="muted">고른 답은 테두리로 표시됩니다. 걸린 시간은 칸마다 따로 잰 값입니다.</p><div id="compares"></div></section>
     <section><div class="bar"><h2>최근 질문</h2><span class="grow"></span><div id="filters" class="bar"></div></div>
       <div class="scroll"><table id="recent"></table></div></section>
   </div>
 </main>
 <script>
-const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김" };
+const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김", compare: "비교" };
+const MODE = { deep: "/deep", deep_r: "/deep --r" };
+const md = import("/static/md.js"); // 비교 답은 채팅 화면과 같은 마크다운 표시
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -124,11 +141,33 @@ function render() {
     b.addEventListener("click", () => { filter = o; render(); });
     return b;
   }));
+  renderCompares();
   const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter);
   $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간"], true),
     ...shown.map((r) => el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome)),
       el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null),
-      cell("", (r.tools || []).join(", ")), cell("t", r.model || ""), cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""))));
+      cell("", (r.tools || []).join(", ")), cell("t", r.outcome === "compare" ? `3개 모델${r.chosen ? " · 고름" : ""}` : [MODE[r.mode], r.model].filter(Boolean).join(" · ")),
+      cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""))));
+}
+
+async function renderCompares() {
+  const box = $("compares"), list = data.compares || [];
+  if (!list.length) return box.replaceChildren(el("p", { class: "muted", text: "아직 비교 기록이 없습니다." }));
+  const { renderMarkdown } = await md;
+  box.replaceChildren(...list.map((c, i) => {
+    const panes = Object.entries(c.panes || {}).map(([key, p]) => {
+      const answer = el("div", { class: "md" });
+      if (p.answer) renderMarkdown(answer, p.answer); else answer.append(el("p", { class: "error", text: p.error || "답 없음" }));
+      const meta = [p.model, p.ms != null ? (p.ms / 1000).toFixed(1) + "초" : null, p.tools?.length ? "도구 " + p.tools.join(", ") : "도구 없음"];
+      return el("div", { class: "pane" + (c.chosen === key ? " chosen" : "") },
+        el("h3", {}, document.createTextNode(p.label || key), c.chosen === key ? el("span", { class: "badge compare", text: "고른 답" }) : null),
+        el("div", { class: "meta", text: meta.filter(Boolean).join(" · ") }), answer);
+    });
+    return el("details", { class: "cmp", open: i === 0 },
+      el("summary", {}, el("span", { class: "muted", text: c.t.slice(5, 16).replace("T", " ") }), el("span", { class: "q", text: c.q }),
+        el("span", { class: "muted", text: c.chosen ? `고른 답: ${c.panes?.[c.chosen]?.label || c.chosen}` : "고르지 않음" })),
+      el("div", { class: "panes" }, ...panes));
+  }));
 }
 
 $("login").querySelector("form").addEventListener("submit", (ev) => {
