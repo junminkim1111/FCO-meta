@@ -244,6 +244,8 @@
            display: flex; flex-direction: column; gap: 4px; } /* 글이 늘면 칸도 같이 커진다 */
   .trace .tr { white-space: pre-wrap; word-break: break-word; }
   .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
+  .trace .tr .at { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; } /* 질문을 보낸 뒤 몇 초째 */
+  .trace .tr.done b { color: var(--pick); }
   .trace .tr.thought span { color: var(--text); opacity: .75; }
   /* /compare: 챗봇 칸이 화면 전체로 커지고 세 모델이 나란히 답한다 */
   #chat.comparing { position: fixed; inset: 12px; z-index: 20; height: auto; min-height: 0; background: var(--bg); }
@@ -649,18 +651,23 @@ const TOOL_STATUS = {
 // 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /admin --l = 생각 표시, /compare = 다음 질문을 셋이 비교
 let deepNext = null, deepAll = null, traceKey = null, compareArmed = false;
 const DEEP_NAME = { deep: "DeepSeek V4 Pro(생각 끔)", deep_r: "DeepSeek V4 Pro(생각 켬)" };
-const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사" };
+const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사",
+                      first: "첫 글자", done: "완료" };
 // 생각 표시 줄 하나 (이어서 오는 생각 조각은 한 줄로 붙인다)
+// 줄마다 질문을 보낸 뒤 몇 초째인지(+1.2초)를 붙인다 → 도구·모델 단계별로 걸린 시간을 볼 수 있다
 function addTrace(box, ev) {
   const last = box.lastElementChild;
   if (ev.kind === "thought" && last?.classList.contains("thought")) { last.lastChild.textContent += ev.text; return; }
   const text = ev.kind === "tool" ? `${ev.name} ${JSON.stringify(ev.args || {})}`
-             : ev.kind === "result" ? `${ev.name}${ev.ok ? "" : " (오류)"} ${ev.text}` : ev.text;
-  box.append(el("div", { class: "tr " + ev.kind }, el("b", { text: TRACE_LABEL[ev.kind] || ev.kind }), el("span", { text })));
+             : ev.kind === "result" ? `${ev.name}${ev.ok ? "" : " (오류)"} ${ev.text}` : ev.text || "";
+  const at = `+${((performance.now() - box.started) / 1000).toFixed(1)}초`;
+  box.append(el("div", { class: "tr " + ev.kind }, el("span", { class: "at", text: at }), el("b", { text: TRACE_LABEL[ev.kind] || ev.kind }), el("span", { text })));
   box.scrollTop = box.scrollHeight;
 }
 function traceBox() {
-  return el("div", { class: "trace", ariaLabel: "모델의 생각" });
+  const box = el("div", { class: "trace", ariaLabel: "모델의 생각" });
+  box.started = performance.now();
+  return box;
 }
 const headers = () => ({ "Content-Type": "application/json", ...(traceKey ? { "X-Admin-Key": traceKey } : {}) });
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
@@ -735,6 +742,8 @@ async function send(text) {
       for (const line of lines) {
         const ev = JSON.parse(line);
         if (trace && (ev.type === "trace" || ev.type === "tool")) addTrace(trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
+        if (trace && ev.type === "delta" && !answer) addTrace(trace, { kind: "first", text: "답이 나오기 시작" });
+        if (trace && ev.type === "done") addTrace(trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
         else if (ev.type === "delta") grow(ev.text);
         else if (ev.type === "tool" && stopOrb) status(TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING); // 기다리는 중이면 문구를 그 도구에 맞게
@@ -921,6 +930,8 @@ async function sendCompare(text) {
         }
         if (!p) continue;
         if (p.trace && (ev.type === "trace" || ev.type === "tool")) addTrace(p.trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
+        if (p.trace && ev.type === "delta" && !p.text) addTrace(p.trace, { kind: "first", text: "답이 나오기 시작" });
+        if (p.trace && ev.type === "done") addTrace(p.trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
         if (ev.type === "delta") { p.text += ev.text; renderMarkdown(p.answer, p.text); }
         else if (ev.type === "reset") { p.text = ""; p.answer.replaceChildren(el("span", { class: "shimmer", text: THINKING })); }
         else if (ev.type === "tool" && !p.text) p.answer.replaceChildren(el("span", { class: "shimmer", text: TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING }));
