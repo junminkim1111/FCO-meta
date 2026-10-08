@@ -27,7 +27,8 @@ MAX_PENDING = 2000  # 올리지 못한 기록을 이 이상 쌓지 않는다 (�
 RECENT = 300  # 관리자 페이지에 보여 줄 최근 기록 수
 # 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(Gemini·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
 # · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
-OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare")
+# · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
+OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare", "blocked")
 MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
 
 

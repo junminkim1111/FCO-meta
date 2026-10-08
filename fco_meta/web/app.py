@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..chatbot.gemini import RESET, Escalate, Recheck, Thought, ToolCall, ToolResult, describe_error
+from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 from .chatlog import ChatLog
@@ -422,6 +423,15 @@ def create_app(
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
             with session.lock:
                 first = not session.history  # 대화의 첫 질문만 캐시한다
+                route = _jev_route(req.message, session.history[-1][0] if session.history else None)
+                if route and route.blocked:  # 범위 밖·프롬프트 공격 → LLM 없이 거절 문구
+                    session.answered(None, req.message, REFUSAL)
+                    entry.update(outcome="blocked", route=f"{route.scope} ({route.describe()})")
+                    if req.trace:
+                        yield _event(type="trace", kind="route", text=f"{route.describe()} → 거절 문구 (모델 호출 없음)")
+                    yield _event(type="delta", text=REFUSAL)
+                    yield _event(type="done", tool_calls=[], blocked=True)
+                    return
                 if req.mode == "auto":
                     cached = answers.get(req.message) if first else None
                     if cached is not None:
@@ -430,20 +440,26 @@ def create_app(
                         yield _event(type="delta", text=cached)
                         yield _event(type="done", tool_calls=[], cached=True)
                         return
-                    key, word = "gemini", heavy_word(req.message)
-                    options: dict[str, Any] = {"model": FLASH_MODEL} if word else {"escalate_to": FLASH_MODEL}
-                    route = f"'{word}' → {FLASH_MODEL}" if word else f"기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
+                    key = "gemini"
+                    if route:  # Jev가 판단 (없거나 실패하면 키워드)
+                        heavy, why = route.heavy, route.describe()
+                    else:
+                        word = heavy_word(req.message)
+                        heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
+                    options: dict[str, Any] = {"model": FLASH_MODEL} if heavy else {"escalate_to": FLASH_MODEL}
+                    entry["route"] = why
+                    why += f" → {FLASH_MODEL}" if heavy else f" → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
                 else:
                     if not _deepseek_ready():
                         entry.update(outcome="error", error="OPENROUTER_API_KEY 없음")
                         yield _event(type="delta", text="지금은 DeepSeek을 쓸 수 없어요 (서버에 OpenRouter 키가 없습니다).")
                         yield _event(type="done", tool_calls=[], error="unavailable")
                         return
-                    key, options, route = req.mode, {"deadline": LONG_DEADLINE}, f"/deep → {DEEP_LABEL[req.mode]}"
+                    key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/deep → {DEEP_LABEL[req.mode]}"
                     entry["mode"] = req.mode
                 if req.trace:
                     options["thoughts"] = True
-                    yield _event(type="trace", kind="route", text=route)
+                    yield _event(type="trace", kind="route", text=why)
                 bot = session.bot(key, make_bot(key))
                 stream = bot.ask_stream(req.message, **options)
                 try:
@@ -485,6 +501,13 @@ def create_app(
             raise HTTPException(status_code=429, detail=refused)
         session_id = req.session_id or uuid.uuid4().hex
         history = list(session_for(session_id).history)
+        route = _jev_route(req.message, history[-1][0] if history else None)
+        if route and route.blocked:  # 범위 밖·공격은 세 모델 모두 부르지 않는다
+            chat_log.record(q=req.message, outcome="blocked", route=f"{route.scope} ({route.describe()})")
+            lines_ = [_event(type="start", session_id=session_id, compare_id=None, panes=list(COMPARE_PANES)),
+                      *(_event(type=t, pane=p, **kw) for p in COMPARE_PANES for t, kw in (("delta", {"text": REFUSAL}), ("done", {"tool_calls": []}))),
+                      _event(type="all_done", blocked=True)]  # fmt: skip
+            return StreamingResponse(iter(lines_), media_type="application/x-ndjson")
         compare_id = uuid.uuid4().hex[:12]
         lines: queue.Queue[str | None] = queue.Queue()
         results: dict[str, dict[str, Any]] = {}  # 칸별 모델·걸린 시간·도구·답 (관리자 기록용)
@@ -620,15 +643,30 @@ def _flash_chat(toolbox: Toolbox | _LockedTools):
 _HTTP: Any = None
 
 
+def _http() -> Any:
+    import httpx
+
+    global _HTTP
+    _HTTP = _HTTP or httpx.Client()
+    return _HTTP
+
+
+def _jev_route(question: str, previous: str | None) -> Route | None:
+    """Jev's routing for this question, or None (no OPENROUTER_API_KEY, error or timeout → the keyword rule)."""
+    if not jev_ready():
+        return None
+    try:
+        return classify(_http(), question, previous)
+    except Exception as exc:
+        log.warning("jev routing failed, using keywords: %s", exc)
+        return None
+
+
 def _deepseek_ready() -> bool:
     return bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_COMPAT_API_KEY"))
 
 
 def _deepseek_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
-    import httpx
-
     from ..chatbot.llm import OpenAIChat
 
-    global _HTTP
-    _HTTP = _HTTP or httpx.Client()
-    return OpenAIChat(_HTTP, toolbox, model=DEEPSEEK_MODEL, extra={"reasoning": {"enabled": reasoning}})
+    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL, extra={"reasoning": {"enabled": reasoning}})
