@@ -225,9 +225,10 @@
   .msg.note { color: var(--muted); font-size: 13px; }
   .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/deep·/compare) */
-  /* 세 칸이 다 끝나면 답 위에 커서를 올리면 초록 테두리, 두 번 누르면 고르기 */
-  .pane.selectable { cursor: pointer; touch-action: manipulation; transition: border-color .15s, box-shadow .15s, opacity .25s; }
-  .pane.selectable:hover, .pane.selectable:focus-visible { border-color: var(--pick); box-shadow: 0 0 0 1px var(--pick); outline: none; }
+  /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
+  .pane.selectable { cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .25s; }
+  .pane.selectable.marked { border-color: var(--pick); box-shadow: 0 0 0 1px var(--pick); }
+  .pane.selectable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pane.gone { opacity: 0; }
   #pick-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
   #pick-dialog::backdrop { background: rgba(0, 0, 0, .55); }
@@ -240,7 +241,7 @@
   #chat.comparing #chat-title > .stat { display: none; }
   /* /admin --l: 모델 선택·생각·도구 결과를 답 위에 */
   .trace { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
-           display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+           display: flex; flex-direction: column; gap: 4px; } /* 글이 늘면 칸도 같이 커진다 */
   .trace .tr { white-space: pre-wrap; word-break: break-word; }
   .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
   .trace .tr.thought span { color: var(--text); opacity: .75; }
@@ -820,7 +821,7 @@ function command(text) {
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
   if (cmd === "/compare" && !flags.length) {
-    note("/compare 적용: 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답합니다. 마음에 드는 답을 두 번 눌러 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
+    note("/compare 적용: 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답합니다. 마음에 드는 답을 누르고 한 번 더 눌러 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
     return openCompare();
   }
   $("log").append(el("div", { class: "msg bot note" }, el("em", { text: "invalid command." })));
@@ -848,12 +849,12 @@ $("compare-close").addEventListener("click", closeCompare);
 
 // /compare 다음 질문: 세 칸이 같은 질문에 동시에 답한다 (/api/compare, 이벤트마다 pane)
 let compareId = null;
-// 비교에서 고른 답: 커서를 올리면 초록 테두리, 두 번 누르면(키보드는 Enter) 확인 창. 고르면 다른 답은 사라지고,
+// 비교에서 고른 답: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면(키보드는 Enter 두 번) 확인 창. 고르면 다른 답은 사라지고,
 // 서버가 그 질문·답을 대화에 남기며(이어지는 질문의 맥락) 화면은 일반 채팅에서 답한 것처럼 돌아간다
 function makeSelectable(p, question, all) {
   p.section.classList.add("selectable");
   p.section.tabIndex = 0;
-  p.section.setAttribute("aria-label", `${p.title} — 두 번 누르면 이 답을 고릅니다`);
+  p.section.setAttribute("aria-label", `${p.title} — 누르면 표시, 한 번 더 누르면 이 답을 고릅니다`);
   const ask = async () => {
     if (!$("chat").classList.contains("comparing")) return;
     const dialog = $("pick-dialog");
@@ -874,8 +875,16 @@ function makeSelectable(p, question, all) {
       $("log").scrollTop = $("log").scrollHeight;
     }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280);
   };
-  p.section.addEventListener("dblclick", ask);
-  p.section.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === p.section) ask(); });
+  const press = () => {
+    if (!p.section.classList.contains("marked")) { // 처음 누르면 이 칸만 초록 테두리
+      for (const other of all) other.section.classList.remove("marked");
+      p.section.classList.add("marked");
+      return;
+    }
+    ask();
+  };
+  p.section.addEventListener("click", (ev) => { if (!getSelection().toString()) press(); }); // 글을 끌어 고른 건 누름으로 치지 않는다
+  p.section.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === p.section) press(); });
 }
 async function sendCompare(text) {
   compareArmed = false;
