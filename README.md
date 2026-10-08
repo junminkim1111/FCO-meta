@@ -33,7 +33,8 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
 - **채팅 명령어** (`/`로 시작하면 모델에 보내지 않고, 모르는 명령어는 *invalid command.*):
   `/admin` 기록 페이지 · `/admin --l` 비밀번호 확인 뒤 새로고침 전까지 모델 선택·생각·도구 결과를 답 위에 표시 ·
   `/deep` 다음 질문만 DeepSeek V4 Pro(생각 끔), `--r` 생각 켬, `--a` 새로고침 전까지 유지 ·
-  `/compare` 다음 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 전체 화면 세 칸에서 동시에 답함(IP당 1시간 2회).
+  `/compare` 다음 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 전체 화면 세 칸에서 동시에 답함(IP당 1시간 2회) ·
+  `/cancel` 위 명령어로 켠 것을 모두 끄고 기본 상태로.
   `/deep`·`/compare`는 질문당 상한 5분(일반 120초)이고, Render에 `OPENROUTER_API_KEY`가 있어야 DeepSeek이 답합니다.
 - 만든 뒤 서비스 Settings의 **Deploy Hook** 주소를 맥 `.env`의 `RENDER_DEPLOY_HOOK`에 넣으면 push-db가 재배포까지 요청합니다.
 - 코드는 GitHub에 푸시하면 Render가 자동으로 다시 빌드합니다. 질문 수 제한은 프록시가 넘겨주는 `X-Forwarded-For`의 첫 주소로 셉니다.

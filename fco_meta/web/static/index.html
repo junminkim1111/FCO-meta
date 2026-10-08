@@ -798,6 +798,13 @@ function command(text) {
     deepNext = mode;
     return note(`${text} 적용: 다음 질문 하나만 ${DEEP_NAME[mode]}가 답합니다. 최대 5분 걸릴 수 있어요.`);
   }
+  if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
+    const off = [deepNext && `/deep(${DEEP_NAME[deepNext]})`, deepAll && `/deep --a(${DEEP_NAME[deepAll]})`, traceKey && "/admin --l(생각 표시)",
+                 $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
+    deepNext = deepAll = traceKey = null;
+    if ($("chat").classList.contains("comparing")) closeCompare();
+    return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
+  }
   if (cmd === "/compare" && !flags.length) {
     note("/compare 적용: 다음 질문을 Gemini 3.5 Flash·DeepSeek 생각 켬·끔이 동시에 답합니다. 마음에 드는 답을 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
     return openCompare();
