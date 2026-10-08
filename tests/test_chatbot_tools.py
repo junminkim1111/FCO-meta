@@ -504,3 +504,12 @@ def test_usage_is_rebuilt_once_when_roles_change(db, monkeypatch):  # noqa: F811
     assert store.rebuild_if_roles_changed() and not store.rebuild_if_roles_changed()  # 처음 한 번만 (지난 스냅샷 포함 전부)
     db.conn.execute("UPDATE usage_meta SET value = ? WHERE key = 'roles'", (_json.dumps({"CAM": [17, 18, 19]}),))
     assert store.rebuild_if_roles_changed() and calls == [(), ()]  # 역할 구분이 바뀌면 다시
+
+
+def test_recommend_squad_includes_requested_players(toolbox):  # noqa: F811
+    add_salaries(toolbox.conn)
+    # 급여 합 30이면 원래는 볼란치R(S300, 15)+...; 볼란치L(급여 30)을 꼭 넣으라면 넣고 나머지를 다시 고른다
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "볼란치 L"})
+    assert [s["player"] for s in r["lineup"]] == ["볼란치L"] and r["include"] == {"볼란치L": "볼란치L"}
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "없는선수"})
+    assert r["include"] == {"없는선수": None} and "'없는선수'를 넣지 못함" in r["note"]

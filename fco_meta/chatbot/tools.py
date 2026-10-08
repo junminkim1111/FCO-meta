@@ -443,6 +443,11 @@ TOOLS: list[dict[str, Any]] = [
                     "케미 발동 인원(첫 단계) 이상 넣는다. 클럽·국가 이름이 붙은 케미('21-22 롬바르디아 FC', '리버풀 중원 트리오')만 주고 "
                     "team_color를 생략하면 그 클럽·국가 팀컬러도 지킨다 (나머지 선수도 그 소속). 결과의 chemistry.active로 발동 여부 확인",
                 },
+                "include": {
+                    "type": "string",
+                    "description": "꼭 넣을 선수 이름, 쉼표로 (예: '슈케르', '라이스,사카'). 랭커들이 그 선수를 쓴 자리에 넣고 나머지를 한도 안에서 "
+                    "다시 고른다. 결과의 include로 들어갔는지 확인",
+                },
             },
             [],
         ),
@@ -1188,8 +1193,10 @@ class Toolbox:
         max_total_salary: int | None = None,
         slots: str | None = None,
         chemistry: str | None = None,
+        include: str | None = None,
     ) -> dict[str, Any]:
         chem = self._chemistry(chemistry) if chemistry else None
+        must = ["".join(n.split()) for n in re.split(r"[,/+]", include or "") if n.strip()]  # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시)
         derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
         if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
             team_color = derived.id
@@ -1219,6 +1226,7 @@ class Toolbox:
                     "note": f"{formation}으로 실제 경기한 스쿼드가 수집되지 않아 포지션 구성을 알 수 없음",
                 }  # fmt: skip
         reqs = {"chem": min(lv["players"] for lv in chem["levels"])} if chem else {}  # 케미: 첫 단계 발동 인원
+        reqs.update({f"include:{name}": 1 for name in must})  # 꼭 넣을 선수: 이름이 맞는 선수 한 명씩
         if season_rule:
             reqs["season"] = sum(layout.values())
         auto_cap = not slots and max_total_salary is None
@@ -1236,14 +1244,15 @@ class Toolbox:
         for role, n in layout.items():
             top = n + (25 if slots else 8)
             res = top_players(
-                self.conn, usage_id, formation or ALL_FORMATIONS, role, top=200 if (chem or fits) else top, by="pid",
+                self.conn, usage_id, formation or ALL_FORMATIONS, role, top=200 if (chem or fits or must) else top, by="pid",
                 strict=bool(strict), min_sample=self.min_sample,
             )  # fmt: skip
             first = first or res
             options = []
             # 상위 후보에 더해, 사용률이 낮아도 그 자리에 쓰인 케미 명단 선수·팀컬러 카드는 모두 후보
             for i, p in enumerate(res.players):
-                if not (i < top or p.key in members or (fits and any(fits(x.sp_id) for x in p.seasons))):
+                wanted = {f"include:{name}" for name in must if name in "".join(p.name.split())}
+                if not (i < top or p.key in members or wanted or (fits and any(fits(x.sp_id) for x in p.seasons))):
                     continue
                 entry = self._player_entry(res, (role,), p)
                 cards = entry["cards"]
@@ -1255,7 +1264,7 @@ class Toolbox:
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
                 for card in cards if limits else cards[:1]:
-                    tags = {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(card["sp_id"]))) if ok}
+                    tags = {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(card["sp_id"]))) if ok} | wanted
                     options.append({"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags})
             slot_options += [(role, options)] * n
         if first is None or not first.sample_size:
@@ -1342,6 +1351,12 @@ class Toolbox:
                                   "active": count >= least}  # fmt: skip
             if count < reqs["season"]:
                 notes.append(f"{tc_name} 카드로 {count}명 (전원은 못 채움 — 발동 인원 {least}명 {'충족' if count >= least else '미달'})")
+        if must:
+            got = {name: next((c["entry"]["name"] for c in chosen if c and f"include:{name}" in c["tags"]), None) for name in must}
+            out["include"] = got
+            for name, player in got.items():
+                if player is None:
+                    notes.append(f"'{name}'를 넣지 못함 (이 팀컬러·포메이션 랭커들이 쓴 기록이 없거나, 소속·급여·예산 조건에 맞는 카드가 없음)")
         if chem:
             need = reqs["chem"]
             if derived:
