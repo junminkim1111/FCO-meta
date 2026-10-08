@@ -70,8 +70,9 @@ CATEGORY_CODES = {v: k for k, v in CATEGORY_LABELS.items()}
 ALL_RANKER_WORDS = {"", "0", "전체", "전체랭커", "랭커전체", "상위랭커", "상위랭커전체", "all", "allrankers", "*", "none", "null"}
 
 ROLE_HELP = (
-    "DM(볼란치: RDM/CDM/LDM), CAM(공미), CM, RM, LM, RW, LW, ST, CF, CB, RB, LB, RWB, LWB, GK. "
-    "여러 역할은 'RW,LW'처럼 쉼표로, 묶음 이름도 가능: 윙어(RW,LW), 공격수(ST,CF,RW,LW), 풀백(RB,LB), 윙백, 측면미드필더, 미드필더, 수비수"
+    "DM(볼란치: RDM/CDM/LDM), CAM(가운데 공미), RAM·LAM(오른쪽·왼쪽 공미), CM, RM, LM, RW, LW, ST, CF, CB, RB, LB, RWB, LWB, GK. "
+    "여러 역할은 'RW,LW'처럼 쉼표로, 묶음 이름도 가능: 윙어(RW,LW,RM,LM,RAM,LAM), 공격수(ST,CF,RW,LW), 풀백(RB,LB), 윙백, 측면미드필더, "
+    "미드필더, 수비수"
 )
 DEFAULT_MIN_USAGE_FOR_PRICE_SORT = 0.03  # 가성비(시세 낮은 순) 정렬에서 이보다 적게 쓰인 선수는 제외
 TREND_MIN_RANKERS = 3  # 사용률 변화 목록에 넣을 최소 사용 랭커 수 (두 스냅샷 중 큰 쪽)
@@ -439,7 +440,8 @@ TOOLS: list[dict[str, Any]] = [
                 "chemistry": {
                     "type": "string",
                     "description": "관계(케미) 팀컬러 이름 (예: '19-20 FC 바르셀로나', '25-26 레알 마드리드'). 주면 그 명단 선수를 "
-                    "케미 발동 인원(첫 단계) 이상 넣는다. 결과의 chemistry.active로 발동 여부 확인",
+                    "케미 발동 인원(첫 단계) 이상 넣는다. 클럽·국가 이름이 붙은 케미('21-22 롬바르디아 FC', '리버풀 중원 트리오')만 주고 "
+                    "team_color를 생략하면 그 클럽·국가 팀컬러도 지킨다 (나머지 선수도 그 소속). 결과의 chemistry.active로 발동 여부 확인",
                 },
             },
             [],
@@ -762,6 +764,17 @@ class Toolbox:
             names = ", ".join(e["name"] for e in hits[:10])
             raise ToolError(f"케미 팀컬러 '{name}'를 하나로 정할 수 없음" + (f": {names} 중 하나로" if hits else " — get_team_color_info로 이름 확인"))
         return hits[0]
+
+    def _chemistry_club(self, chem: dict[str, Any]):
+        """The club or nation a chemistry is named after: the name without its leading season/year, then shorter and
+        shorter word prefixes ('21-22 롬바르디아 FC' → 롬바르디아 FC, '리버풀 중원 트리오' → 리버풀, '2002 대한민국' →
+        대한민국), or None when no prefix names one ('아버지와 아들')."""
+        words = [re.sub(r"의$", "", w) for w in re.sub(r"^(\d{2}-\d{2}|\d{2,4})\s+", "", chem["name"]).split()]  # '바이언의' → '바이언'
+        for n in range(len(words), 0, -1):
+            tc = self._lookup_team_color(" ".join(words[:n]))
+            if tc and tc.category in ("club", "nationality"):
+                return tc
+        return None
 
     def team_color_icons(self) -> dict[str, str]:
         """Team color display name → its icon on the ranking pages (path under the Nexon CDN's externalAssets/common):
@@ -1176,6 +1189,10 @@ class Toolbox:
         slots: str | None = None,
         chemistry: str | None = None,
     ) -> dict[str, Any]:
+        chem = self._chemistry(chemistry) if chemistry else None
+        derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
+        if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
+            team_color = derived.id
         tc_id, tc_name = self._scope(team_color)
         tc = next((t for t in self.catalog.entries if t.id == tc_id), None)
         # 팀컬러 규칙: 클럽·국가는 11명 전원 그 소속 카드만, 시즌 단일(스페셜)은 11명을 노리되 발동 인원 이상
@@ -1183,7 +1200,6 @@ class Toolbox:
         season_rule = tc is not None and tc.category == "special"
         # 시즌 단일은 그 팀컬러 랭커가 적은 경우가 많아, 후보는 전체 랭커가 쓴 카드에서 그 시즌 카드를 찾는다
         usage_id = ALL_RANKERS if season_rule else tc_id
-        chem = self._chemistry(chemistry) if chemistry else None
         members = frozenset(p["pid"] for p in chem["players"]) if chem else frozenset()
         formation = normalize_formation(formation)
         source = "requested"
@@ -1328,6 +1344,8 @@ class Toolbox:
                 notes.append(f"{tc_name} 카드로 {count}명 (전원은 못 채움 — 발동 인원 {least}명 {'충족' if count >= least else '미달'})")
         if chem:
             need = reqs["chem"]
+            if derived:
+                out["team_color_from_chemistry"] = f"{chem['name']} 케미라 {tc_name} 팀컬러도 지킴 (11명 모두 그 소속)"
             inside = [c["entry"]["name"] for c in chosen if c and "chem" in c["tags"]]
             out["chemistry"] = {"team_color": chem["name"], "need": need, "players_in_lineup": inside,
                                 "active": len(inside) >= need, "levels": chem["levels"]}  # fmt: skip

@@ -107,6 +107,19 @@ class UsageStore:
         PipelineStore(conn)  # 입력 테이블(ranker_squad, match_player …)이 없을 때도 쿼리가 돌도록
         self.conn.executescript(SCHEMA)
 
+    def rebuild_if_roles_changed(self) -> bool:
+        """Rebuild every snapshot's usage once after market.roles.ROLES changes (e.g. RAM·LAM split from CAM), so older
+        snapshots and trends use the same roles as the newest. True when it rebuilt."""
+        self.conn.execute("CREATE TABLE IF NOT EXISTS usage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        current = json.dumps(ROLES, sort_keys=True)
+        row = self.conn.execute("SELECT value FROM usage_meta WHERE key = 'roles'").fetchone()
+        if row and row[0] == current:
+            return False
+        self.build_all()
+        self.conn.execute("INSERT OR REPLACE INTO usage_meta VALUES ('roles', ?)", (current,))
+        self.conn.commit()
+        return True
+
     def combos(self, data_as_of: str | None = None) -> list[tuple[str, str, int, str]]:
         """(data_as_of, mode, team_color_id, formation) that have at least one collected squad.
 

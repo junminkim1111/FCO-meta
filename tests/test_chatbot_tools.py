@@ -32,14 +32,14 @@ def test_normalize_formation(text, expected):
 
 def test_role_slots_from_matching_squads(db):  # noqa: F811
     # A·B만 실제 배치가 4-2-3-1 (D는 스냅샷만 4-2-3-1이고 4-4-2로 경기)
-    assert role_slots(db.conn, "4-2-3-1") == ({"GK": 1, "CB": 2, "RB": 1, "LB": 1, "DM": 2, "CAM": 3, "ST": 1}, 2)
+    assert role_slots(db.conn, "4-2-3-1") == ({"GK": 1, "CB": 2, "RB": 1, "LB": 1, "DM": 2, "CAM": 1, "RAM": 1, "LAM": 1, "ST": 1}, 2)
     assert role_slots(db.conn, "3-4-3") == ({}, 0)
 
 
 def test_recommend_squad_fills_every_slot_once(toolbox):  # noqa: F811
     r = run(toolbox, "recommend_squad", {"team_color": "아스날", "formation": "4231"})
     assert r["formation"] == "4-2-3-1" and r["formation_source"] == "requested" and r["sample_size"] == 3
-    assert [s["role"] for s in r["lineup"]] == ["GK", "CB", "CB", "RB", "LB", "DM", "DM", "CAM", "CAM", "CAM", "ST"]
+    assert [s["role"] for s in r["lineup"]] == ["GK", "CB", "CB", "RB", "LB", "DM", "DM", "CAM", "RAM", "LAM", "ST"]
     pids = [s["pid"] for s in r["lineup"]]
     assert len(set(pids)) == 11  # 같은 선수를 두 자리에 넣지 않음
     dms = [s for s in r["lineup"] if s["role"] == "DM"]
@@ -239,7 +239,7 @@ def test_recommend_players_role_group(toolbox):  # noqa: F811
     r = run(toolbox, "recommend_players", {"team_color": "아스널", "role": "측면미드필더"})
     assert (r["role"], r["positions"]) == ("RM+LM", [12, 16])
     assert [(p["pid"], p["rankers"]) for p in r["players"]] == [(12, 2), (16, 2)]  # C·D의 4-4-2
-    assert RuleBot(toolbox).parse("아스널 윙어 추천").role == "RW+LW"
+    assert RuleBot(toolbox).parse("아스널 윙어 추천").role == "RW+LW+RM+LM+RAM+LAM"  # 측면 미드·공미도 윙어
 
 
 def test_recommend_players_salary(toolbox):  # noqa: F811
@@ -477,3 +477,30 @@ def test_team_color_rules(toolbox):  # noqa: F811
     fits = toolbox._team_color_cards(TeamColor(id=1, name="Winning Streak", category="special", group_id=1))
     assert fits(848000009) and not fits(211000009)
     assert toolbox._team_color_cards(TeamColor(id=2, name="TOTY", category="special", group_id=2))(211000009)
+
+
+def test_season_chemistry_alone_keeps_its_club_team_color(toolbox):  # noqa: F811
+    # "21-22 롬바르디아 짜줘"처럼 케미만 오면 나머지 선수도 그 클럽 경력 카드로 (예전엔 다른 팀 선수가 섞였다)
+    toolbox.team_color_info = [{"name": "19-20 아스널", "type": "relation", "description": "",
+                                "levels": [{"level": 1, "players": 2, "effects": ["짧은 패스 +3"]}],
+                                "players": [{"pid": 9, "name": "볼란치R"}, {"pid": 11, "name": "볼란치L"}], "players_complete": True}]  # fmt: skip
+    r = run(toolbox, "recommend_squad", {"formation": "4-2-3-1", "chemistry": "19-20 아스널"})
+    assert r["team_color"] == "아스널" and "아스널 팀컬러도 지킴" in r["team_color_from_chemistry"]
+    assert r["chemistry"]["active"]
+    toolbox.team_color_info[0]["name"] = "아스널 중원 듀오"  # 시즌 없이 클럽 이름으로 시작해도 그 클럽
+    assert run(toolbox, "recommend_squad", {"formation": "4-2-3-1", "chemistry": "아스널 중원 듀오"})["team_color"] == "아스널"
+    toolbox.team_color_info[0]["name"] = "아버지와 아들"  # 클럽·국가 이름이 없으면 팀컬러를 추측하지 않는다
+    assert run(toolbox, "recommend_squad", {"formation": "4-2-3-1", "chemistry": "아버지와 아들"})["team_color"] == "전체 랭커"
+
+
+def test_usage_is_rebuilt_once_when_roles_change(db, monkeypatch):  # noqa: F811
+    import json as _json
+
+    import fco_meta.analytics.usage as usage
+
+    store = usage.UsageStore(db.conn)
+    calls = []
+    monkeypatch.setattr(store, "build_all", lambda *a: calls.append(a) or [])
+    assert store.rebuild_if_roles_changed() and not store.rebuild_if_roles_changed()  # 처음 한 번만 (지난 스냅샷 포함 전부)
+    db.conn.execute("UPDATE usage_meta SET value = ? WHERE key = 'roles'", (_json.dumps({"CAM": [17, 18, 19]}),))
+    assert store.rebuild_if_roles_changed() and calls == [(), ()]  # 역할 구분이 바뀌면 다시

@@ -17,7 +17,9 @@ ROLES: dict[str, tuple[int, ...]] = {
     "LWB": (8,),
     "DM": (9, 10, 11),  # RDM, CDM, LDM
     "CM": (13, 14, 15),  # RCM, CM, LCM
-    "CAM": (17, 18, 19),  # RAM, CAM, LAM
+    "CAM": (18,),
+    "RAM": (17,),  # 오른쪽·왼쪽 공미는 측면 자원이라 CAM과 따로 센다 (윙어 묶음에 들어간다)
+    "LAM": (19,),
     "RM": (12,),
     "LM": (16,),
     "RW": (23,),
@@ -71,9 +73,9 @@ ROLE_ALIASES: dict[str, str] = {
 
 # 여러 역할을 묶어 부르는 말 → 역할들 (챗봇에서 한 번에 조회)
 ROLE_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
-    "윙어": ("RW", "LW"),
-    "윙": ("RW", "LW"),
-    "측면공격수": ("RW", "LW"),
+    "윙어": ("RW", "LW", "RM", "LM", "RAM", "LAM"),
+    "윙": ("RW", "LW", "RM", "LM", "RAM", "LAM"),
+    "측면공격수": ("RW", "LW", "RAM", "LAM"),
     "공격수": ("ST", "CF", "RW", "LW"),
     "포워드": ("ST", "CF", "RW", "LW"),
     "fw": ("ST", "CF", "RW", "LW"),
@@ -82,8 +84,8 @@ ROLE_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
     "윙백": ("RWB", "LWB"),
     "측면미드필더": ("RM", "LM"),
     "사이드미드필더": ("RM", "LM"),
-    "미드필더": ("DM", "CM", "CAM", "RM", "LM"),
-    "mf": ("DM", "CM", "CAM", "RM", "LM"),
+    "미드필더": ("DM", "CM", "CAM", "RAM", "LAM", "RM", "LM"),
+    "mf": ("DM", "CM", "CAM", "RAM", "LAM", "RM", "LM"),
     "수비수": ("CB", "RB", "LB", "RWB", "LWB"),
     "df": ("CB", "RB", "LB", "RWB", "LWB"),
 }

@@ -210,7 +210,10 @@ def run_daily(
         report.api_calls = budget.used_this_run
 
         # 6. 집계
-        report.usage_rows = sum(n for _, n in UsageStore(storage.conn).build_all(report.data_as_of))
+        usage = UsageStore(storage.conn)
+        if usage.rebuild_if_roles_changed():  # 역할 구분이 바뀌면 지난 스냅샷까지 한 번 다시 집계 (동향 비교가 같은 기준이 되게)
+            log.info("roles changed: rebuilt usage for every snapshot")
+        report.usage_rows = sum(n for _, n in usage.build_all(report.data_as_of))
 
         # 7. 많이 쓰이는 선수 시세 (데이터센터, 넥슨 API 한도와 무관)
         if price_players > 0:

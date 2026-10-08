@@ -85,7 +85,7 @@ def test_resolve_unknown_role():
 
 @pytest.mark.parametrize(
     "text,roles",
-    [("윙어", ("RW", "LW")), ("공격수", ("ST", "CF", "RW", "LW")), ("볼란치", ("DM",)), ("RW, LW", ("RW", "LW")),
+    [("윙어", ("RW", "LW", "RM", "LM", "RAM", "LAM")), ("공격수", ("ST", "CF", "RW", "LW")), ("볼란치", ("DM",)), ("RW, LW", ("RW", "LW")),
      ("rw+lw+rw", ("RW", "LW")), ("리베로", None), ("RW,리베로", None)],
 )  # fmt: skip
 def test_resolve_roles(text, roles):
