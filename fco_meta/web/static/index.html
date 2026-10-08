@@ -20,7 +20,7 @@
     --on-text: #0b0b0d; --strong: #fff; --error: #ff8a8a; --field: rgba(0, 0, 0, .35); --tip-bg: #16161a; --code-bg: #0f0f12;
     --pitch-1: #11151c; --pitch-2: #0e1218; --pitch-glow: rgba(99, 102, 241, .18); --pitch-line: rgba(255, 255, 255, .16);
     --pitch-name: var(--text); --ph-bg: #1a1d24; --name-shadow: 0 1px 3px rgba(0, 0, 0, .9); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
-    --radius: 16px;
+    --radius: 16px; --pick: #4ade80; /* /compare에서 고를 답 테두리 */
   }
   * { box-sizing: border-box; }
   body { margin: 0; color: var(--text); min-height: 100vh; background: var(--bg);
@@ -225,7 +225,19 @@
   .msg.note { color: var(--muted); font-size: 13px; }
   .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/deep·/compare) */
-  .pane .pick { align-self: flex-start; padding: 6px 14px; font-size: 13px; }
+  /* 세 칸이 다 끝나면 답 위에 커서를 올리면 초록 테두리, 두 번 누르면 고르기 */
+  .pane.selectable { cursor: pointer; touch-action: manipulation; transition: border-color .15s, box-shadow .15s, opacity .25s; }
+  .pane.selectable:hover, .pane.selectable:focus-visible { border-color: var(--pick); box-shadow: 0 0 0 1px var(--pick); outline: none; }
+  .pane.gone { opacity: 0; }
+  #pick-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
+  #pick-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  #pick-dialog p { margin: 0 0 14px; font-size: 14px; }
+  #pick-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+  #pick-dialog button { padding: 6px 14px; }
+  #pick-dialog .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
+  #compare-note { display: none; color: var(--muted); font-size: 13px; font-weight: 400; }
+  #chat.comparing #compare-note { display: inline; }
+  #chat.comparing #chat-title > .stat { display: none; }
   /* /admin --l: 모델 선택·생각·도구 결과를 답 위에 */
   .trace { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
            display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
@@ -300,9 +312,11 @@
   <div class="side">
   <p id="asof">데이터 불러오는 중…</p>
   <section id="chat" aria-labelledby="chat-title">
-    <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span><button type="button" id="compare-close">비교 닫기</button></h2>
+    <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span><span id="compare-note">해당 질문, 답변과 선택은 모델 개선을 위해 쓰일 수 있습니다.</span><button type="button" id="compare-close">비교 닫기</button></h2>
     <div id="log" aria-live="polite"></div>
     <div id="compare" hidden></div>
+    <dialog id="pick-dialog"><form method="dialog"><p>이 답변을 선택할까요? 다른 답변은 사라지고 이 답변으로 대화를 이어 갑니다.</p>
+      <div class="row"><button value="no">취소</button><button value="yes" class="yes">선택</button></div></form></dialog>
     <form id="chat-form">
       <div id="msg-beam"><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button></div>
     </form>
@@ -806,19 +820,21 @@ function command(text) {
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
   if (cmd === "/compare" && !flags.length) {
-    note("/compare 적용: 다음 질문을 Gemini 3.5 Flash·DeepSeek 생각 켬·끔이 동시에 답합니다. 마음에 드는 답을 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
+    note("/compare 적용: 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답합니다. 마음에 드는 답을 두 번 눌러 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
     return openCompare();
   }
   $("log").append(el("div", { class: "msg bot note" }, el("em", { text: "invalid command." })));
   $("log").scrollTop = $("log").scrollHeight;
 }
 
-const PANES = [["flash", "Gemini 3.5 Flash"], ["deep_r", "DeepSeek 생각 켬"], ["deep", "DeepSeek 생각 끔"]];
+// 모델 이름은 가리고 칸 순서도 비교마다 섞는다 (어느 모델인지는 /admin 기록에만)
+const PANE_KEYS = ["flash", "deep_r", "deep"];
+const shuffled = () => PANE_KEYS.map((k) => [Math.random(), k]).sort((a, b) => a[0] - b[0]).map(([, k]) => k);
 function openCompare() {
   compareArmed = true;
   $("chat").classList.add("comparing");
   $("compare").hidden = false;
-  $("compare").replaceChildren(...PANES.map(([, label]) => el("section", { class: "pane" }, el("h3", { text: label }),
+  $("compare").replaceChildren(...["A", "B", "C"].map((letter) => el("section", { class: "pane" }, el("h3", { text: `답변 ${letter}` }),
     el("div", { class: "body" }, el("p", { class: "caption", text: "질문을 입력하면 세 모델이 동시에 답합니다. (1시간에 2번)" })))));
   $("msg").focus();
 }
@@ -832,35 +848,48 @@ $("compare-close").addEventListener("click", closeCompare);
 
 // /compare 다음 질문: 세 칸이 같은 질문에 동시에 답한다 (/api/compare, 이벤트마다 pane)
 let compareId = null;
-// 비교에서 고른 답: 서버가 그 질문·답을 대화에 남기고(이어지는 질문의 맥락), 화면은 원래 채팅으로 돌아가 그 답을 보여 준다
-function choiceButton(p, question) {
-  const b = el("button", { type: "button", class: "pick", text: "이 답 선택" });
-  b.addEventListener("click", async () => {
-    b.disabled = true;
+// 비교에서 고른 답: 커서를 올리면 초록 테두리, 두 번 누르면(키보드는 Enter) 확인 창. 고르면 다른 답은 사라지고,
+// 서버가 그 질문·답을 대화에 남기며(이어지는 질문의 맥락) 화면은 일반 채팅에서 답한 것처럼 돌아간다
+function makeSelectable(p, question, all) {
+  p.section.classList.add("selectable");
+  p.section.tabIndex = 0;
+  p.section.setAttribute("aria-label", `${p.title} — 두 번 누르면 이 답을 고릅니다`);
+  const ask = async () => {
+    if (!$("chat").classList.contains("comparing")) return;
+    const dialog = $("pick-dialog");
+    dialog.returnValue = "";
+    dialog.showModal();
+    await new Promise((done) => dialog.addEventListener("close", done, { once: true }));
+    if (dialog.returnValue !== "yes") return;
     const res = await fetch("/api/compare/choice", { method: "POST", headers: { "Content-Type": "application/json" },
                                                      body: JSON.stringify({ compare_id: compareId, pane: p.key }) }).catch(() => null);
-    if (!res || !res.ok) { b.disabled = false; b.textContent = "고르지 못했어요. 다시 눌러 주세요"; return; }
-    closeCompare();
-    say("me", question);
-    const bubble = el("div", { class: "msg bot" });
-    renderMarkdown(bubble, p.text);
-    $("log").append(bubble, el("div", { class: "applied", text: `/compare 적용: ${p.label}의 답을 골랐습니다` }));
-    $("log").scrollTop = $("log").scrollHeight;
-  });
-  return b;
+    if (!res || !res.ok) { p.answer.prepend(el("p", { class: "admin-note", text: "고르지 못했어요. 다시 두 번 눌러 주세요." })); return; }
+    for (const other of all) if (other !== p) other.section.classList.add("gone");
+    setTimeout(() => {
+      closeCompare();
+      say("me", question);
+      const bubble = el("div", { class: "msg bot" });
+      renderMarkdown(bubble, p.text);
+      $("log").append(bubble);
+      $("log").scrollTop = $("log").scrollHeight;
+    }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280);
+  };
+  p.section.addEventListener("dblclick", ask);
+  p.section.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === p.section) ask(); });
 }
 async function sendCompare(text) {
   compareArmed = false;
   const ctrl = new AbortController();
   setBusy(ctrl);
   const panes = {}, started = performance.now();
-  $("compare").replaceChildren(...PANES.map(([key, label]) => {
-    const stat = el("span", { class: "stat", text: "" }), body = el("div", { class: "body" });
+  $("compare").replaceChildren(...shuffled().map((key, i) => {
+    const title = `답변 ${"ABC"[i]}`, stat = el("span", { class: "stat", text: "" }), body = el("div", { class: "body" });
     const trace = traceKey ? traceBox() : null, answer = el("div", { class: "msg bot" });
     body.append(el("div", { class: "msg me", text }), ...(trace ? [trace] : []), answer);
     answer.append(el("span", { class: "shimmer", text: THINKING }));
-    panes[key] = { key, label, stat, body, trace, answer, text: "" };
-    return el("section", { class: "pane" }, el("h3", {}, el("span", { text: label }), stat), body);
+    const section = el("section", { class: "pane" }, el("h3", {}, el("span", { text: title }), stat), body);
+    panes[key] = { key, title, section, stat, body, trace, answer, text: "" };
+    return section;
   }));
   try {
     const res = await fetch("/api/compare", { method: "POST", headers: headers(), signal: ctrl.signal,
@@ -876,7 +905,10 @@ async function sendCompare(text) {
       for (const line of lines) {
         const ev = JSON.parse(line), p = panes[ev.pane];
         if (ev.type === "start") { sessionId = ev.session_id ?? sessionId; compareId = ev.compare_id; }
-        if (ev.type === "all_done") for (const q of Object.values(panes)) if (q.ok && q.text) q.body.append(choiceButton(q, text)); // 세 칸이 다 끝나면 고를 수 있다
+        if (ev.type === "all_done") { // 세 칸이 다 끝나면 고를 수 있다
+          const all = Object.values(panes);
+          for (const q of all) if (q.ok && q.text) makeSelectable(q, text, all);
+        }
         if (!p) continue;
         if (p.trace && (ev.type === "trace" || ev.type === "tool")) addTrace(p.trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
         if (ev.type === "delta") { p.text += ev.text; renderMarkdown(p.answer, p.text); }
