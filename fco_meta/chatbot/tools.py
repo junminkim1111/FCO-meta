@@ -1892,7 +1892,7 @@ class Toolbox:
             if sq.derived:
                 out["team_color_from_chemistry"] = f"{chem['name']} 케미라 {tc_name} 팀컬러도 지킴 (11명 모두 그 소속)"
             inside = [c["entry"]["name"] for c in chosen if c and "chem" in c["tags"]]
-            out["chemistry"] = {"team_color": chem["name"], "need": need, "players_in_lineup": inside,
+            out["chemistry"] = {"team_color": chem["name"], "need": need, "players_in_lineup": inside, "count": len(inside),
                                 "active": len(inside) >= need, "levels": chem["levels"]}  # fmt: skip
             if len(inside) < need:
                 notes.append(f"케미 발동 인원 {need}명 중 {len(inside)}명만 넣음 (명단 선수 중 이 범위 랭커들이 그 자리에 쓴 선수가 부족하거나 급여·예산 한도 때문)")
