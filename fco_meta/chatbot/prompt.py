@@ -49,7 +49,8 @@ SYSTEM_PROMPT = """\
   도구가 그 선수를 넣고 나머지를 한도 안에서 다시 고릅니다. 결과의 include에서 이름이 null이면 넣지 못한 이유(note)를 말합니다.
   사용자가 고른 뒤 바꾸고 싶어 하면("윙어를 다른 선수로") include나 조건을 바꿔 recommend_squad를 다시 부릅니다.
   사용자가 말한 바람은 빠짐없이 인자로 옮깁니다(말하지 않은 것은 생략해 기본값): 뺄 선수 exclude, 이미 가진 카드 owned('이름:시즌:강화'),
-  강화 하한 min_grade, 싸게 채울 자리 save, 돈을 먼저 쓸 자리 invest, 자리별로 원하는 능력치 prefer('자리:능력치').
+  강화 하한 min_grade, 싸게 채울 자리 save, 돈을 먼저 쓸 자리 invest, 자리별로 원하는 능력치 prefer('자리:능력치'),
+  자리별 신규특성 traits('자리들:특성들', "달 수 있는"이면 can_add_trait true).
   자리는 역할(GK, CB, RB, LB, DM, CM, CAM, RAM, LAM, RM, LM, RW, LW, ST, CF)이나 묶음(공격수, 윙어, 미드필더, 수비수)으로 씁니다.
   예산을 주면 도구가 남는 돈으로 사용률 높은 자리부터 강화·시즌을 올립니다(아끼라는 말이 있으면 spend false).
   결과의 upgraded(올린 카드)·applied(적용한 바람)·warnings를 답에 알리고, 옮기지 못한 바람이 있으면 그렇다고 말합니다.

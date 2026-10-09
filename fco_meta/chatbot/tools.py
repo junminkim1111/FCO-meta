@@ -707,6 +707,10 @@ _KNOBS = {
                "예산이 모자라면 이 자리는 덜 낮추고, 남으면 이 자리만 올린다"},
     "prefer": {"type": "string", "description": "자리별로 원하는 능력치 '자리:능력치', 쉼표로 (예: 'ST:키', 'RW:속력,LW:속력'). "
                "그 자리는 이 능력치가 높은 선수 우선 (사용률도 일부 반영)"},
+    "traits": {"type": "string", "description": "자리별 신규특성 조건 '자리들:특성들', 묶음이 여럿이면 ; (예: 'RAM,LAM,ST:라인 브레이커,트릭스터', "
+               "'CB:파이터'). 자리를 빼면 모든 자리. 그 자리는 조건에 맞는 카드만"},
+    "can_add_trait": {"type": "boolean", "description": "traits를 '달 수 있는' 카드까지 (원래 가진 카드 + 하나가 모자라 8강 이상에서 "
+                      "새로 다는 카드, 그 강화 시세로). '달린'이면 false"},
     "spend": {"type": "boolean", "description": "예산(max_total_price_bp)이 남으면 사용률 높은 자리부터 강화·시즌을 올려 쓴다 "
               "(기본 true, 아끼라고 하면 false). 결과의 upgraded에 올린 내역"},
 }  # fmt: skip
@@ -1316,8 +1320,10 @@ class Toolbox:
         invest: str | None = None,
         prefer: str | None = None,
         spend: bool | None = None,
+        traits: str | None = None,
+        can_add_trait: bool = False,
     ) -> dict[str, Any]:
-        knobs = self._squad_knobs(exclude, owned, min_grade, save, invest, prefer)
+        knobs = self._squad_knobs(exclude, owned, min_grade, save, invest, prefer, traits, can_add_trait)
         sq = self._squad_setup(
             team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs
         )
@@ -1333,7 +1339,7 @@ class Toolbox:
             out["applied"] = {k: sorted(v) if isinstance(v, set) else v for k, v in knobs.items()}
         return out
 
-    def _squad_knobs(self, exclude, owned, min_grade, save, invest, prefer) -> dict[str, Any]:
+    def _squad_knobs(self, exclude, owned, min_grade, save, invest, prefer, traits=None, can_add_trait=False) -> dict[str, Any]:
         """The user's own squad wishes as recommend_squad arguments → what _squad_setup and _spend apply."""
 
         def names(text: str) -> list[str]:
@@ -1372,6 +1378,15 @@ class Toolbox:
                     raise ToolError(f"알 수 없는 능력치: {stat_text.strip()} (예: 키, 속력, 몸싸움, 골 결정력)")
                 pref.update(dict.fromkeys(self._roles(role_text.strip()), stat))
             knobs["prefer"] = pref
+        if traits:  # "RAM,LAM,ST:라브,트릭; CB:파이터" (자리를 안 쓰면 모든 자리)
+            rule = {}
+            for part in traits.split(";"):
+                if part.strip():
+                    role_text, _, trait_text = part.rpartition(":")
+                    rule.update(dict.fromkeys(roles(role_text) if role_text.strip() else ["*"], parse_traits(trait_text)))
+            knobs["traits"] = rule
+            if can_add_trait:
+                knobs["can_add_trait"] = True
         return knobs
 
     def _spend(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]):
@@ -1617,6 +1632,15 @@ class Toolbox:
             out["owned"] = {"players": owned, "note": "이미 가진 카드라 총액·남은 예산에서 시세를 뺌"}
         return {"ok": not problems, "problems": problems, **out}
 
+    @staticmethod
+    def _trait_card(card: dict[str, Any]) -> dict[str, Any]:
+        """A card that needs a new trait added: counted at the grade that allows it (8강+), like any other grade."""
+        if "price_for_traits" not in card:
+            return card
+        price = card.pop("price_for_traits")
+        return {**card, "most_used_grade": price["grade"] if price else max(card["most_used_grade"] or 0, ADD_TRAIT_GRADE),
+                "price_at_most_used_grade": price}  # fmt: skip
+
     def _owned_cards(self, pid: int, season: str, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
         """A card the user owns that rankers did not use there: looked up among all collected cards of the player."""
         cards = []
@@ -1746,6 +1770,10 @@ class Toolbox:
                     options += [{"entry": entry, "card": c, "price": 0, "salary": c["salary"], "tags": tags, "owned": True,
                                  **({"owned_note": note} if note else {})} for c in cards[:1]]  # fmt: skip
                     continue
+                if wanted_traits := knobs.get("traits", {}).get(role) or knobs.get("traits", {}).get("*"):
+                    cards = [self._trait_card(c) for c in cards if self._with_traits(c, wanted_traits, knobs.get("can_add_trait", False))]
+                    if not cards:
+                        continue
                 cards = _common_cards(cards, entry["rankers"], keep=lambda c: season_rule and fits(c["sp_id"]))
                 if knobs.get("min_grade"):  # 이 강화 이상: 덜 강화해 쓴 카드는 그 강화 시세로
                     g = knobs["min_grade"]
@@ -1790,7 +1818,7 @@ class Toolbox:
                 **({"owned": True} if c.get("owned") else {}),
                 "role": role, "player": e["name"], "pid": e["pid"], "rankers": e["rankers"], "usage_rate": e["usage_rate"],
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
-                                              "price_at_most_used_grade", "salary")},
+                                              "price_at_most_used_grade", "salary", "new_traits", "added_trait") if k in card},
             })  # fmt: skip
         picked = {c["entry"]["pid"] for c in chosen if c}
         alternatives: dict[str, list[dict[str, Any]]] = {}

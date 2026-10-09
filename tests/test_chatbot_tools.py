@@ -607,3 +607,18 @@ def test_squad_knobs_turn_wishes_into_the_search(toolbox):  # noqa: F811
     assert {s["card"]["most_used_grade"] for s in r["lineup"]} == {8}
     # 모르는 능력치는 도구 오류 (모델이 고쳐 다시 부른다)
     assert toolbox.run("recommend_squad", {**args, "prefer": "DM:없는능력치"})[1] is True
+
+
+def test_squad_trait_knob_keeps_only_cards_with_the_traits(toolbox):  # noqa: F811
+    # 볼란치L ICON만 트릭스터가 달려 있다. 라브까지 "달 수 있는"이면 8강 이상에서 하나를 새로 단다
+    toolbox.conn.execute("UPDATE card_detail SET traits = '[\"트릭스터\"]' WHERE spid = 101000011")
+    toolbox.conn.execute("INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (101000011, 8, 2000000000, 'x')")
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM"}
+    r = run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭"})
+    assert [(s["player"], s["card"]["new_traits"]) for s in r["lineup"]] == [("볼란치L", ["트릭스터"])]
+    r = run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭,라브", "can_add_trait": True})
+    card = r["lineup"][0]["card"]
+    assert card["added_trait"] == "라인 브레이커" and card["most_used_grade"] == 8 and r["total_price"] == "20억"
+    # 달 수 없으면 그 자리를 채우지 못한다
+    assert run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭,라브"})["lineup"][0]["player"] is None
