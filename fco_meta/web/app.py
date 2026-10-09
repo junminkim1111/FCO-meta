@@ -673,7 +673,7 @@ def create_app(
                 raise HTTPException(status_code=429, detail=f"팀 불러오기는 1시간에 {TEAM_PER_HOUR}번까지 할 수 있어요.")
             try:
                 with team_lock, closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as team_db:
-                    team = fetch_team(_nexon(), team_db, nickname)
+                    team = fetch_team(_nexon(), team_db, nickname, catalog=toolbox.catalog, team_color_info=toolbox.team_color_info)
             except TeamNotFound as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from None
             except Exception as exc:  # 넥슨 API 혼잡·점검·하루 호출 예산

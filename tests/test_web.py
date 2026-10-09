@@ -610,7 +610,7 @@ def test_attached_team_goes_ahead_of_each_question_until_removed(db, tmp_path, m
                 [{"role": "ST", "player": "공격수", "season": "UC", "grade": 8, "salary": 30, "price": "5억", "price_bp": 5}],
                 totals={"salary": 30, "price": "5억", "price_bp": 5, "unpriced": 0})  # fmt: skip
 
-    def fake_fetch(api, conn, nickname):
+    def fake_fetch(api, conn, nickname, **_):
         if nickname != "레몬":
             raise TeamNotFound("이 닉네임의 유저를 찾지 못했어요.")
         return team

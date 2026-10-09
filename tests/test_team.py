@@ -55,6 +55,7 @@ def conn():
         CREATE TABLE ranker_squad (ouid TEXT, match_id TEXT, match_order INTEGER);
         CREATE TABLE match (match_id TEXT, match_date TEXT);
         CREATE TABLE match_player (match_id TEXT, ouid TEXT, sp_id INTEGER, sp_position INTEGER, sp_grade INTEGER);
+        CREATE TABLE card_detail (spid INTEGER, clubs TEXT, nation TEXT);
         INSERT INTO meta_spid VALUES (101000001, '골키퍼'), (101000002, '공격수'), (101000003, '교체');
         INSERT INTO meta_season VALUES (101, 'UC (Ultimate Champions)');
         INSERT INTO card VALUES (101000001, 15), (101000002, 30);
@@ -73,7 +74,8 @@ def test_newest_official_or_friendly_starting_eleven(conn):
     assert [(p["role"], p["player"], p["season"], p["grade"]) for p in team.lineup] == [("GK", "골키퍼", "UC", 5), ("ST", "공격수", "UC", 8)]
     assert team.totals == {"salary": 45, "price": "5억", "price_bp": 500000000, "unpriced": 1}
     block = team.for_model()
-    assert block.startswith("[사용자 팀: @레몬 · 공식 친선 2026-10-09") and "ST 공격수 (UC, 8강, 급여 30, 5억)" in block
+    assert block.startswith("[사용자 팀: @레몬 · ") and "공식" not in block.splitlines()[0] and "2026" not in block  # 경기 종류·날짜는 안 보낸다
+    assert "팀컬러: 알 수 없음" in block and "ST 공격수 (UC, 8강, 급여 30, 5억)" in block
     assert "교체" not in block and api.calls == ["id", "match50", "match60", "match30", "detail"]
 
 
@@ -91,3 +93,20 @@ def test_old_match_ranker_squad_and_errors(conn):
     conn.execute("DELETE FROM ranker_squad")
     with pytest.raises(TeamNotFound, match="경기 기록이 없어"):
         fetch_team(FakeApi({}), conn, "레몬", now=NOW)
+
+
+def test_team_colors_from_club_careers_nations_seasons_and_chemistry(conn):
+    from types import SimpleNamespace
+
+    catalog = SimpleNamespace(entries=[SimpleNamespace(name="FC 바르셀로나", category="club"),
+                                       SimpleNamespace(name="스페인", category="nationality")])  # fmt: skip
+    xi = [(101000000 + i, 25, 8) for i in range(1, 12)]
+    for sp_id, _, _ in xi:  # 11명 모두 바르셀로나 경력, 그중 4명만 스페인 (5명 미만은 알리지 않음)
+        conn.execute("INSERT INTO card_detail VALUES (?, ?, ?)",
+                     (sp_id, '[{"club": "FC 바르셀로나"}, {"club": "기타"}]', "스페인" if sp_id % 3 == 0 else "브라질"))  # fmt: skip
+    info = [{"type": "special", "name": "Ultimate Champions", "levels": [{"players": 3}]},
+            {"type": "relation", "name": "황금 세대", "levels": [{"players": 2}], "players": [{"pid": 1}, {"pid": 2}, {"pid": 99}]}]  # fmt: skip
+    team = fetch_team(FakeApi({50: (NOW, xi)}), conn, "레몬", now=NOW, catalog=catalog, team_color_info=info)
+    # 팀컬러는 가장 많이 겹치는 하나만 (같은 11명이면 클럽 쪽), 케미는 발동한 것을 덧붙인다
+    assert team.colors == ["FC 바르셀로나 11명", "황금 세대 케미 2명"]
+    assert "팀컬러: FC 바르셀로나 11명, 황금 세대 케미 2명" in team.for_model()
