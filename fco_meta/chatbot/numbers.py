@@ -15,6 +15,22 @@ _PERCENT_RE = re.compile(r"(?<![\d,.])([+-]?\d[\d,]*(?:\.\d+)?)\s*%")
 _MONEY_RE = re.compile(r"\d[\d,.]*\s*(?:조|억|만)(?:\s*\d[\d,.]*\s*(?:억|만))*")
 _COUNT_RE = re.compile(r"(?<![\d,.])(\d[\d,]*)\s*명")
 _PLAIN_RE = re.compile(r"\d+(?:\.\d+)?")
+_MONEY_PART_RE = re.compile(r"(\d[\d,.]*)\s*(조|억|만)")
+_UNIT = {"조": 1e12, "억": 1e8, "만": 1e4}
+
+
+def _last_digit(number: str) -> float:
+    """Place value of the last digit written: "81" → 1, "3.7" → 0.1, "6,600" → 1."""
+    _, _, decimals = number.replace(",", "").partition(".")
+    return 10.0 ** -len(decimals)
+
+
+def _money_tolerance(text: str, bp: float) -> float:
+    """How far a written amount may be from a result and still be that result rounded or cut ("약 81억" for 81억 6,600만):
+    one unit of its last digit ("81억" ±1억, "3.7억" ±0.1억, "81억 6,600만" ±1만), and never less than 0.5%."""
+    parts = _MONEY_PART_RE.findall(text)
+    unit = _last_digit(parts[-1][0]) * _UNIT[parts[-1][1]] if parts else 1
+    return max(unit, bp * 0.005, 1)
 
 
 def _numbers(value: Any, out: set[float]) -> set[float]:
@@ -49,15 +65,17 @@ def unsupported_numbers(answer: str, results: list[Any], question: str = "") -> 
     missing = []
     for m in _PERCENT_RE.finditer(text):
         v = abs(float(m.group(1).replace(",", "")))
-        # 비율(0.948) 또는 이미 %인 값(94.88)을 반올림해 쓴 것도 결과에 있는 값
-        if not any(abs(v - r) <= 0.051 for r in rates) and not any(abs(v - k) <= 0.051 for k in known if 1 < k <= 100):
+        # 비율(0.948) 또는 이미 %인 값(94.88)을 쓴 자리수로 반올림한 것도 결과에 있는 값 ("33%" ±0.5%p, "32.8%" ±0.05%p)
+        tol = _last_digit(m.group(1)) / 2 + 0.001
+        if not any(abs(v - r) <= tol for r in rates) and not any(abs(v - k) <= tol for k in known if 1 < k <= 100):
             missing.append(m.group(0))
     for m in _MONEY_RE.finditer(text):
         try:
             bp = parse_bp(m.group(0))
         except ValueError:
             continue
-        if not any(abs(bp - k) <= max(k * 0.005, 1) for k in known if k >= 10_000) and bp not in asked:
+        tol = _money_tolerance(m.group(0), bp)
+        if not any(abs(bp - k) <= tol for k in known if k >= 10_000) and bp not in asked:
             missing.append(m.group(0).strip())
     for m in _COUNT_RE.finditer(text):
         n = float(m.group(1).replace(",", ""))

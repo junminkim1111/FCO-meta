@@ -178,6 +178,12 @@ def test_unsupported_numbers_flags_made_up_figures():
     assert unsupported_numbers("9,996명 중 1,718명, 패스 성공률 94.9%", results) == []
     assert unsupported_numbers("9,996명 중 2,718명", results) == ["2,718명"]
 
+    # 편의상 반올림한 값은 통과 (쓴 자리 한 단위까지), 결과에 없는 합계·새 비율은 그대로 걸린다
+    results = [{"total_price": "81억 6,600만", "price": "3억 6,800만", "usage_rate": 0.328}]
+    assert unsupported_numbers("총액 약 81억, 시세 3.7억, 사용률 33%", results) == []
+    assert unsupported_numbers("총액 81.7억, 사용률 32.8%", results) == []
+    assert unsupported_numbers("두 선수 합 85억 4,600만, 사용률 41%, 시세 3.5억", results) == ["41%", "85억 4,600만", "3.5억"]
+
 
 def test_evaluate_cli_rules(db, tmp_path, capsys):  # noqa: F811
     from fco_meta.chatbot.evaluate import main

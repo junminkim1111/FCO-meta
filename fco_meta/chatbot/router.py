@@ -79,7 +79,9 @@ def classify(http: Any, question: str, previous: str | None = None, timeout: flo
     probs = {name: answers[name]["probabilities"] for name in QUESTIONS}
     outside = probs["scope"].get("off_topic", 0) + probs["scope"].get("attack", 0)
     return Route(
-        scope=answers["scope"]["choice"], blocked=outside >= BLOCK_AT, heavy=probs["effort"].get("heavy", 0) >= HEAVY_AT,
+        scope=answers["scope"]["choice"], blocked=outside >= BLOCK_AT,
+        # 어려움은 FC온라인 질문일 때만 (인사·감사는 이전 질문이 어려웠어도 가볍다)
+        heavy=answers["scope"]["choice"] == "fco" and probs["effort"].get("heavy", 0) >= HEAVY_AT,
         probabilities=probs, ms=round((time.monotonic() - started) * 1000),
     )  # fmt: skip
 
