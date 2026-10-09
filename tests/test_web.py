@@ -24,15 +24,20 @@ def ask(client, message, session_id=None):
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    """Jev·DeepSeek은 테스트에서 가짜로만 (OpenRouter 키가 있어도 실제 API를 부르지 않게)."""
+    """Jev·DeepSeek·넥슨 API는 테스트에서 가짜로만 (.env에 키가 있어도 실제 API를 부르지 않게)."""
     import fco_meta.web.app as web_app
 
     class Offline:
         def post(self, *a, **k):
             raise ConnectionError("no network in tests")
 
+    def no_nexon():
+        raise ConnectionError("no NEXON Open API in tests")
+
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("NEXON_API_KEY", raising=False)
     monkeypatch.setattr(web_app, "_http", lambda: Offline())
+    monkeypatch.setattr(web_app, "_nexon", no_nexon)
 
 
 @pytest.fixture
@@ -588,3 +593,39 @@ def test_failed_flash_question_is_answered_by_deepseek_from_scratch(db, tmp_path
     kinds = [e.get("kind") or e["type"] for e in events]
     assert kinds.index("reset") > kinds.index("fallback")  # 쓰다 만 글은 지우고
     assert "".join(e["text"] for e in events[kinds.index("reset"):] if e["type"] == "delta") == "deepFalse 답"
+
+
+def test_attached_team_goes_ahead_of_each_question_until_removed(db, tmp_path, monkeypatch):  # noqa: F811
+    from datetime import datetime, timezone
+
+    import fco_meta.web.app as web_app
+    from fco_meta.web.team import Team, TeamNotFound
+
+    asked = []
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: Recorder("gemini", asked))
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret"))
+    assert client.post("/api/team", json={"nickname": "레몬"}).status_code == 503  # 서버에 넥슨 키가 없으면
+
+    team = Team("레몬", "공식경기", datetime(2026, 10, 9, tzinfo=timezone.utc), "4-2-3-1",
+                [{"role": "ST", "player": "공격수", "season": "UC", "grade": 8, "salary": 30, "price": "5억", "price_bp": 5}],
+                totals={"salary": 30, "price": "5억", "price_bp": 5, "unpriced": 0})  # fmt: skip
+
+    def fake_fetch(api, conn, nickname):
+        if nickname != "레몬":
+            raise TeamNotFound("이 닉네임의 유저를 찾지 못했어요.")
+        return team
+
+    monkeypatch.setenv("NEXON_API_KEY", "test")
+    monkeypatch.setattr(web_app, "_nexon", lambda: None)
+    monkeypatch.setattr(web_app, "fetch_team", fake_fetch)
+    res = client.post("/api/team", json={"nickname": "없는사람"})
+    assert res.status_code == 404 and "찾지 못했어요" in res.json()["detail"]
+    got = client.post("/api/team", json={"nickname": "레몬"}).json()
+    sid = got["session_id"]
+    assert got["label"] == "10-09 공식경기 · 4-2-3-1 · 선발 1명"
+    ask(client, "내 팀 업그레이드 추천해줘", session_id=sid)
+    ask(client, "그럼 더 싼 걸로", session_id=sid)
+    assert all(q.startswith("[사용자 팀: @레몬") and q.endswith(m) for (_, q, _), m in zip(asked, ["추천해줘", "싼 걸로"]))
+    assert client.delete("/api/team", params={"session_id": sid}).json() == {"ok": True}
+    ask(client, "볼란치 추천", session_id=sid)
+    assert asked[-1][1] == "볼란치 추천"  # 떼면 질문만

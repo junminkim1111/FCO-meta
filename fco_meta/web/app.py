@@ -14,6 +14,7 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -29,6 +30,7 @@ from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 from .chatlog import ChatLog
+from .team import Team, TeamNotFound, fetch_team
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,8 @@ FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash
 DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"  # /deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
 LONG_DEADLINE = 300.0  # /deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
+TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
+TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
 # 스쿼드 구성·복잡한 질문에 자주 나오는 말 (띄어쓰기 무시) → 처음부터 3.5 Flash
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
 DEEP_LABEL = {"deep": "DeepSeek V4 Pro 생각 끔", "deep_r": "DeepSeek V4 Pro 생각 켬"}
@@ -155,6 +159,12 @@ class _Session:
         self.lock = threading.Lock()  # 같은 대화의 질문은 차례로
         self.history: list[tuple[str, str]] = []
         self.bots: dict[str, list[Any]] = {}  # key → [chat, history 중 이 chat이 아는 개수]
+        self.team: Team | None = None  # @닉네임으로 붙인 팀 (뗄 때까지 질문마다 모델에 함께 보낸다)
+
+    def ask(self, message: str) -> str:
+        """What the model gets: the attached team ahead of the question."""
+        # ponytail: 질문마다 팀 블록(약 400토큰)을 다시 붙인다 — 대화가 길어지면 바뀐 때만 붙이도록
+        return f"{self.team.for_model()}\n\n{message}" if self.team else message
 
     def bot(self, key: str, make: Callable[[], Any]) -> Any:
         entry = self.bots.get(key)
@@ -281,6 +291,11 @@ class CompareChoice(BaseModel):
     pane: Literal["flash", "deep_r", "deep"]
 
 
+class TeamRequest(BaseModel):
+    nickname: str = Field(min_length=1, max_length=30)
+    session_id: str | None = Field(default=None, max_length=64)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
@@ -320,6 +335,9 @@ def create_app(
     pages = AnswerCache(db_path, size=300)
     sessions: OrderedDict[str, _Session] = OrderedDict()
     compare_limit = HourlyLimit(COMPARE_PER_HOUR)
+    team_limit = HourlyLimit(TEAM_PER_HOUR)
+    teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
+    team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
     compares: OrderedDict[str, dict[str, Any]] = OrderedDict()  # compare_id → 질문·칸별 답 (답 고르기용, 최근 것만)
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
@@ -437,6 +455,8 @@ def create_app(
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
             entry: dict[str, Any] = {"q": req.message, "session": session_id[:8], "outcome": "cancelled"}
+            if session.team:
+                entry["team"] = session.team.nickname
             keep = _TraceLog()  # 관리자 페이지의 답변 기록에서 줄을 누르면 보이는 trace·답변
             try:
                 yield from answer_events(entry, keep)
@@ -461,7 +481,7 @@ def create_app(
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
                 if req.mode == "auto":
-                    cached = answers.get(req.message) if first else None
+                    cached = answers.get(req.message) if first and not session.team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
                         entry.update(outcome="cached", chars=len(cached))
@@ -503,7 +523,7 @@ def create_app(
                 if handover:
                     options["fallback"] = False
                 bot = session.bot(key, make_bot(key))
-                stream = bot.ask_stream(req.message, **options)
+                stream = bot.ask_stream(session.ask(req.message), **options)
                 try:
                     try:
                         turn = yield from _relay(stream, req.trace, keep)
@@ -519,7 +539,7 @@ def create_app(
                         yield _event(type="reset")
                         key = "deep"
                         bot = session.bot(key, make_bot(key))
-                        stream = bot.ask_stream(req.message, deadline=LONG_DEADLINE, thoughts=True)
+                        stream = bot.ask_stream(session.ask(req.message), deadline=LONG_DEADLINE, thoughts=True)
                         turn = yield from _relay(stream, req.trace, keep)
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
@@ -535,7 +555,7 @@ def create_app(
                 session.answered(key, req.message, turn.text)
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
-            if first and req.mode == "auto" and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
+            if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
                 answers.put(req.message, turn.text)
             entry.update(outcome="ok", model=bot.last_model, tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
@@ -560,6 +580,7 @@ def create_app(
             raise HTTPException(status_code=429, detail=refused)
         session_id = req.session_id or uuid.uuid4().hex
         history = list(session_for(session_id).history)
+        ask = session_for(session_id).ask(req.message)
         route = _jev_route(req.message, history[-1][0] if history else None)
         if route and route.blocked:  # 범위 밖·공격은 세 모델 모두 부르지 않는다
             chat_log.record(q=req.message, outcome="blocked", route=f"{route.scope} ({route.describe()})")
@@ -592,7 +613,7 @@ def create_app(
                 bot = make_bot(pane)()
                 for q, a in history:
                     bot.remember(q, a)
-                turn = yield_into(lines, bot.ask_stream(req.message, deadline=LONG_DEADLINE, thoughts=req.trace), pane)
+                turn = yield_into(lines, bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=req.trace), pane)
                 tools = [n for n, _ in turn.tool_calls]
                 result.update(answer=turn.text, tools=tools, finish=turn.finish_reason)
                 lines.put(_event(type="done", pane=pane, model=bot.last_model, tool_calls=tools))
@@ -633,6 +654,36 @@ def create_app(
             yield _event(type="all_done")
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
+
+    @app.post("/api/team")
+    def attach_team(req: TeamRequest, request: Request) -> dict[str, Any]:
+        """@닉네임: that user's latest starting XI, attached to the conversation (sent ahead of each question)."""
+        if not os.environ.get("NEXON_API_KEY"):
+            raise HTTPException(status_code=503, detail="지금은 팀을 불러올 수 없어요 (서버에 넥슨 API 키가 없습니다).")
+        nickname = req.nickname.strip()
+        cached = teams.get(nickname)
+        if cached and time.time() - cached[0] < TEAM_CACHE_SECONDS:
+            team = cached[1]
+        else:
+            if not team_limit.check(_visitor(request)):
+                raise HTTPException(status_code=429, detail=f"팀 불러오기는 1시간에 {TEAM_PER_HOUR}번까지 할 수 있어요.")
+            try:
+                with team_lock, closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as team_db:
+                    team = fetch_team(_nexon(), team_db, nickname)
+            except TeamNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from None
+            except Exception as exc:  # 넥슨 API 혼잡·점검·하루 호출 예산
+                log.warning("team lookup failed: %s", exc)
+                raise HTTPException(status_code=503, detail="넥슨 서버에서 팀을 가져오지 못했어요. 잠시 후 다시 해 주세요.") from None
+            teams[nickname] = (time.time(), team)
+        session_id = req.session_id or uuid.uuid4().hex
+        session_for(session_id).team = team
+        return {"session_id": session_id, **team.to_json()}
+
+    @app.delete("/api/team")
+    def detach_team(session_id: str = Query(max_length=64)) -> dict[str, bool]:
+        session_for(session_id).team = None
+        return {"ok": True}
 
     @app.post("/api/compare/choice")
     def compare_choice(choice: CompareChoice) -> dict[str, Any]:
@@ -741,6 +792,20 @@ def _jev_route(question: str, previous: str | None) -> Route | None:
     except Exception as exc:
         log.warning("jev routing failed, using keywords: %s", exc)
         return None
+
+
+_NEXON: Any = None
+
+
+def _nexon() -> Any:
+    """One NEXON Open API client for @닉네임 lookups (its own daily call budget, in memory)."""
+    global _NEXON
+    if _NEXON is None:
+        from ..openapi.budget import CallBudget
+        from ..openapi.client import NexonOpenApiClient
+
+        _NEXON = NexonOpenApiClient(budget=CallBudget(daily_limit=int(os.environ.get("NEXON_DAILY_LIMIT", "2000"))))
+    return _NEXON
 
 
 def _flash_blocked() -> bool:

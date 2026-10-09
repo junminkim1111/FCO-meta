@@ -40,6 +40,7 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
   `/deep` 다음 질문만 DeepSeek V4 Pro(생각 끔), `--r` 생각 켬, `--a` 새로고침 전까지 유지 ·
   `/compare` 다음 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 전체 화면 세 칸에서 동시에 답함(IP당 1시간 2회) ·
   `/cancel` 위 명령어로 켠 것을 모두 끄고 기본 상태로 · `/help` 명령어 목록.
+- **@닉네임**: 빈 입력창에 `@`를 치고 닉네임을 넣으면 그 유저의 최근 공식·친선경기 선발 11명(우리가 모은 랭커 스쿼드가 더 최근이면 그것)을 넥슨 Open API로 불러와 대화에 붙이고, 뗄 때까지 질문마다 모델에 함께 보냅니다. 30일 넘은 경기는 날짜를 밝힙니다. 서버에 `NEXON_API_KEY`가 필요하고, IP당 1시간 20회·같은 닉네임은 10분 재사용.
   `/deep`·`/compare`는 질문당 상한 5분(일반 120초)이고, Render에 `OPENROUTER_API_KEY`가 있어야 DeepSeek이 답합니다.
 - 만든 뒤 서비스 Settings의 **Deploy Hook** 주소를 맥 `.env`의 `RENDER_DEPLOY_HOOK`에 넣으면 push-db가 재배포까지 요청합니다.
 - 코드는 GitHub에 푸시하면 Render가 자동으로 다시 빌드합니다. 질문 수 제한은 프록시가 넘겨주는 `X-Forwarded-For`의 첫 주소로 셉니다.

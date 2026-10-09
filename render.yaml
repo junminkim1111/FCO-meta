@@ -20,3 +20,5 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY  # Jev(질문 거르기·모델 선택)와 /deep·/compare의 DeepSeek (없으면 키워드 규칙, 그 명령어만 꺼짐)
         sync: false
+      - key: NEXON_API_KEY  # 채팅의 @닉네임 팀 불러오기 (없으면 그 기능만 꺼짐)
+        sync: false
