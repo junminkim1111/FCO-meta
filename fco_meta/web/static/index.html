@@ -271,7 +271,7 @@
   @keyframes status-in { from { opacity: 0; transform: translateY(4px); } }
   .pending .shimmer { display: inline-block; }
   @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; } }
-  #chat form { margin-top: 10px; }
+  #chat form { margin-top: 10px; position: relative; } /* 명령어 목록이 입력창 위에 뜨는 기준 (#msg-beam은 빛 때문에 넘침을 자른다) */
   /* 입력창은 칸 끝까지, 보내기 버튼은 입력창 안 오른쪽 아래 (테두리 빛 위에 오도록 z-index) */
   #msg-beam { display: flex; position: relative; }
   #chat form textarea { flex: 1; padding-right: 60px; }
@@ -294,12 +294,25 @@
   #team-box .hint { display: block; margin: 4px 0 0 14px; font-size: 12px; color: var(--muted); }
   #team-box .hint:empty { display: none; } #team-box .hint.err { color: var(--loss); }
   #team-chip { position: absolute; left: 11px; top: 10px; z-index: 3; display: inline-flex; align-items: center; font-size: 14px; line-height: 1.5;
-               color: #60a5fa; font-weight: 600; background: rgba(96, 165, 250, .16); border-radius: 6px; padding: 0 6px; }
+               color: #60a5fa; font-weight: 600; background: rgba(96, 165, 250, .16); border-radius: 10px; padding: 0 8px; }
   #team-chip[hidden] { display: none; }
   #team-chip button { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
                       background: #3b82f6; color: #fff; font-size: 9px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity .15s; }
   #team-chip:hover button, #team-chip button:focus-visible { opacity: 1; }
   .msg.me .mention { color: #2563eb; font-weight: 600; }
+  /* /를 치면 입력창 위에 펼쳐지는 명령어 목록 (↑↓ 고르기, Enter·클릭 실행, Tab 채우기, Esc 닫기).
+     명령어만 보이고, 설명은 올린 줄(키보드로 고른 줄) 오른쪽에 작은 말풍선으로 */
+  #cmd-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 6; min-width: 150px; margin: 0; padding: 6px; list-style: none;
+              background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  #cmd-menu[hidden] { display: none; }
+  #cmd-menu li { position: relative; padding: 6px 10px; border-radius: 9px; cursor: pointer; font-size: 13px; }
+  #cmd-menu li b { color: var(--text); font-weight: 600; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
+  #cmd-menu li span { display: none; position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%); white-space: nowrap;
+                      font-size: 11.5px; color: var(--text); background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 8px;
+                      padding: 3px 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; white-space: pre; line-height: 1.5; }
+  #cmd-menu li:hover span, #cmd-menu.kb li[aria-selected="true"] span { display: block; }
+  #cmd-menu li:hover, #cmd-menu.kb li[aria-selected="true"] { background: rgba(255, 255, 255, .08); }
+  #cmd-menu li:hover b, #cmd-menu.kb li[aria-selected="true"] b { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -345,6 +358,7 @@
       <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="닉네임" aria-label="팀을 불러올 닉네임">
         <button type="button" id="team-ok" aria-label="팀 불러오기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
         <span class="hint" id="team-hint" role="alert"></span></div>
+      <ul id="cmd-menu" role="listbox" aria-label="명령어" hidden></ul>
       <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button></div>
     </form>
   </section>
@@ -797,7 +811,52 @@ async function send(text) {
   else if (!answer) grow("답을 받지 못했습니다.");
   if (mode !== "auto") bubble.after(el("div", { class: "applied", text: `/deep 적용: ${DEEP_NAME[mode]}가 답했습니다` }));
 }
+// "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
+const COMMANDS = [
+  ["/deep", "다음 질문 하나를 DeepSeek V4 Pro(생각 끔)가 답함\n--r 생각 켬 · --a 새로고침 전까지 계속 (함께 쓸 수 있음)"],
+  ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
+  ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"],
+  ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
+  ["/help", "명령어와 @닉네임 사용법"],
+];
+let cmdShown = [], cmdIndex = 0;
+function updateCmdMenu() {
+  const v = $("msg").value;
+  cmdShown = /^\/[^\n]*$/.test(v) ? COMMANDS.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
+  cmdIndex = Math.min(cmdIndex, Math.max(cmdShown.length - 1, 0));
+  $("cmd-menu").hidden = !cmdShown.length;
+  $("cmd-menu").replaceChildren(...cmdShown.map(([c, desc], i) => {
+    const li = el("li", { role: "option", ariaSelected: String(i === cmdIndex) }, el("b", { text: c }), el("span", { text: desc }));
+    li.addEventListener("pointerdown", (ev) => { ev.preventDefault(); pickCmd(c); }); // 입력창 포커스를 잃지 않게
+    return li;
+  }));
+}
+// 고르면 입력창에 채우기만 한다 (실행은 Enter로). 뒤에 한 칸을 띄워 옵션(--r 등)을 이어 칠 수 있게
+function pickCmd(c) {
+  $("msg").value = c + " "; cmdShown = []; $("cmd-menu").hidden = true;
+  $("msg").focus(); $("msg").setSelectionRange($("msg").value.length, $("msg").value.length);
+}
+function cmdKeys(ev) {
+  if ($("cmd-menu").hidden || ev.isComposing) return false;
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    const started = $("cmd-menu").classList.contains("kb"); // 처음 누른 ↓는 첫 줄부터
+    cmdIndex = started ? (cmdIndex + (ev.key === "ArrowDown" ? 1 : cmdShown.length - 1)) % cmdShown.length
+                       : ev.key === "ArrowDown" ? 0 : cmdShown.length - 1;
+    $("cmd-menu").classList.add("kb"); updateCmdMenu();
+  } else if (ev.key === "Enter" && !ev.shiftKey) {
+    const c = cmdShown[cmdIndex][0], v = $("msg").value.trim();
+    if (v === c || v.startsWith(c + " ")) { $("cmd-menu").hidden = true; return false; } // 다 친 명령어는 그대로 실행
+    pickCmd(c);
+  } else if (ev.key === "Tab") pickCmd(cmdShown[cmdIndex][0]);
+  else if (ev.key === "Escape") $("cmd-menu").hidden = true;
+  else return false;
+  ev.preventDefault();
+  return true;
+}
+$("msg").addEventListener("input", () => { cmdIndex = 0; $("cmd-menu").classList.remove("kb"); updateCmdMenu(); });
+$("msg").addEventListener("blur", () => { $("cmd-menu").hidden = true; });
 $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Enter는 줄바꿈 (한글 조합 중인 Enter는 무시)
+  if (cmdKeys(ev)) return; // 명령어 목록이 열려 있으면 ↑↓·Enter·Tab·Esc는 목록이
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
     ev.preventDefault();
     $("chat-form").requestSubmit();
@@ -808,13 +867,17 @@ let team = null; // 붙인 팀 { nickname, label }
 function openTeamBox() {
   $("team-box").hidden = false; $("team-hint").textContent = ""; $("team-hint").className = "hint";
   $("team-name").value = ""; $("team-name").focus();
+  showTeam("@"); // 닉네임을 넣는 동안 입력창에는 같은 모양의 @만
 }
-function closeTeamBox() { if (!$("team-box").hidden) { $("team-box").hidden = true; $("msg").focus(); } }
-function showTeam() { // 입력창 첫 줄을 표시만큼 들여 써서 "@닉네임 질문…"처럼 보이게
-  $("team-chip").hidden = !team;
-  $("team-chip-name").textContent = team ? "@" + team.nickname : "";
-  $("team-chip").title = team ? team.label : "";
-  $("msg").style.textIndent = team ? `${$("team-chip").offsetWidth + 6}px` : "";
+function closeTeamBox() { if (!$("team-box").hidden) { $("team-box").hidden = true; showTeam(); $("msg").focus(); } }
+// 입력창 첫 줄을 표시만큼 들여 써서 "@닉네임 질문…"처럼 보이게. pending = 닉네임을 넣는 중의 "@" (✕ 없음)
+function showTeam(pending = null) {
+  const text = pending || (team ? "@" + team.nickname : "");
+  $("team-chip").hidden = !text;
+  $("team-chip-name").textContent = text;
+  $("team-off").hidden = !!pending;
+  $("team-chip").title = !pending && team ? team.label : "";
+  $("msg").style.textIndent = text ? `${$("team-chip").offsetWidth + 6}px` : "";
 }
 async function loadTeam() {
   const nickname = $("team-name").value.trim();
@@ -826,7 +889,7 @@ async function loadTeam() {
     if (!res.ok) { $("team-hint").className = "hint err"; $("team-hint").textContent = data.detail || "팀을 불러오지 못했어요."; return; }
     sessionId = data.session_id;
     team = { nickname: data.nickname, label: data.label + (data.old ? " (30일 넘은 경기)" : "") };
-    closeTeamBox(); showTeam();
+    closeTeamBox();
   } catch {
     $("team-hint").className = "hint err"; $("team-hint").textContent = "연결하지 못했어요.";
   } finally { $("team-ok").disabled = false; }
@@ -1047,7 +1110,7 @@ $("chat-form").addEventListener("submit", (ev) => {
 // 입력창 안내: 예시 질문(static/examples.txt) 중 하나를 무작위로
 fetch("/static/examples.txt").then((r) => r.text()).then((t) => {
   const qs = t.split("\n").filter((q) => q.trim());
-  $("msg").placeholder = `예: ${qs[Math.floor(Math.random() * qs.length)]}`;
+  $("msg").placeholder = qs[Math.floor(Math.random() * qs.length)];
 }).catch(() => {});
 say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
