@@ -11,6 +11,7 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from ..analytics import (
     top_ranker_squad,
     usage_history,
 )
+from ..analytics.query import _card_details, stat_value
 from ..crawler import teamcolor_info
 from ..crawler.models import TeamColor
 from ..crawler.teamcolors import TeamColorCatalog
@@ -79,7 +81,7 @@ TREND_MIN_RANKERS = 3  # 사용률 변화 목록에 넣을 최소 사용 랭커 
 QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 기본 최소 사용 랭커 수 (1명짜리 1위 방지)
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
-SALARY_CAP = 310  # 게임의 팀 급여 상한: 선발 11명을 짤 때는 항상 이 안에서 고른다
+SALARY_CAP = 310  # 게임의 팀 급여 상한: 선발 11명은 사용자가 급여 합을 말하지 않으면 이 안에서 고른다 (더 크게 말하면 따르고 경고)
 # 신규특성(금특·신특): 8강(금카) 이상이면 어떤 카드든 하나를 더 달 수 있다. 줄임말 → 카드 상세의 특성 이름
 NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
@@ -159,6 +161,11 @@ def _cost(card: dict[str, Any], kind: str) -> int | None:
     return _price_bp(card) if kind == "price" else card.get("salary")
 
 
+def _score(option: dict[str, Any]) -> float:
+    """What a squad option is worth: its usage rate, unless a squad knob (save, invest, prefer) set a score."""
+    return option.get("score", option["entry"]["usage_rate"])
+
+
 MAX_EXHAUSTIVE = 300_000  # 자리 조합 수가 이 이하면 전부 따져 최적 조합을 고른다 (보통 2~3자리)
 
 
@@ -178,7 +185,7 @@ def _choose(
     chosen: list[dict[str, Any] | None] = []
     for _, options in slot_options:
         used = {c["entry"]["pid"] for c in chosen if c}
-        chosen.append(next((o for o in options if o["entry"]["pid"] not in used), None))
+        chosen.append(next((o for o in sorted(options, key=_score, reverse=True) if o["entry"]["pid"] not in used), None))
     if not limits and not reqs:
         return chosen
 
@@ -194,7 +201,7 @@ def _choose(
             pids = [o["entry"]["pid"] for o in combo]
             if len(set(pids)) < len(pids) or overrun(combo) > 0:
                 continue
-            key = (round(sum(o["entry"]["usage_rate"] for o in combo), 6), sum(o["salary"] or 0 for o in combo))
+            key = (round(sum(_score(o) for o in combo), 6), sum(o["salary"] or 0 for o in combo))
             if best_key is None or key > best_key:
                 best, best_key = list(combo), key
         if best is not None:
@@ -214,7 +221,7 @@ def _choose(
                 after = overrun(chosen[:i] + [o] + chosen[i + 1:])
                 if after >= current:
                     continue
-                loss = max(cur["entry"]["usage_rate"] - o["entry"]["usage_rate"], 0.0)
+                loss = max(_score(cur) - _score(o), 0.0)
                 score = (current - after) / (loss + 0.01)
                 if best is None or score > best[0]:
                     best = (score, i, o, after)
@@ -231,7 +238,7 @@ def _fill(chosen: list[dict[str, Any] | None], slot_options, overrun: Callable[[
     player's higher-salary (better) card. Usage first, so this never trades a popular player for a pricier one."""
 
     def key(combo) -> tuple[float, int]:
-        return round(sum(c["entry"]["usage_rate"] for c in combo if c), 6), sum(c["salary"] or 0 for c in combo if c)
+        return round(sum(_score(c) for c in combo if c), 6), sum(c["salary"] or 0 for c in combo if c)
 
     while True:
         best = None
@@ -246,6 +253,44 @@ def _fill(chosen: list[dict[str, Any] | None], slot_options, overrun: Callable[[
         if best is None:
             return chosen
         chosen[best[1]] = best[2]
+
+
+@dataclass
+class _Squad:
+    """What the squad tools share: scope, slots, rules and per slot the (player, card) options rankers used there."""
+
+    tc: TeamColor | None
+    tc_name: str
+    fits: Callable[[int], bool] | None  # 클럽·국가·시즌 팀컬러 카드인가
+    season_rule: bool  # 시즌 단일 팀컬러
+    usage_id: int
+    chem: dict[str, Any] | None
+    derived: TeamColor | None  # 케미 이름에서 가져온 클럽 팀컬러
+    must: list[str]  # 꼭 넣을 선수 (이름, 띄어쓰기 없이)
+    formation: str | None
+    source: str
+    layout: dict[str, int]
+    layout_squads: int | None
+    slots: str | None
+    strict: bool
+    reqs: dict[str, int]
+    limits: dict[str, int]
+    slot_options: list[tuple[str, list[dict[str, Any]]]]
+    first: Any  # 첫 자리의 top_players 결과 (표본·기준 시각)
+
+
+MAX_UPGRADES = 2  # recommend_squad의 upgrades: 자리마다 보여 줄 강화·시즌 선택지 수
+MAX_SQUAD_CANDIDATES = 5  # squad_candidates: 자리마다 보여 줄 선수 수 (그 자리 인원 + 3, 많아야 5명)
+_ATTACK_STATS = ("goal", "assist", "effective_shoot", "dribble_success_rate")
+_MID_STATS = ("assist", "pass_try", "pass_success_rate", "tackle")
+_BACK_STATS = ("tackle", "block", "pass_success_rate")
+# squad_candidates의 TOP 10,000 경기 성적: 역할에 맞는 것만 (전부 주면 후보 40명에 입력이 너무 커진다)
+ROLE_MATCH_STATS: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys(("ST", "CF", "RW", "LW", "CAM", "RAM", "LAM", "RM", "LM"), _ATTACK_STATS),
+    **dict.fromkeys(("CM", "DM"), _MID_STATS),
+    **dict.fromkeys(("CB", "RB", "LB", "RWB", "LWB"), _BACK_STATS),
+    "GK": (),
+}
 
 
 _ISO_TIME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$")
@@ -424,7 +469,8 @@ TOOLS: list[dict[str, Any]] = [
             "포지션 구성은 그 포메이션으로 실제 경기한 랭커 스쿼드에서 가져오고, 자리마다 사용률 높은 선수를 (같은 선수 중복 없이) 넣는다. "
             "자리별 대안, 카드 시세·급여, 총액·총 급여를 준다. max_total_price_bp·max_total_salary를 주면 그 한도 안에서 "
             "사용률 합이 가장 큰 조합을 고른다 (자리가 적으면 모든 조합을 비교). '두 명 급여 합 54 미만' = slots 'DM,DM', max_total_salary 53. "
-            f"선발 11명은 게임 급여 상한 {SALARY_CAP}을 항상 지킨다 (max_total_salary를 안 줘도, 더 크게 줘도 {SALARY_CAP})"
+            f"선발 11명은 max_total_salary를 안 주면 게임 급여 상한 {SALARY_CAP} 안에서 고른다 (사용자가 더 크게 말하면 그 값, 결과에 상한 초과 경고). "
+            "예산을 줬으면 leftover(남은 예산·급여)와 upgrades(남은 예산으로 올릴 수 있는 강화·시즌)를 준다"
         ),
         "input_schema": _schema(
             {
@@ -451,6 +497,26 @@ TOOLS: list[dict[str, Any]] = [
             },
             [],
         ),
+    },
+    {
+        "name": "squad_candidates",
+        "description": (
+            "스쿼드 초안의 자리를 바꿀 때 보는 후보: 자리마다 랭커들이 쓴 선수 3~5명과 "
+            "사용률, 사용 랭커 시즌 승률, 경기 평점, TOP 10,000 경기 성적, 능력치, 고를 수 있는 카드(시즌·강화·시세·급여). "
+            "팀컬러·케미·포함 선수·예산 조건에 맞는 카드만 나온다. 바꿀 자리만 roles로 (예: 'GK', 'ST,RW'). "
+            "고른 뒤 check_squad로 검사한다. 나머지 인자는 recommend_squad와 같다"
+        ),
+        "input_schema": None,  # 아래에서 recommend_squad의 인자를 그대로 쓴다
+    },
+    {
+        "name": "check_squad",
+        "description": (
+            "초안을 바꾼 라인업 검사: 자리 수, 랭커들이 그 자리에 쓴 카드인지, 중복 선수, 총 급여(max_total_salary, 안 주면 게임 상한 "
+            f"{SALARY_CAP})·총예산, 팀컬러 소속, 케미·시즌 발동, 포함 선수. ok=true면 통과, false면 problems를 고쳐 다시 검사한다. "
+            "warnings(게임 상한 초과 등)는 막지 않고 알린다. 총 급여·총액·남은 예산(leftover)·발동 여부를 돌려준다. "
+            "조건 인자는 recommend_squad에 준 것과 같게 (사용자가 말한 값 그대로)"
+        ),
+        "input_schema": None,
     },
     {
         "name": "get_player_detail",
@@ -614,6 +680,53 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+_SQUAD_ARGS = next(t for t in TOOLS if t["name"] == "recommend_squad")["input_schema"]
+_PICKS = {
+    "type": "array",
+    "description": "고른 선수, 자리마다 하나 (선발 11명이면 11개)",
+    "items": {
+        "type": "object",
+        "properties": {
+            "role": {"type": "string", "description": "자리 (squad_candidates의 layout 역할, 예: ST, RAM, DM)"},
+            "player": {"type": "string", "description": "선수 이름"},
+            "season": {"type": "string", "description": "카드 시즌 (cards의 season, 예: '25 UCL'). 생략하면 가장 많이 쓰인 카드"},
+            "grade": {"type": "integer", "description": "강화 단계. 생략하면 랭커들이 가장 많이 쓴 강화"},
+            "owned": {"type": "boolean", "description": "사용자가 이미 가진 카드면 true (시세를 총액에서 뺀다)"},
+        },
+        "required": ["role", "player"],
+    },
+}
+# 사용자의 바람을 옮기는 손잡이: recommend_squad만 (도구가 한 번에 최적 조합을 찾는다)
+_KNOBS = {
+    "exclude": {"type": "string", "description": "빼 달라는 선수 이름, 쉼표로 (예: '벨링엄')"},
+    "owned": {"type": "string", "description": "사용자가 이미 가진 카드 '이름:시즌:강화', 쉼표로 (예: '손흥민:UC:10'). "
+              "그 카드로 고정하고 시세는 총액에서 뺀다"},
+    "min_grade": {"type": "integer", "description": "이 강화 이상 카드만 (예: 8). 랭커들이 덜 강화해 쓴 카드는 이 강화 시세로 센다"},
+    "save": {"type": "string", "description": "최대한 싸게 채울 자리, 쉼표로 (예: 'GK'). 사용률보다 싼 카드 우선"},
+    "invest": {"type": "string", "description": "돈을 먼저 쓸 자리 (예: 'ST,RW,LW', '공격수', 'CB,LB,RB'). "
+               "예산이 모자라면 이 자리는 덜 낮추고, 남으면 이 자리만 올린다"},
+    "prefer": {"type": "string", "description": "자리별로 원하는 능력치 '자리:능력치', 쉼표로 (예: 'ST:키', 'RW:속력,LW:속력'). "
+               "그 자리는 이 능력치가 높은 선수 우선 (사용률도 일부 반영)"},
+    "spend": {"type": "boolean", "description": "예산(max_total_price_bp)이 남으면 사용률 높은 자리부터 강화·시즌을 올려 쓴다 "
+              "(기본 true, 아끼라고 하면 false). 결과의 upgraded에 올린 내역"},
+}  # fmt: skip
+for _tool in TOOLS:
+    if _tool["name"] == "recommend_squad":
+        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], **_KNOBS}}
+    if _tool["name"] == "squad_candidates":
+        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], "roles": {
+            "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"}}}
+    elif _tool["name"] == "check_squad":
+        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **_SQUAD_ARGS["properties"]}, "required": ["picks"]}
+
+JUDGE_TOOLS = ("squad_candidates", "check_squad")  # 큰 모델: 도구의 초안을 사용자 요청에 맞게 고친다
+
+
+def tools_for(judge: bool) -> list[dict[str, Any]]:
+    """Tools a model gets: judging models also get the tools to change the recommend_squad draft and check it."""
+    return [t for t in TOOLS if judge or t["name"] not in JUDGE_TOOLS]
+
+
 class ToolError(Exception):
     """Invalid tool input; returned to the model as an error result."""
 
@@ -640,6 +753,8 @@ class Toolbox:
             "list_formations": self.list_formations,
             "recommend_players": self.recommend_players,
             "recommend_squad": self.recommend_squad,
+            "squad_candidates": self.squad_candidates,
+            "check_squad": self.check_squad,
             "get_player_detail": self.get_player_detail,
             "get_meta_trends": self.get_meta_trends,
             "query_squads": self.query_squads,
@@ -1194,9 +1309,361 @@ class Toolbox:
         slots: str | None = None,
         chemistry: str | None = None,
         include: str | None = None,
+        exclude: str | None = None,
+        owned: str | None = None,
+        min_grade: int | None = None,
+        save: str | None = None,
+        invest: str | None = None,
+        prefer: str | None = None,
+        spend: bool | None = None,
     ) -> dict[str, Any]:
+        knobs = self._squad_knobs(exclude, owned, min_grade, save, invest, prefer)
+        sq = self._squad_setup(
+            team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs
+        )
+        if isinstance(sq, dict):
+            return sq
+        chosen, upgraded = _choose(sq.slot_options, sq.limits, sq.reqs), []
+        if "price" in sq.limits and spend is not False:  # 예산이 남으면 그대로 두지 않는다
+            chosen, upgraded = self._spend(sq, chosen, knobs)
+        out = self._squad_result(sq, chosen)
+        if upgraded:
+            out["upgraded"] = upgraded
+        if knobs:
+            out["applied"] = {k: sorted(v) if isinstance(v, set) else v for k, v in knobs.items()}
+        return out
+
+    def _squad_knobs(self, exclude, owned, min_grade, save, invest, prefer) -> dict[str, Any]:
+        """The user's own squad wishes as recommend_squad arguments → what _squad_setup and _spend apply."""
+
+        def names(text: str) -> list[str]:
+            return ["".join(n.split()) for n in re.split(r"[,/+]", text) if n.strip()]
+
+        def roles(text: str) -> set[str]:
+            return {r for part in re.split(r"[,/\s]+", text) if part for r in self._roles(part)}
+
+        knobs: dict[str, Any] = {}
+        if exclude:
+            knobs["exclude"] = names(exclude)
+        if owned:  # "손흥민:UC:10, 박지성" → 이름·시즌·강화
+            specs = []
+            for part in owned.split(","):
+                bits = [b.strip() for b in part.split(":")]
+                if not bits[0]:
+                    continue
+                grade = re.sub(r"\D", "", bits[2]) if len(bits) > 2 else ""
+                specs.append({"name": "".join(bits[0].split()), "season": "".join(bits[1].split()).casefold() if len(bits) > 1 and bits[1] else None,
+                              "grade": int(grade) if grade else None})  # fmt: skip
+            knobs["owned"] = specs
+        if min_grade:
+            knobs["min_grade"] = int(min_grade)
+        if save:
+            knobs["save"] = roles(save)
+        if invest:
+            knobs["invest"] = roles(invest)
+        if prefer:  # "ST:키, RW:속력"
+            pref = {}
+            for part in prefer.split(","):
+                if ":" not in part:
+                    raise ToolError("prefer는 '자리:능력치'를 쉼표로 (예: 'ST:키, RW:속력')")
+                role_text, stat_text = part.split(":", 1)
+                stat = resolve_stat(stat_text.strip())
+                if stat is None:
+                    raise ToolError(f"알 수 없는 능력치: {stat_text.strip()} (예: 키, 속력, 몸싸움, 골 결정력)")
+                pref.update(dict.fromkeys(self._roles(role_text.strip()), stat))
+            knobs["prefer"] = pref
+        return knobs
+
+    def _spend(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]):
+        """Leftover budget → better cards, a step at a time round the lineup (most valuable slot first, the invest slots
+        only when given, never the save slots or owned cards): the next grade of the same card, or the player's pricier
+        card if the salary still fits — whichever step is cheaper. Stops when no step fits the budget."""
+        # ponytail: 한 단계씩 돌아가며 올리는 탐욕 규칙 — 강화별 능력치 가치를 알면 가치/비용 순으로
+        chosen, start = list(chosen), list(chosen)
+        cap, salary_cap = sq.limits["price"], sq.limits.get("salary")
+        invest, save = knobs.get("invest", set()), knobs.get("save", set())
+
+        def total(kind: str) -> int:
+            return sum(c[kind] or 0 for c in chosen if c)
+
+        order = [
+            i for i, ((role, _), c) in enumerate(zip(sq.slot_options, chosen))
+            if c and c["price"] is not None and not c.get("owned") and role not in save and (not invest or role in invest)
+        ]  # fmt: skip
+        order.sort(key=lambda i: -_score(chosen[i]))
+        moved = True
+        while moved:
+            moved = False
+            for i in order:
+                c, left = chosen[i], cap - total("price")
+                left_salary = None if salary_cap is None else salary_cap - total("salary")
+                steps = []
+                grade = c["card"]["most_used_grade"] or 0
+                if grade < 13 and (price := self._price(c["card"]["sp_id"], grade + 1)) and price["price_bp"] > c["price"]:
+                    steps.append({**c, "price": price["price_bp"],
+                                  "card": {**c["card"], "most_used_grade": grade + 1, "price_at_most_used_grade": price}})  # fmt: skip
+                steps += [
+                    o for o in sq.slot_options[i][1]
+                    if o["entry"]["pid"] == c["entry"]["pid"] and o["card"]["sp_id"] != c["card"]["sp_id"]
+                    and o["price"] is not None and o["price"] > c["price"] and c["tags"] <= o["tags"]
+                    and (left_salary is None or (o["salary"] or 0) - (c["salary"] or 0) <= left_salary)
+                ]  # fmt: skip
+                steps = [o for o in steps if o["price"] - c["price"] <= left]
+                if steps:
+                    chosen[i], moved = min(steps, key=lambda o: o["price"]), True
+
+        def label(c: dict[str, Any]) -> str:
+            return f"{(c['card']['season'] or '').split(' (')[0]} {c['card']['most_used_grade']}강"
+
+        upgraded = [
+            {"role": role, "player": a["entry"]["name"], "from": label(a), "to": label(b), "extra": format_bp(b["price"] - a["price"])}
+            for (role, _), a, b in zip(sq.slot_options, start, chosen) if a is not b
+        ]  # fmt: skip
+        return chosen, upgraded
+
+    def squad_candidates(
+        self,
+        team_color: str | None = None,
+        formation: str | None = None,
+        strict: bool = False,
+        max_total_price_bp: int | None = None,
+        max_total_salary: int | None = None,
+        slots: str | None = None,
+        chemistry: str | None = None,
+        include: str | None = None,
+        roles: str | None = None,
+    ) -> dict[str, Any]:
+        """Per slot 3~5 players with the data to judge them; the model picks and check_squad verifies.
+
+        The players of one combination within every limit are always among them (so a passing squad exists), but
+        that combination is not shown — the model judges on its own."""
+        sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include)
+        if isinstance(sq, dict):
+            return sq
+        feasible = _choose(sq.slot_options, sq.limits, sq.reqs)
+        wanted = {r for part in re.split(r"[,/\s]+", roles or "") if part for r in self._roles(part)}  # 바꿀 자리만
+        candidates: dict[str, list[dict[str, Any]]] = {}
+        for role, n in sq.layout.items():
+            if wanted and role not in wanted:
+                continue
+            options = next(o for r, o in sq.slot_options if r == role)
+            by_pid: dict[int, list[dict[str, Any]]] = {}  # 사용률 순
+            for o in options:
+                by_pid.setdefault(o["entry"]["pid"], []).append(o)
+            keep = [c["entry"]["pid"] for (r, _), c in zip(sq.slot_options, feasible) if r == role and c]
+            keep += [pid for pid, opts in by_pid.items() if any(t.startswith("include:") for o in opts for t in o["tags"])]
+            for pid in by_pid:
+                if len(set(keep)) >= min(MAX_SQUAD_CANDIDATES, n + 3):
+                    break
+                keep.append(pid)
+            candidates[role] = [self._candidate(role, opts) for pid, opts in by_pid.items() if pid in keep]
+        out: dict[str, Any] = {
+            "team_color": sq.tc_name, "formation": sq.formation, "formation_source": sq.source, "layout": sq.layout,
+            "data_as_of": sq.first.data_as_of, "sample_size": sq.first.sample_size,
+            "fallback_to_all_formations": sq.first.fallback,
+            "limits": {"max_total_salary": sq.limits.get("salary"),
+                       "max_total_price": format_bp(sq.limits["price"]) if "price" in sq.limits else None},
+            "candidates": candidates,
+            "definitions": {
+                "candidates": "자리마다 랭커들이 그 자리에 쓴 선수, 사용률 순 (조건에 맞는 카드만)",
+                "usage_rate": "표본 랭커 중 이 선수를 이 역할로 선발 기용한 비율",
+                "avg_season_win_rate_of_users": "이 선수를 쓴 랭커들의 이번 시즌 승률 평균",
+                "avg_rating_in_match": "이 역할 선발 출전의 경기 평점 평균",
+                "top10000_stats": "이 선수 카드를 이 자리로 쓴 TOP 10,000 랭커 최근 20경기의 경기당 평균 (matches = 경기 수)",
+                "profile": "가장 많이 쓰인 카드의 1강 기준 요약 능력치·키·개인기·주발·신규특성",
+                "cards": "고를 수 있는 카드: 시즌, 랭커들이 가장 많이 쓴 강화(grade), 그 강화 시세, 급여",
+            },
+            "note": "고른 선수는 check_squad에 같은 조건과 picks로 넘겨 검사하고, ok인 라인업만 답한다",
+        }
+        if sq.usage_id == ALL_RANKERS and sq.first.data_as_of:
+            out["ranking_scope"] = squad_range(self.conn, sq.first.data_as_of)
+        if sq.fits and not sq.season_rule:
+            out["team_color_rule"] = f"{sq.tc_name}: 모두 그 {'클럽 경력(임대 포함)' if sq.tc.category == 'club' else '국적'} 카드 (후보는 이미 그 카드만)"
+        if sq.season_rule:
+            out["season_rule"] = {"team_color": sq.tc_name, "target": sq.reqs["season"], "need": self._special_need(sq.tc.name),
+                                  "how": "cards의 season_team_color가 true인 카드가 그 시즌 카드"}  # fmt: skip
+        if sq.chem:
+            out["chemistry"] = {"team_color": sq.chem["name"], "need": sq.reqs["chem"], "levels": sq.chem["levels"],
+                                "how": "chemistry_member가 true인 선수가 케미 명단"}  # fmt: skip
+        if sq.must:
+            out["include"] = sq.must
+        return out
+
+    def _candidate(self, role: str, options: list[dict[str, Any]]) -> dict[str, Any]:
+        """One player of squad_candidates: usage, win rate, rating, match stats, card profile — in that order."""
+        e = options[0]["entry"]
+        out: dict[str, Any] = {
+            "player": e["name"], "rankers": e["rankers"], "usage_rate": e["usage_rate"],
+            "avg_season_win_rate_of_users": e["avg_season_win_rate_of_users"], "avg_rating_in_match": e["avg_rating_in_match"],
+        }  # fmt: skip
+        if ROLE_MATCH_STATS.get(role) and (stats := ranker_stats_summary(self.conn, {o["card"]["sp_id"] for o in options}, set(ROLES[role]))):
+            out["top10000_stats"] = {"matches": stats["matches"], **{k: stats[k] for k in ROLE_MATCH_STATS[role]}}
+        if profile := self._card_profile(options[0]["card"]["sp_id"]):
+            out["profile"] = {
+                **profile["summary"], "height": profile["height"], "skill_moves": profile["skill_moves"], "foot": profile["foot"],
+                "new_traits": [t for t in profile["traits"] if t in NEW_TRAITS],
+            }  # fmt: skip
+        if any("chem" in o["tags"] for o in options):
+            out["chemistry_member"] = True
+        out["cards"] = [
+            {"season": o["card"]["season"], "grade": o["card"]["most_used_grade"],
+             "price": (o["card"]["price_at_most_used_grade"] or {}).get("price"), "salary": o["salary"],
+             **({"season_team_color": True} if "season" in o["tags"] else {})}
+            for o in options[:3]
+        ]  # fmt: skip
+        return out
+
+    def _upgrades(self, slot_options, chosen, left_bp: int, left_salary: int | None) -> dict[str, dict[str, Any]]:
+        """What the leftover budget could buy per lineup card: the next grades of the same card and the player's other
+        cards rankers used there (price and salary changes). Only what fits the leftover budget, a few per slot."""
+        out: dict[str, dict[str, Any]] = {}
+        for (role, options), c in zip(slot_options, chosen):
+            if c is None or c["price"] is None:
+                continue
+            card, base = c["card"], c["price"]
+            grades = []
+            for g in range((card["most_used_grade"] or 0) + 1, 14):
+                price = self._price(card["sp_id"], g)
+                if price is None or price["price_bp"] - base > left_bp or len(grades) == MAX_UPGRADES:
+                    break
+                if price["price_bp"] <= base:  # 시세가 거꾸로인 강화(매물 차이)는 올리는 비용이 아니라 건너뛴다
+                    continue
+                grades.append({"grade": g, "price": price["price"], "extra": format_bp(price["price_bp"] - base)})
+            seasons = [
+                {"season": o["card"]["season"], "grade": o["card"]["most_used_grade"],
+                 "price": o["card"]["price_at_most_used_grade"]["price"], "extra": format_bp(o["price"] - base),
+                 "salary": o["salary"], "extra_salary": (o["salary"] or 0) - (c["salary"] or 0)}
+                for o in options
+                if o["entry"]["pid"] == c["entry"]["pid"] and o["card"]["sp_id"] != card["sp_id"]
+                and o["price"] is not None and 0 < o["price"] - base <= left_bp
+            ][:MAX_UPGRADES]  # fmt: skip
+            if grades or seasons:
+                key = f"{role} {c['entry']['name']}"
+                out[key] = {"now": f"{(card['season'] or '').split(' (')[0]} {card['most_used_grade']}강", **({"grade_up": grades} if grades else {}),
+                            **({"other_seasons": seasons} if seasons else {})}  # fmt: skip
+        if out and left_salary is not None:
+            out["_note"] = {"text": f"강화는 급여가 그대로, 시즌을 바꾸면 extra_salary만큼 급여가 바뀐다 (남은 급여 {left_salary})"}
+        return out
+
+    def check_squad(
+        self,
+        picks: list[dict[str, Any]],
+        team_color: str | None = None,
+        formation: str | None = None,
+        strict: bool = False,
+        max_total_price_bp: int | None = None,
+        max_total_salary: int | None = None,
+        slots: str | None = None,
+        chemistry: str | None = None,
+        include: str | None = None,
+    ) -> dict[str, Any]:
+        """The model's own lineup checked against the same rules: slots filled, rankers used each card there,
+        no player twice, salary/budget, team color, chemistry, season, include. ok = every rule held."""
+        if not isinstance(picks, list) or not all(isinstance(p, dict) for p in picks):
+            raise ToolError("picks는 [{role, player, season, grade}] 목록 (예: [{'role': 'ST', 'player': '홀란', 'season': '25 UCL'}])")
+        names = ["".join(str(p.get("player") or "").split()) for p in picks]
+        sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, names)
+        if isinstance(sq, dict):
+            return sq
+        free: dict[str, list[int]] = defaultdict(list)  # 역할 → 아직 빈 자리
+        for i, (role, _) in enumerate(sq.slot_options):
+            free[role].append(i)
+        chosen: list[dict[str, Any] | None] = [None] * len(sq.slot_options)
+        problems = []
+        for pick, name in zip(picks, names):
+            label = f"{pick.get('role')} {pick.get('player')}"
+            roles = resolve_roles(str(pick.get("role") or ""))
+            role = roles[0] if roles and len(roles) == 1 else None
+            if role not in free:
+                problems.append(f"{label}: 이 포메이션의 자리가 아님 (자리: {', '.join(f'{r}×{n}' for r, n in sq.layout.items())})")
+                continue
+            if not free[role]:
+                problems.append(f"{label}: {role} 자리는 {sq.layout[role]}개뿐")
+                continue
+            options = sq.slot_options[free[role][0]][1]
+            matches = [o for o in options if name and name in "".join((o["entry"]["name"] or "").split())]
+            season = "".join(str(pick.get("season") or "").split()).casefold()
+            if matches and season:
+                matches = [o for o in matches if season in "".join((o["card"]["season"] or "").split()).casefold()]
+                if not matches:
+                    problems.append(f"{label}: '{pick.get('season')}' 카드는 이 범위 랭커들이 이 자리에 쓴 카드가 아님 (squad_candidates의 cards에서 고를 것)")
+                    continue
+            if not matches:
+                problems.append(f"{label}: 이 범위 랭커들이 {role}에 쓴 선수가 아니거나 조건(팀컬러 소속 등)에 맞는 카드가 없음")
+                continue
+            o = matches[0]
+            if pick.get("grade") and int(pick["grade"]) != o["card"]["most_used_grade"]:
+                price = self._price(o["card"]["sp_id"], int(pick["grade"]))
+                o = {**o, "price": price["price_bp"] if price else None,
+                     "card": {**o["card"], "most_used_grade": int(pick["grade"]), "price_at_most_used_grade": price}}  # fmt: skip
+            if pick.get("owned"):  # 이미 가진 카드: 총액에서 뺀다
+                o = {**o, "price": 0, "owned": True}
+            chosen[free[role].pop(0)] = o
+        problems += [f"{role} {len(left)}자리가 비었음" for role, left in free.items() if left]
+        twice = [n for n, c in Counter(c["entry"]["name"] for c in chosen if c).items() if c > 1]
+        if twice:
+            problems.append(f"같은 선수를 두 자리에: {', '.join(twice)}")
+        out = self._squad_result(sq, chosen, checking=True)
+        for kind, cap in sq.limits.items():
+            spent = sum(c[kind] or 0 for c in chosen if c)
+            if spent > cap:
+                problems.append(f"총 급여 {spent} > 상한 {cap}" if kind == "salary" else f"총액 {format_bp(spent)} > 예산 {format_bp(cap)}")
+        if (rule := out.get("season_rule")) and not rule["active"]:
+            problems.append(f"{rule['team_color']} 시즌 카드 {rule['players']}명 — 발동 인원 {rule['need']}명 미달")
+        if (c := out.get("chemistry")) and not c["active"]:
+            problems.append(f"{c['team_color']} 케미 명단 {len(c['players_in_lineup'])}명 — 발동 인원 {c['need']}명 미달")
+        problems += [f"'{n}'를 넣어 달라고 했는데 빠짐" for n, got in (out.get("include") or {}).items() if got is None]
+        if owned := [c["entry"]["name"] for c in chosen if c and c.get("owned")]:
+            out["owned"] = {"players": owned, "note": "이미 가진 카드라 총액·남은 예산에서 시세를 뺌"}
+        return {"ok": not problems, "problems": problems, **out}
+
+    def _owned_cards(self, pid: int, season: str, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
+        """A card the user owns that rankers did not use there: looked up among all collected cards of the player."""
+        cards = []
+        for sp_id, salary, season_id, name in self.conn.execute(
+            "SELECT c.spid, c.salary, c.season_id, s.class_name FROM card c LEFT JOIN meta_season s ON s.season_id = c.season_id"
+            " WHERE c.pid = ?", (pid,),
+        ):  # fmt: skip
+            if season in "".join((name or "").split()).casefold() and (fits is None or fits(sp_id)):
+                cards.append({"sp_id": sp_id, "season": name, "season_img": self._season_img(season_id), "rankers": 0,
+                              "avg_grade": None, "most_used_grade": None, "price_at_most_used_grade": None, "salary": salary})  # fmt: skip
+        return cards
+
+    def _score_options(self, role: str, options: list[dict[str, Any]], knobs: dict[str, Any]) -> None:
+        """Knob scores for one slot's options (otherwise usage rate counts): prefer = mostly the wanted stat,
+        invest = usage counts double (cut last when over budget), save = cheapest first."""
+        if not options:
+            return
+        top_usage = max(o["entry"]["usage_rate"] for o in options) or 1
+        if stat := knobs.get("prefer", {}).get(role):
+            details = _card_details(self.conn, {o["card"]["sp_id"] for o in options})
+            values = {o["card"]["sp_id"]: stat_value(details.get(o["card"]["sp_id"]), stat) for o in options}
+            known = [v for v in values.values() if v is not None]
+            low, high = (min(known), max(known)) if known else (0, 0)
+            for o in options:
+                v = values[o["card"]["sp_id"]]
+                level = (v - low) / (high - low) if v is not None and high > low else 0.0
+                o["score"] = 0.7 * level + 0.3 * o["entry"]["usage_rate"] / top_usage  # ponytail: 고정 가중치 0.7/0.3
+        if role in knobs.get("invest", ()):
+            for o in options:
+                o["score"] = 2 * _score(o)
+        if role in knobs.get("save", ()):
+            most = max((o["price"] or 0) for o in options) or 1
+            for o in options:
+                o["score"] = 0.001 * (1 - (o["price"] or 0) / most)  # 사용률은 거의 보지 않고 싼 카드부터
+
+    def _squad_setup(
+        self, team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include,
+        names: Iterable[str] = (), knobs: dict[str, Any] | None = None,
+    ) -> _Squad | dict[str, Any]:
+        """Scope, slots, rules and options shared by the squad tools; a dict = nothing to choose from (the tool's
+        result as it is). `names` (띄어쓰기 없는 이름): players to look up beyond the usual top candidates (check_squad)."""
+        names = [n for n in names if n]
         chem = self._chemistry(chemistry) if chemistry else None
         must = ["".join(n.split()) for n in re.split(r"[,/+]", include or "") if n.strip()]  # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시)
+        knobs = knobs or {}
+        owned = knobs.get("owned", [])
+        must += [o["name"] for o in owned if o["name"] not in must]  # 가진 카드도 꼭 넣는다
         derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
         if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
             team_color = derived.id
@@ -1230,8 +1697,8 @@ class Toolbox:
         if season_rule:
             reqs["season"] = sum(layout.values())
         auto_cap = not slots and max_total_salary is None
-        if not slots:  # 선발 11명은 게임의 팀 급여 상한을 넘을 수 없다
-            max_total_salary = min(int(max_total_salary), SALARY_CAP) if max_total_salary is not None else SALARY_CAP
+        if auto_cap:  # 선발 11명은 사용자가 말하지 않으면 게임의 팀 급여 상한 (말하면 그 값을 따르고 결과에 경고)
+            max_total_salary = SALARY_CAP
         limits = {
             k: int(v) for k, v in (("price", max_total_price_bp), ("salary", max_total_salary)) if v is not None
         }  # fmt: skip
@@ -1244,15 +1711,19 @@ class Toolbox:
         for role, n in layout.items():
             top = n + (25 if slots else 8)
             res = top_players(
-                self.conn, usage_id, formation or ALL_FORMATIONS, role, top=200 if (chem or fits or must) else top, by="pid",
+                self.conn, usage_id, formation or ALL_FORMATIONS, role, top=200 if (chem or fits or must or names) else top, by="pid",
                 strict=bool(strict), min_sample=self.min_sample,
             )  # fmt: skip
             first = first or res
             options = []
             # 상위 후보에 더해, 사용률이 낮아도 그 자리에 쓰인 케미 명단 선수·팀컬러 카드는 모두 후보
             for i, p in enumerate(res.players):
-                wanted = {f"include:{name}" for name in must if name in "".join(p.name.split())}
-                if not (i < top or p.key in members or wanted or (fits and any(fits(x.sp_id) for x in p.seasons))):
+                pname = "".join((p.name or "").split())
+                if any(x in pname for x in knobs.get("exclude", ())):
+                    continue
+                wanted = {f"include:{name}" for name in must if name in pname}
+                listed = any(n in pname for n in names)
+                if not (i < top or p.key in members or wanted or listed or (fits and any(fits(x.sp_id) for x in p.seasons))):
                     continue
                 entry = self._player_entry(res, (role,), p)
                 cards = entry["cards"]
@@ -1260,17 +1731,47 @@ class Toolbox:
                     cards = [c for c in cards if fits(c["sp_id"])]
                     if not cards:
                         continue
+                own = next((o for o in owned if o["name"] in pname), None)
+                if own:  # 가진 카드: 그 시즌·강화로 고정, 시세는 0 (랭커가 적게 쓴 카드여도)
+                    note = None
+                    if own["season"]:
+                        matched = [c for c in cards if own["season"] in "".join((c["season"] or "").split()).casefold()]
+                        matched = matched or self._owned_cards(p.key, own["season"], fits if not season_rule else None)
+                        if not matched:  # 수집된 카드 목록에도 없는 시즌
+                            note = f"가진 카드 '{p.name} {own['season'].upper()}'는 수집된 카드 목록에 없어 {cards[0]['season']} 카드의 급여로 셈"
+                        cards = matched or cards[:1]
+                    if own["grade"]:
+                        cards = [{**c, "most_used_grade": own["grade"], "price_at_most_used_grade": self._price(c["sp_id"], own["grade"])} for c in cards]
+                    tags = wanted | ({"chem"} if p.key in members else set())
+                    options += [{"entry": entry, "card": c, "price": 0, "salary": c["salary"], "tags": tags, "owned": True,
+                                 **({"owned_note": note} if note else {})} for c in cards[:1]]  # fmt: skip
+                    continue
                 cards = _common_cards(cards, entry["rankers"], keep=lambda c: season_rule and fits(c["sp_id"]))
+                if knobs.get("min_grade"):  # 이 강화 이상: 덜 강화해 쓴 카드는 그 강화 시세로
+                    g = knobs["min_grade"]
+                    cards = [c if (c["most_used_grade"] or 0) >= g else
+                             {**c, "most_used_grade": g, "price_at_most_used_grade": self._price(c["sp_id"], g)} for c in cards]  # fmt: skip
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
                 for card in cards if limits else cards[:1]:
                     tags = {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(card["sp_id"]))) if ok} | wanted
                     options.append({"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags})
+            self._score_options(role, options, knobs)
             slot_options += [(role, options)] * n
         if first is None or not first.sample_size:
             return {"team_color": tc_name, "formation": formation, "lineup": [], "note": "이 조합은 스쿼드가 수집·집계되지 않음"}
 
-        chosen = _choose(slot_options, limits, reqs)
+        return _Squad(
+            tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
+            must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
+            strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first,
+        )  # fmt: skip
+
+    def _squad_result(self, sq: _Squad, chosen: list[dict[str, Any] | None], checking: bool = False) -> dict[str, Any]:
+        """The squad tool result for one pick per slot: lineup, totals and whether every rule held
+        (checking = check_squad: the model picked, so no alternatives and no 'cheapest swaps' note)."""
+        slot_options, limits, reqs, chem, fits, tc, tc_name = sq.slot_options, sq.limits, sq.reqs, sq.chem, sq.fits, sq.tc, sq.tc_name
+        season_rule, slots, must, first = sq.season_rule, sq.slots, sq.must, sq.first
 
         def total(kind: str) -> int:
             return sum(c[kind] for c in chosen if c and c[kind] is not None)
@@ -1286,13 +1787,14 @@ class Toolbox:
             if c["salary"] is None:
                 no_salary.append(e["name"])
             lineup.append({
+                **({"owned": True} if c.get("owned") else {}),
                 "role": role, "player": e["name"], "pid": e["pid"], "rankers": e["rankers"], "usage_rate": e["usage_rate"],
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
                                               "price_at_most_used_grade", "salary")},
             })  # fmt: skip
         picked = {c["entry"]["pid"] for c in chosen if c}
         alternatives: dict[str, list[dict[str, Any]]] = {}
-        for role, options in slot_options:
+        for role, options in [] if checking else slot_options:
             if role in alternatives:
                 continue
             seen: set[int] = set()
@@ -1309,16 +1811,16 @@ class Toolbox:
 
         out: dict[str, Any] = {
             "team_color": tc_name,
-            "formation": formation,
-            "formation_source": source,
-            "layout": layout,
-            "layout_from_squads": layout_squads,
-            "strict": bool(strict),
+            "formation": sq.formation,
+            "formation_source": sq.source,
+            "layout": sq.layout,
+            "layout_from_squads": sq.layout_squads,
+            "strict": sq.strict,
             "data_as_of": first.data_as_of,
             "sample_size": first.sample_size,
             "fallback_to_all_formations": first.fallback,
             "lineup": lineup,
-            "alternatives": alternatives,
+            **({} if checking else {"alternatives": alternatives}),
             "total_price_bp": total("price"),
             "total_price": format_bp(total("price")),
             "total_salary": total("salary"),
@@ -1336,7 +1838,7 @@ class Toolbox:
         if no_salary:
             out["no_salary_players"] = no_salary
             notes.append(f"급여 미수집 {len(no_salary)}명은 총 급여에서 빠짐")
-        if usage_id == ALL_RANKERS and first.data_as_of:
+        if sq.usage_id == ALL_RANKERS and first.data_as_of:
             out["ranking_scope"] = squad_range(self.conn, first.data_as_of)
         if fits and not season_rule:
             empty = sum(1 for c in chosen if c is None)
@@ -1359,7 +1861,7 @@ class Toolbox:
                     notes.append(f"'{name}'를 넣지 못함 (이 팀컬러·포메이션 랭커들이 쓴 기록이 없거나, 소속·급여·예산 조건에 맞는 카드가 없음)")
         if chem:
             need = reqs["chem"]
-            if derived:
+            if sq.derived:
                 out["team_color_from_chemistry"] = f"{chem['name']} 케미라 {tc_name} 팀컬러도 지킴 (11명 모두 그 소속)"
             inside = [c["entry"]["name"] for c in chosen if c and "chem" in c["tags"]]
             out["chemistry"] = {"team_color": chem["name"], "need": need, "players_in_lineup": inside,
@@ -1375,8 +1877,17 @@ class Toolbox:
                 "salary_cap": None if slots else SALARY_CAP,
                 "within_budget": within,
             }
-            if not within:
+            if not within and not checking:
                 notes.append("후보를 가장 싸게 바꿔도 예산·급여 한도를 넘음")
+            out["leftover"] = {"price": format_bp(limits["price"] - total("price")) if "price" in limits else None,
+                               "salary": limits["salary"] - total("salary") if "salary" in limits else None}  # fmt: skip
+            if not checking and "price" in limits and limits["price"] > total("price"):
+                left_salary = limits["salary"] - total("salary") if "salary" in limits else None
+                if ups := self._upgrades(slot_options, chosen, limits["price"] - total("price"), left_salary):
+                    out["upgrades"] = ups
+        if not slots and total("salary") > SALARY_CAP:
+            out["warnings"] = [f"총 급여 {total('salary')}: 게임 급여 상한 {SALARY_CAP} 초과 (사용자가 요청한 값)"]
+        notes += [c["owned_note"] for c in chosen if c and c.get("owned_note")]
         if notes:
             out["note"] = " / ".join(notes)
         return out
@@ -2023,7 +2534,7 @@ class Toolbox:
         if name == "recommend_players" and result.get("sample_size"):
             fm = result.get("formation_used") or "전체"
             return f"{result['team_color']} {fm if fm != '전체' else '전체 포메이션'} {result['role']} — 랭커 {result['sample_size']}명 스쿼드 ({as_of})"
-        if name == "recommend_squad" and result.get("lineup"):
+        if name in ("recommend_squad", "check_squad") and result.get("lineup"):
             return f"{result['team_color']} {result['formation']} 스쿼드 — 랭커 {result['sample_size']}명 스쿼드 ({as_of})"
         if name == "get_player_detail" and result.get("players"):
             s = result["players"][0]["scope"]

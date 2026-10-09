@@ -22,12 +22,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from .gemini import (
-    ANSWER_DEADLINE, MAX_EVIDENCE, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout, GeminiTurn,
-    Recheck, Reset, Thought, ToolCall, ToolResult, _drain, _preview,
+    ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
+    GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, _drain, _preview, unchecked_squad,
 )  # fmt: skip
 from .numbers import unsupported_numbers
-from .prompt import SYSTEM_PROMPT
-from .tools import TOOLS, Toolbox, for_model
+from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
+from .tools import Toolbox, for_model, tools_for
 
 log = logging.getLogger(__name__)
 
@@ -49,8 +49,10 @@ class Reply:
 class ToolChat:
     """Provider-neutral turn loop. Earlier turns are resent as question and answer text only (no tool results)."""
 
-    def __init__(self, toolbox: Toolbox, model: str, now: Callable[[], float] = time.time):
+    def __init__(self, toolbox: Toolbox, model: str, now: Callable[[], float] = time.time, judge: bool | None = None):
         self.toolbox, self.model, self.now = toolbox, model, now
+        self.judge = judges(model) if judge is None else judge  # 스쿼드를 모델이 직접 고르는가
+        self.prompt = JUDGE_PROMPT if self.judge else SYSTEM_PROMPT
         self.last_model: str | None = None
         self.deadline = ANSWER_DEADLINE
         self.history: list[tuple[str, str]] = []  # (질문, 답)
@@ -106,6 +108,7 @@ class ToolChat:
         seen: set[str] = set()
         evidence: list[str] = []
         results: list[Any] = []
+        nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
             reply = yield from self._round(messages, final)
@@ -120,6 +123,12 @@ class ToolChat:
                     note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
                     yield note
                     return GeminiTurn(note, calls, "tool_limit")
+                if not final and not nudged and unchecked_squad(calls):
+                    nudged = True
+                    log.warning("squad answered without check_squad — sending it back once")
+                    yield RESET
+                    messages.append({"role": "user", "content": CHECK_REQUEST})
+                    continue
                 if results:
                     text = yield from self._checked(messages, question, text, [*results, *known])
                 if reply.stop == "max_tokens":
@@ -176,14 +185,15 @@ class ClaudeChat(ToolChat):
     MAX_TOKENS = 8000  # 생각 + 답
     FALLBACK_BETA = "server-side-fallback-2026-07-01"  # 안전 분류기가 거절하면 서버가 다른 모델로 다시 답한다
 
-    def __init__(self, client: Any, toolbox: Toolbox, *, model: str | None = None, now: Callable[[], float] = time.time):
-        super().__init__(toolbox, model or self.DEFAULT_MODEL, now)
+    def __init__(self, client: Any, toolbox: Toolbox, *, model: str | None = None, now: Callable[[], float] = time.time,
+                 judge: bool | None = None):  # fmt: skip
+        super().__init__(toolbox, model or self.DEFAULT_MODEL, now, judge)
         self.client = client
-        self.tools = [{k: t[k] for k in ("name", "description", "input_schema")} for t in TOOLS]
+        self.tools = [{k: t[k] for k in ("name", "description", "input_schema")} for t in tools_for(self.judge)]
 
     def _round(self, messages: list[dict[str, Any]], final: bool) -> Generator[str, None, Reply]:
         with self.client.with_options(timeout=self._left(), max_retries=1).beta.messages.stream(
-            model=self.model, max_tokens=self.MAX_TOKENS, system=SYSTEM_PROMPT, tools=self.tools, messages=messages,
+            model=self.model, max_tokens=self.MAX_TOKENS, system=self.prompt, tools=self.tools, messages=messages,
             output_config={"effort": self.EFFORT}, cache_control={"type": "ephemeral"},  # 지시문·도구 설명은 캐시로
             tool_choice={"type": "none"} if final else {"type": "auto"},
             betas=[self.FALLBACK_BETA], fallbacks="default",
@@ -215,17 +225,17 @@ class OpenAIChat(ToolChat):
     DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
     def __init__(self, http: Any, toolbox: Toolbox, *, model: str, base_url: str | None = None, api_key: str | None = None,
-                 extra: dict[str, Any] | None = None, now: Callable[[], float] = time.time):  # fmt: skip
-        super().__init__(toolbox, model, now)
+                 extra: dict[str, Any] | None = None, now: Callable[[], float] = time.time, judge: bool | None = None):  # fmt: skip
+        super().__init__(toolbox, model, now, judge)
         self.http = http
         self.extra = extra or {}  # 요청 본문에 더할 값 (예: OpenRouter {"reasoning": {"enabled": false}})
         self.base_url = (base_url or os.environ.get("OPENAI_COMPAT_BASE_URL") or self.DEFAULT_BASE_URL).rstrip("/")
         self.api_key = api_key or os.environ.get("OPENAI_COMPAT_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
         self.tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
-                                                        "parameters": t["input_schema"]}} for t in TOOLS]  # fmt: skip
+                                                        "parameters": t["input_schema"]}} for t in tools_for(self.judge)]  # fmt: skip
 
     def _start(self, question: str) -> list[dict[str, Any]]:
-        return [{"role": "system", "content": SYSTEM_PROMPT}, *super()._start(question)]
+        return [{"role": "system", "content": self.prompt}, *super()._start(question)]
 
     def _round(self, messages: list[dict[str, Any]], final: bool) -> Generator[str, None, Reply]:
         left = self._left()

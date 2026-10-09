@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", help="모델 (기본: Gemini는 .env의 GEMINI_MODEL, Claude는 claude-sonnet-5-5)")
     parser.add_argument("--extra", type=json.loads, default=None,
                         help='openai: 요청 본문에 더할 JSON (예: \'{"reasoning": {"enabled": false}}\')')
+    parser.add_argument("--deadline", type=float, default=None, help="질문당 대기 상한(초). 기본은 웹의 일반 질문과 같은 120초")
+    parser.add_argument("--judge", choices=["auto", "on", "off"], default="auto",
+                        help="스쿼드를 모델이 직접 고르는가 (auto: lite가 아니면 직접)")
     parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS, help="질문 파일 (기본 eval/questions.txt)")
     parser.add_argument("--only", help="이 번호의 질문만 (예: 1-5,12)")
     parser.add_argument("--out", type=Path, help=f"보고서 경로 (기본: {DEFAULT_OUT_DIR}/chatbot-eval-날짜.md)")
@@ -81,10 +84,12 @@ def main(argv: list[str] | None = None) -> int:
 
     toolbox = Toolbox(sqlite3.connect(str(args.db)))
     results: list[Any] = []  # 이번 질문의 도구 결과 (숫자 대조용)
+    ran: list[tuple[str, dict[str, Any]]] = []  # 이번 질문에 실행한 도구 (답을 못 내도 보고서에 남긴다)
     run_tool = toolbox.run
 
     def recording_run(name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
         content, is_error = run_tool(name, tool_input)
+        ran.append((name, tool_input))
         results.append(json.loads(content))
         return content, is_error
 
@@ -121,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
 
             client = httpx.Client()
     tokens: Counter[str] = Counter()
+    judge = {"auto": None, "on": True, "off": False}[args.judge]
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
     out = args.out or DEFAULT_OUT_DIR / f"chatbot-eval-{stamp}.md"
@@ -129,21 +135,24 @@ def main(argv: list[str] | None = None) -> int:
     flagged = 0
     for n, (i, (question, expected)) in enumerate(questions, 1):
         results.clear()
+        ran.clear()
         started = time.monotonic()
         calls: list[tuple[str, dict[str, Any]]] = []
         model, used = None, Counter()
         if backend in ("gemini", "claude", "openai"):
             if backend == "gemini":  # 질문마다 새 대화
-                chat = GeminiChat(client, toolbox, model=primary, fallback_models=fallbacks)
+                chat = GeminiChat(client, toolbox, model=primary, fallback_models=fallbacks, judge=judge)
             elif backend == "claude":
-                chat = ClaudeChat(client, toolbox, model=args.model)
+                chat = ClaudeChat(client, toolbox, model=args.model, judge=judge)
             else:
-                chat = OpenAIChat(client, toolbox, model=args.model, extra=args.extra)
+                chat = OpenAIChat(client, toolbox, model=args.model, extra=args.extra, judge=judge)
+            if args.deadline:
+                chat.deadline = args.deadline
             try:
                 turn = chat.ask(question)
                 answer, calls, model = turn.text, turn.tool_calls, chat.last_model
             except Exception as exc:  # 한 질문 실패가 전체 평가를 멈추지 않게
-                answer = f"⚠ {describe_error(exc)}"
+                answer, calls = f"⚠ {describe_error(exc)}", list(ran)
             used = chat.tokens
             tokens.update(used)
         else:
@@ -166,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
             report.append(f"- 도구 `{name}` `{json.dumps(tool_input, ensure_ascii=False)}`")
         report.append(f"- 확인 필요 숫자: {', '.join(missing) if missing else '없음'}")
         report += ["", "```text", answer, "```", ""]
+        out.write_text("\n".join(report) + "\n", encoding="utf-8")  # 질문마다 저장: 중간에 멈춰도 끝난 질문은 남는다
         if backend == "gemini" and n < len(questions):
             time.sleep(args.pause)
 

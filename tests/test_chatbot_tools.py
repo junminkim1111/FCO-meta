@@ -277,7 +277,9 @@ def test_full_squad_keeps_the_game_salary_cap(toolbox):  # noqa: F811
     r = run(toolbox, "recommend_squad", args)  # 급여를 말하지 않아도 게임 상한 310
     assert r["total_salary"] == 250 and r["budget"]["within_budget"] and r["budget"]["salary_cap"] == 310
     assert [(s["player"], s["card"]["season"]) for s in r["lineup"] if s["player"]] == [("볼란치R", "S300"), ("볼란치L", "ICON")]
-    assert run(toolbox, "recommend_squad", {**args, "max_total_salary": 400})["budget"]["max_total_salary"] == 310
+    # 사용자가 급여 합을 더 크게 말하면 그 값을 따르고, 게임 상한을 넘으면 경고한다
+    r = run(toolbox, "recommend_squad", {**args, "max_total_salary": 400})
+    assert r["budget"]["max_total_salary"] == 400 and r["total_salary"] == 350 and "310 초과" in r["warnings"][0]
     # 일부 자리만 고를 때는 팀 전체 상한이 아니므로 걸지 않는다
     assert "budget" not in run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM,DM"})
 
@@ -513,3 +515,95 @@ def test_recommend_squad_includes_requested_players(toolbox):  # noqa: F811
     assert [s["player"] for s in r["lineup"]] == ["볼란치L"] and r["include"] == {"볼란치L": "볼란치L"}
     r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "없는선수"})
     assert r["include"] == {"없는선수": None} and "'없는선수'를 넣지 못함" in r["note"]
+
+
+def test_judge_tools_show_candidates_and_check_the_models_picks(toolbox):  # noqa: F811
+    from fco_meta.chatbot.prompt import JUDGE_PROMPT, judges
+    from fco_meta.chatbot.tools import tools_for
+
+    toolbox.conn.executemany(
+        "INSERT INTO card (spid, pid, season_id, name, salary, updated_at) VALUES (?, ?, ?, ?, ?, 'x')",
+        [(250000009, 9, 250, "볼란치R", 200), (300000009, 9, 300, "볼란치R", 100), (101000011, 11, 101, "볼란치L", 150)],
+    )
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM,DM", "max_total_salary": 310}
+    c = run(toolbox, "squad_candidates", args)
+    assert [p["player"] for p in c["candidates"]["DM"]] == ["볼란치R", "볼란치L"] and "lineup" not in c  # 도구의 조합은 숨김
+    assert {card["season"] for card in c["candidates"]["DM"][0]["cards"]} == {"S250", "S300"}
+
+    def check(*picks):
+        return run(toolbox, "check_squad", {**args, "picks": [{"role": r, "player": n, "season": s} for r, n, s in picks]})
+
+    r = check(("DM", "볼란치R", "S250"), ("DM", "볼란치L", None))
+    assert not r["ok"] and r["problems"] == ["총 급여 350 > 상한 310"]
+    r = check(("DM", "볼란치R", "S300"), ("DM", "볼란치L", None))
+    assert r["ok"] and r["total_salary"] == 250 and "alternatives" not in r
+    assert "같은 선수를 두 자리에: 볼란치R" in check(("DM", "볼란치R", "S300"), ("DM", "볼란치R", "S300"))["problems"]
+    problems = check(("ST", "볼란치R", None), ("DM", "볼란치L", "S999"))["problems"]
+    assert "자리가 아님" in problems[0] and "'S999' 카드는" in problems[1] and problems[2] == "DM 2자리가 비었음"
+    assert toolbox.run("check_squad", {**args, "picks": "볼란치R"})[1] is True
+
+    # 큰 모델만 직접 고른다: 도구와 지시문이 갈린다
+    names = lambda judge: {t["name"] for t in tools_for(judge)}  # noqa: E731
+    assert names(True) - names(False) == {"squad_candidates", "check_squad"} and "recommend_squad" in names(True)
+    assert judges("gemini-3.5-flash") and judges("deepseek/deepseek-v4-pro") and not judges("gemini-3.5-flash-lite")
+    assert "초안" in JUDGE_PROMPT and "check_squad" in JUDGE_PROMPT
+
+
+def test_squad_draft_shows_leftover_upgrades_and_owned_cards(toolbox):  # noqa: F811
+    toolbox.conn.executemany(
+        "INSERT INTO card (spid, pid, season_id, name, salary, updated_at) VALUES (?, ?, ?, ?, ?, 'x')",
+        [(250000009, 9, 250, "볼란치R", 20), (300000009, 9, 300, "볼란치R", 10), (101000011, 11, 101, "볼란치L", 15)],
+    )
+    # 볼란치L ICON은 6·7·8강 시세도 있다 (5강 9억 → 6강 +3억, 7강 +10억, 8강 +30억)
+    toolbox.conn.executemany(
+        "INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (101000011, ?, ?, '2026-09-28T12:00:00+00:00')",
+        [(6, 1_200_000_000), (7, 1_900_000_000), (8, 3_900_000_000)],
+    )
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM,DM", "max_total_price_bp": 3_000_000_000}
+    # 남은 예산을 쓰면: 사용률 높은 자리부터 한 단계씩 (볼란치L 5→6→7강, 8강은 +20억이라 못 감)
+    r = run(toolbox, "recommend_squad", args)
+    assert r["total_price_bp"] == 2_200_000_000 and r["leftover"]["price"] == "8억"
+    assert [(u["player"], u["from"], u["to"]) for u in r["upgraded"]] == [("볼란치L", "ICON 5강", "ICON 7강")]
+    # spend=false면 초안 그대로, 대신 올릴 수 있는 선택지를 보여 준다
+    r = run(toolbox, "recommend_squad", {**args, "spend": False})
+    assert r["total_price_bp"] == 1_200_000_000 and r["leftover"]["price"] == "18억"  # 남은 예산
+    # 남은 18억으로 올릴 수 있는 강화만 (8강은 +30억이라 빠짐)
+    assert r["upgrades"]["DM 볼란치L"]["grade_up"] == [
+        {"grade": 6, "price": "12억", "extra": "3억"}, {"grade": 7, "price": "19억", "extra": "10억"},
+    ]  # fmt: skip
+    # 예산이 없으면 업그레이드 선택지도 없다 (토큰 절약)
+    assert "upgrades" not in run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM,DM"})
+
+    # 이미 가진 카드는 총액에서 뺀다
+    picks = [{"role": "DM", "player": "볼란치R", "season": "S250", "owned": True}, {"role": "DM", "player": "볼란치L"}]
+    c = run(toolbox, "check_squad", {**args, "picks": picks})
+    assert c["ok"] and c["owned"]["players"] == ["볼란치R"] and c["total_price_bp"] < r["total_price_bp"]
+
+    # 후보는 바꿀 자리만
+    cand = run(toolbox, "squad_candidates", {"team_color": "아스널", "formation": "4-2-3-1", "roles": "DM"})
+    assert list(cand["candidates"]) == ["DM"]
+
+
+def test_squad_knobs_turn_wishes_into_the_search(toolbox):  # noqa: F811
+    toolbox.conn.executemany(
+        "INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (?, ?, ?, '2026-09-28T12:00:00+00:00')",
+        [(101000011, 8, 2_000_000_000), (250000009, 8, 600_000_000)],
+    )
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM,DM"}
+    base = run(toolbox, "recommend_squad", args)
+    assert [s["player"] for s in base["lineup"]] == ["볼란치R", "볼란치L"]
+    # 뺄 선수: 그 자리를 다른 선수로
+    r = run(toolbox, "recommend_squad", {**args, "exclude": "볼란치R"})
+    assert "볼란치R" not in [s["player"] for s in r["lineup"]] and r["applied"]["exclude"] == ["볼란치R"]
+    # 가진 카드: 그 카드로 고정, 시세는 0
+    r = run(toolbox, "recommend_squad", {**args, "owned": "볼란치L:ICON:5"})
+    mine = next(s for s in r["lineup"] if s.get("owned"))
+    assert mine["player"] == "볼란치L" and r["total_price_bp"] == base["total_price_bp"] - 900_000_000
+    # 강화 하한: 덜 강화해 쓴 카드는 그 강화 시세로
+    r = run(toolbox, "recommend_squad", {**args, "min_grade": 8})
+    assert {s["card"]["most_used_grade"] for s in r["lineup"]} == {8}
+    # 모르는 능력치는 도구 오류 (모델이 고쳐 다시 부른다)
+    assert toolbox.run("recommend_squad", {**args, "prefer": "DM:없는능력치"})[1] is True

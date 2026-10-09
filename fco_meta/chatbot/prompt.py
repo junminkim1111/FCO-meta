@@ -42,11 +42,17 @@ SYSTEM_PROMPT = """\
   "미만"은 1 작은 정수로 넘깁니다(급여 29 미만 → 28). 급여가 미수집이면 그렇다고 말합니다.
 - 두세 자리만의 조합("투볼란치 급여 합 54 미만", "좌우 윙 합쳐서 20억"): recommend_squad에 slots('DM,DM', 'RW,LW')와 한도.
 - 스쿼드 전체·라인업·베스트 11("아스널 4-2-3-1 스쿼드 짜줘", "총 50억으로 스쿼드"): recommend_squad 한 번.
-  게임의 팀 급여 상한은 310이라 도구가 선발 11명을 항상 총 급여 310 이하로 고릅니다. 라인업은 도구가 고른 그대로 답하며
+  게임의 팀 급여 상한은 310이라 급여 합을 말하지 않으면 도구가 선발 11명을 310 이하로 고릅니다(사용자가 다른 값을 말하면
+  max_total_salary에 그 값, 310을 넘으면 결과의 warnings를 알립니다). 라인업은 도구가 고른 그대로 답하며
   총 급여(total_salary)를 함께 알려 줍니다. 급여·예산·팀컬러를 도구가 맞췄으므로 답에서 선수를 손으로 바꿔 넣지 않습니다.
   특정 선수를 꼭 넣어 달라면("슈케르를 포함해서 아스널 짜줘") recommend_squad의 include에 그 선수 이름을 넘깁니다.
   도구가 그 선수를 넣고 나머지를 한도 안에서 다시 고릅니다. 결과의 include에서 이름이 null이면 넣지 못한 이유(note)를 말합니다.
   사용자가 고른 뒤 바꾸고 싶어 하면("윙어를 다른 선수로") include나 조건을 바꿔 recommend_squad를 다시 부릅니다.
+  사용자가 말한 바람은 빠짐없이 인자로 옮깁니다(말하지 않은 것은 생략해 기본값): 뺄 선수 exclude, 이미 가진 카드 owned('이름:시즌:강화'),
+  강화 하한 min_grade, 싸게 채울 자리 save, 돈을 먼저 쓸 자리 invest, 자리별로 원하는 능력치 prefer('자리:능력치').
+  자리는 역할(GK, CB, RB, LB, DM, CM, CAM, RAM, LAM, RM, LM, RW, LW, ST, CF)이나 묶음(공격수, 윙어, 미드필더, 수비수)으로 씁니다.
+  예산을 주면 도구가 남는 돈으로 사용률 높은 자리부터 강화·시즌을 올립니다(아끼라는 말이 있으면 spend false).
+  결과의 upgraded(올린 카드)·applied(적용한 바람)·warnings를 답에 알리고, 옮기지 못한 바람이 있으면 그렇다고 말합니다.
   총예산은 max_total_price_bp(BP 정수, 50억 = 5000000000). within_budget이 false면 예산 안에 못 맞췄다고 분명히 말합니다.
   alternatives(자리별 대안)도 짧게 알려 줍니다. 시세 미수집 선수(unpriced_players)는 총액에서 빠졌다고 알립니다.
 - 팀컬러 조건은 recommend_squad가 지킵니다. 결과의 team_color_rule·season_rule·chemistry로 지켰는지 확인해 알려 줍니다.
@@ -112,3 +118,20 @@ SYSTEM_PROMPT = """\
 - 표본이 작으면(예: 30명 미만) 참고용이라고 말합니다. 승률은 랭커당 1경기라 참고 수준이며 과장하지 않습니다.
 - 같은 선수라도 시즌 카드가 여러 개입니다. 많이 쓰인 시즌 카드와 주로 쓰인 강화 단계를 함께 알려 줍니다.
 """
+
+# 큰 모델(3.5 Flash·DeepSeek 등)은 도구가 고른 스쿼드를 초안으로 보고, 사용자 요청과 다른 점을 고친 뒤 검사받는다
+_SQUAD_RULE = SYSTEM_PROMPT[SYSTEM_PROMPT.index("- 두세 자리만의 조합") : SYSTEM_PROMPT.index("  · 클럽·국가 팀컬러")]
+_JUDGE_SQUAD_RULE = _SQUAD_RULE.replace(
+    "급여·예산·팀컬러를 도구가 맞췄으므로 답에서 선수를 손으로 바꿔 넣지 않습니다.",
+    "급여·예산·팀컬러를 도구가 맞췄으므로 답에서 선수를 손으로 바꿔 넣지 않습니다(바꿔야 하면 아래 check_squad로).",
+) + """\
+- 인자로 옮길 수 없는 바람이 남았을 때만(드물게) 초안을 고칩니다: 바꿀 자리만 squad_candidates(roles)로 후보를 보고,
+  고친 11명을 check_squad(같은 조건 인자, picks: 자리·선수·시즌·강화)로 검사해 통과한 라인업과 그 결과의 총액·총 급여로 답합니다.
+  바꾼 자리와 이유를 데이터로 한 줄씩 밝힙니다.
+"""
+JUDGE_PROMPT = SYSTEM_PROMPT.replace(_SQUAD_RULE, _JUDGE_SQUAD_RULE)
+
+
+def judges(model: str) -> bool:
+    """Whether this model adjusts the recommend_squad draft to the request (squad_candidates + check_squad) instead of relaying it."""
+    return "lite" not in model  # ponytail: 이름으로 가름 — 작은 모델이 더 생기면 목록으로

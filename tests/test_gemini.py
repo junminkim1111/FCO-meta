@@ -652,3 +652,40 @@ def test_second_tool_call_hands_the_question_to_the_heavier_model(toolbox):
     assert Escalate("flash", "두 번째 도구 호출") in events and Thought("생각 중") in events
     assert turn.text == "라이스입니다." and turn.tool_calls == [("list_formations", {})]
     assert chat.model == "lite"  # 다음 질문은 다시 lite부터
+
+
+def test_squad_question_goes_to_the_judging_model_with_its_tools(toolbox):
+    from fco_meta.chatbot.gemini import Escalate
+
+    squad = {"function_call": {"name": "recommend_squad", "args": {"team_color": "아스널"}}}
+    client = FakeClient([response([squad]), response([{"text": "직접 고른 스쿼드입니다."}])])
+    chat = GeminiChat(client, toolbox, model="gemini-lite", fallback_models=[])
+    events = []
+    gen = chat.ask_stream("아스널 스쿼드 짜줘", escalate_to="gemini-flash")
+    while True:
+        try:
+            events.append(next(gen))
+        except StopIteration as stop:
+            turn = stop.value
+            break
+    assert Escalate("gemini-flash", "스쿼드 구성") in events and turn.tool_calls == []  # lite는 스쿼드를 고르지 않는다
+    lite, flash = (r["config"] for r in client.models.requests)
+    tools = lambda c: {d.name for d in c.tools[0].function_declarations}  # noqa: E731
+    assert "recommend_squad" in tools(lite) and "check_squad" not in tools(lite)
+    assert {"recommend_squad", "squad_candidates", "check_squad"} <= tools(flash)  # 초안을 받고 고쳐 검사한다
+    assert "초안" in flash.system_instruction
+
+
+def test_squad_answered_without_check_is_sent_back_once(toolbox):
+    from fco_meta.chatbot.gemini import CHECK_REQUEST
+
+    cand = {"function_call": {"name": "squad_candidates", "args": {"team_color": "아스널"}}}
+    check = {"function_call": {"name": "check_squad", "args": {"team_color": "아스널", "picks": [{"role": "DM", "player": "볼란치R"}]}}}
+    client = FakeClient([
+        response([cand]), response([{"text": "검사 없이 쓴 스쿼드"}]),  # 검사를 건너뜀 → 돌려보낸다
+        response([check]), response([{"text": "검사한 스쿼드"}]),
+    ])  # fmt: skip
+    chat = GeminiChat(client, toolbox, model="gemini-flash", fallback_models=[])
+    turn = chat.ask("아스널 스쿼드 짜줘")
+    assert turn.text == "검사한 스쿼드" and [n for n, _ in turn.tool_calls] == ["squad_candidates", "check_squad"]
+    assert client.models.requests[2]["contents"][-1].parts[0].text == CHECK_REQUEST

@@ -17,8 +17,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .numbers import unsupported_numbers
-from .prompt import SYSTEM_PROMPT
-from .tools import TOOLS, Toolbox, for_model
+from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
+from .tools import Toolbox, for_model, tools_for
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +131,19 @@ RECHECK_REQUEST = (
     "방금 답에 쓴 수치 중 {numbers}는 이번 도구 결과에 없습니다. 도구 결과에 있는 값만 써서 답 전체를 다시 쓰세요. "
     "결과에 없는 값은 빼고, 결과에 있는 값은 미수집이라고 하지 말고 그대로 쓰세요. 다시 쓴다는 말은 하지 마세요."
 )
+
+
+# 스쿼드 후보를 받고 검사 없이 답했을 때 한 번 돌려보내는 요청 (작은 모델은 지시문만으로는 검사를 건너뛴다)
+CHECK_REQUEST = (
+    "고른 라인업을 아직 check_squad로 검사하지 않았습니다. squad_candidates에 준 조건과 picks로 check_squad를 부르고, "
+    "ok인 라인업과 그 결과의 총 급여·총액으로 답 전체를 다시 쓰세요. 다시 쓴다는 말은 하지 마세요."
+)
+
+
+def unchecked_squad(calls: list[tuple[str, dict[str, Any]]]) -> bool:
+    """The model got squad candidates but answered without checking its picks."""
+    names = {name for name, _ in calls}
+    return "squad_candidates" in names and "check_squad" not in names
 
 
 def _started(stream: Any) -> Iterator[Any]:
@@ -271,13 +284,13 @@ def _types():
     return types
 
 
-def function_declarations() -> list[Any]:
+def function_declarations(judge: bool = False) -> list[Any]:
     types = _types()
     return [
         types.FunctionDeclaration(
             name=t["name"], description=t["description"], parameters_json_schema=t["input_schema"]
         )
-        for t in TOOLS
+        for t in tools_for(judge)
     ]
 
 
@@ -296,6 +309,7 @@ class GeminiChat:
         model: str = DEFAULT_MODEL,
         fallback_models: tuple[str, ...] | list[str] = DEFAULT_FALLBACK_MODELS,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
+        judge: bool | None = None,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], float] = time.time,
     ):
@@ -316,16 +330,24 @@ class GeminiChat:
         self.discover = True  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 찾아 시도
         self._discovered: list[str] | None = None
         self.contents: list[Any] = []
-        self.config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[types.Tool(function_declarations=function_declarations())],
-            # 도구는 이 루프에서 직접 실행한다 (SDK 자동 호출 끔)
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        )
-        # 도구 호출 한도에 닿았을 때: 같은 도구 정의를 두되 호출은 막아, 받은 결과만으로 답을 쓰게 한다
-        self.final_config = self.config.model_copy(
-            update={"tool_config": types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))}
-        )
+        self.judge = judge  # 스쿼드를 모델이 직접 고르는가 (None = 답하는 모델로 정한다: lite가 아니면 직접)
+        # (직접 고르는가, 도구를 끄는가) → 설정. 도구 호출 한도에 닿았을 때는 같은 도구 정의를 두되 호출은 막아, 받은 결과만으로 답하게 한다
+        self.configs = {}
+        for judging in (False, True):
+            config = types.GenerateContentConfig(
+                system_instruction=JUDGE_PROMPT if judging else SYSTEM_PROMPT,
+                tools=[types.Tool(function_declarations=function_declarations(judging))],
+                # 도구는 이 루프에서 직접 실행한다 (SDK 자동 호출 끔)
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            )
+            self.configs[judging, False] = config
+            self.configs[judging, True] = config.model_copy(
+                update={"tool_config": types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))}
+            )
+
+    def _config(self, final: bool = False) -> Any:
+        """Prompt and tools for the model answering now (escalation can switch it mid-question)."""
+        return self.configs[judges(self.model) if self.judge is None else self.judge, final]
 
     def _left(self) -> float:
         """Seconds left for this question."""
@@ -335,7 +357,7 @@ class GeminiChat:
         left = self._left()
         if left < MIN_REQUEST_TIMEOUT:  # 남은 시간으로는 요청을 보낼 수도 없다
             raise AnswerTimeout(f"{model} 요청 전")
-        config = config or self.config
+        config = config or self._config()
         if left != float("inf"):  # 응답이 늦어도 남은 시간 안에서 끊는다 (밀리초)
             config = config.model_copy(update={"http_options": _types().HttpOptions(timeout=int(left * 1000))})
         if self.thoughts:  # 생각 요약을 함께 받는다 (생각하지 않는 모델은 빈 채로 온다)
@@ -537,7 +559,7 @@ class GeminiChat:
         flagged = len(self.contents) - 1
         request = RECHECK_REQUEST.format(numbers=", ".join(missing))
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=request)]))
-        received, new_finish, _ = yield from self._round(self.final_config)
+        received, new_finish, _ = yield from self._round(self._config(final=True))
         new_text = "".join(p.text for p in received if p.text and not p.thought).strip()
         if not new_text:  # 다시 쓰기가 비면 처음 답을 그대로 둔다
             del self.contents[flagged + 1 :]
@@ -558,11 +580,12 @@ class GeminiChat:
         seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
         evidence: list[str] = []  # 모델이 아니라 도구 결과로 만든 근거 줄
         results: list[Any] = []  # 이번 질문의 도구 결과 (수치 검증용)
+        nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
             if final:
                 log.warning("tool round limit (%d) reached, asking for an answer without tools", MAX_TOOL_ROUNDS)
-            received, finish, blocked = yield from self._round(self.final_config if final else None)
+            received, finish, blocked = yield from self._round(self._config(final))
             if not received:
                 note = f"응답을 받지 못했습니다{f' ({blocked})' if blocked else ''}. 질문을 바꿔 주세요."
                 yield note
@@ -570,13 +593,14 @@ class GeminiChat:
             self.contents.append(types.Content(role="model", parts=received))
 
             function_calls = [p.function_call for p in received if p.function_call]
-            if function_calls and not final and self._escalate and len(calls) + len(function_calls) > 1:
-                # 두 번째 도구부터는 더 무거운 모델이 이어받는다: 이번 응답은 버리고, 받은 도구 결과는 그대로 넘긴다
+            squad = any(fc.name == "recommend_squad" for fc in function_calls)
+            if function_calls and not final and self._escalate and (squad or len(calls) + len(function_calls) > 1):
+                # 두 번째 도구부터(스쿼드는 처음부터)는 더 무거운 모델이 이어받는다: 이번 응답은 버리고, 받은 도구 결과는 그대로 넘긴다
                 self.contents.pop()
                 self.model, self._escalate = self._escalate, None
                 if any(p.text and not p.thought for p in received):
                     yield RESET
-                yield Escalate(self.model, "두 번째 도구 호출")
+                yield Escalate(self.model, "스쿼드 구성" if squad else "두 번째 도구 호출")
                 continue
             if not function_calls or final:
                 text = "".join(p.text for p in received if p.text and not p.thought).strip()
@@ -584,6 +608,12 @@ class GeminiChat:
                     note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
                     yield note
                     return GeminiTurn(note, calls, "tool_limit")
+                if not final and not nudged and unchecked_squad(calls):
+                    nudged = True
+                    log.warning("squad answered without check_squad — sending it back once")
+                    yield RESET
+                    self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=CHECK_REQUEST)]))
+                    continue
                 if results:  # 도구로 조회한 답만 검증한다 (인사·범위 밖 질문은 대조할 결과가 없음)
                     text, finish = yield from self._checked(question, text, finish, [*results, *known])
                 if finish == "MAX_TOKENS":
