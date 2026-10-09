@@ -159,12 +159,14 @@ class _Session:
         self.lock = threading.Lock()  # 같은 대화의 질문은 차례로
         self.history: list[tuple[str, str]] = []
         self.bots: dict[str, list[Any]] = {}  # key → [chat, history 중 이 chat이 아는 개수]
-        self.team: Team | None = None  # @닉네임으로 붙인 팀 (뗄 때까지 질문마다 모델에 함께 보낸다)
+        self.team: Team | None = None  # @닉네임으로 붙인 팀: 다음 질문 하나가 가져간다 (멘션처럼)
+        self.last: str | None = None  # 마지막 질문 (팀 블록 없이, Jev가 이어지는 질문인지 볼 때)
 
-    def ask(self, message: str) -> str:
-        """What the model gets: the attached team ahead of the question."""
-        # ponytail: 질문마다 팀 블록(약 400토큰)을 다시 붙인다 — 대화가 길어지면 바뀐 때만 붙이도록
-        return f"{self.team.for_model()}\n\n{message}" if self.team else message
+    def take(self, message: str) -> tuple[str, Team | None]:
+        """What the model gets for this question: the attached team ahead of it, used up by this question
+        (its block stays in the history, so follow-ups still know the team)."""
+        team, self.team = self.team, None
+        return (f"{team.for_model()}\n\n{message}" if team else message), team
 
     def bot(self, key: str, make: Callable[[], Any]) -> Any:
         entry = self.bots.get(key)
@@ -175,8 +177,9 @@ class _Session:
         entry[1] = len(self.history)
         return entry[0]
 
-    def answered(self, key: str | None, question: str, answer: str) -> None:
+    def answered(self, key: str | None, question: str, answer: str, plain: str | None = None) -> None:
         self.history.append((question, answer))
+        self.last = plain or question
         if key in self.bots:  # 답한 chat은 이 턴을 이미 안다
             self.bots[key][1] = len(self.history)
 
@@ -455,21 +458,22 @@ def create_app(
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
             entry: dict[str, Any] = {"q": req.message, "session": session_id[:8], "outcome": "cancelled"}
-            if session.team:
-                entry["team"] = session.team.nickname
+            ask, team = session.take(req.message)
+            if team:
+                entry["team"] = team.nickname
             keep = _TraceLog()  # 관리자 페이지의 답변 기록에서 줄을 누르면 보이는 trace·답변
             try:
-                yield from answer_events(entry, keep)
+                yield from answer_events(entry, keep, ask, team)
             finally:
                 chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
 
-        def answer_events(entry: dict[str, Any], keep: _TraceLog):
+        def answer_events(entry: dict[str, Any], keep: _TraceLog, ask: str, team: Team | None):
             yield _event(type="start", session_id=session_id)
             # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
             with session.lock:
                 first = not session.history  # 대화의 첫 질문만 캐시한다
-                route = _jev_route(req.message, session.history[-1][0] if session.history else None)
+                route = _jev_route(req.message, session.last)
                 if route and route.blocked:  # 범위 밖·프롬프트 공격 → LLM 없이 거절 문구
                     session.answered(None, req.message, REFUSAL)
                     entry.update(outcome="blocked", route=f"{route.scope} ({route.describe()})")
@@ -481,7 +485,7 @@ def create_app(
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
                 if req.mode == "auto":
-                    cached = answers.get(req.message) if first and not session.team else None
+                    cached = answers.get(req.message) if first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
                         entry.update(outcome="cached", chars=len(cached))
@@ -523,7 +527,7 @@ def create_app(
                 if handover:
                     options["fallback"] = False
                 bot = session.bot(key, make_bot(key))
-                stream = bot.ask_stream(session.ask(req.message), **options)
+                stream = bot.ask_stream(ask, **options)
                 try:
                     try:
                         turn = yield from _relay(stream, req.trace, keep)
@@ -539,7 +543,7 @@ def create_app(
                         yield _event(type="reset")
                         key = "deep"
                         bot = session.bot(key, make_bot(key))
-                        stream = bot.ask_stream(session.ask(req.message), deadline=LONG_DEADLINE, thoughts=True)
+                        stream = bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=True)
                         turn = yield from _relay(stream, req.trace, keep)
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
@@ -552,7 +556,7 @@ def create_app(
                     return
                 finally:  # 정지로 끊겨도 잠금을 풀기 전에 닫아, 그 질문을 기록에서 빼는 일이 다음 질문보다 먼저 끝나게 한다
                     stream.close()
-                session.answered(key, req.message, turn.text)
+                session.answered(key, ask, turn.text, req.message)  # 팀 블록째 남겨 이어지는 질문도 그 팀을 안다
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
@@ -580,8 +584,8 @@ def create_app(
             raise HTTPException(status_code=429, detail=refused)
         session_id = req.session_id or uuid.uuid4().hex
         history = list(session_for(session_id).history)
-        ask = session_for(session_id).ask(req.message)
-        route = _jev_route(req.message, history[-1][0] if history else None)
+        ask, _ = session_for(session_id).take(req.message)
+        route = _jev_route(req.message, session_for(session_id).last)
         if route and route.blocked:  # 범위 밖·공격은 세 모델 모두 부르지 않는다
             chat_log.record(q=req.message, outcome="blocked", route=f"{route.scope} ({route.describe()})")
             lines_ = [_event(type="start", session_id=session_id, compare_id=None, panes=list(COMPARE_PANES)),

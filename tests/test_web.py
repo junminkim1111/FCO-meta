@@ -623,9 +623,12 @@ def test_attached_team_goes_ahead_of_each_question_until_removed(db, tmp_path, m
     got = client.post("/api/team", json={"nickname": "레몬"}).json()
     sid = got["session_id"]
     assert got["label"] == "10-09 공식경기 · 4-2-3-1 · 선발 1명"
+    # 멘션처럼: 붙인 다음 질문 하나만 팀과 함께, 그 뒤 질문은 질문만 (대화 기록에는 팀 블록째 남는다)
     ask(client, "내 팀 업그레이드 추천해줘", session_id=sid)
     ask(client, "그럼 더 싼 걸로", session_id=sid)
-    assert all(q.startswith("[사용자 팀: @레몬") and q.endswith(m) for (_, q, _), m in zip(asked, ["추천해줘", "싼 걸로"]))
+    assert asked[0][1].startswith("[사용자 팀: @레몬") and asked[0][1].endswith("추천해줘") and asked[1][1] == "그럼 더 싼 걸로"
+    # 보내기 전에 떼면(✕) 질문만
+    client.post("/api/team", json={"nickname": "레몬", "session_id": sid})
     assert client.delete("/api/team", params={"session_id": sid}).json() == {"ok": True}
     ask(client, "볼란치 추천", session_id=sid)
-    assert asked[-1][1] == "볼란치 추천"  # 떼면 질문만
+    assert asked[-1][1] == "볼란치 추천"

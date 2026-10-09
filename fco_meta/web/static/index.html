@@ -280,19 +280,26 @@
           display: flex; align-items: center; justify-content: center; background: #fff; color: #0b0b0d;
           box-shadow: 0 1px 3px rgba(0, 0, 0, .2); font-size: 14px; line-height: 1; }
   #send svg { width: 18px; height: 18px; }
-  /* @닉네임: 입력창 위 작은 파란 칸에서 팀을 불러오면, 입력창 첫 줄 앞에 파란 @닉네임 표시 (✕로 뗌) */
-  #team-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border-radius: 12px;
-              border: 1px solid rgba(96, 165, 250, .6); background: rgba(59, 130, 246, .12); font-size: 13px; }
+  /* @닉네임: 빈 입력창에 @ → 입력창 위 작은 닉네임 칸(안쪽 → 버튼, 밖을 누르면 닫힘). 불러오면 입력창 첫 줄 앞에 하늘색 @닉네임 (✕는 올렸을 때만) */
+  #team-box { width: 50%; min-width: 200px; margin-bottom: 8px; }
   #team-box[hidden] { display: none; }
-  #team-box input { flex: 1; min-width: 120px; font: inherit; color: var(--text); background: var(--field); border: 1px solid rgba(96, 165, 250, .5);
-                    border-radius: 8px; padding: 5px 8px; }
-  #team-box button { font: inherit; border-radius: 8px; padding: 5px 10px; border: 1px solid rgba(96, 165, 250, .6); background: none; color: #93c5fd; cursor: pointer; }
-  #team-box button.ok { background: #3b82f6; border-color: #3b82f6; color: #fff; }
-  #team-box .hint { width: 100%; color: #93c5fd; } #team-box .hint.err { color: var(--loss); }
-  #team-chip { position: absolute; left: 13px; top: 11px; z-index: 3; display: inline-flex; align-items: center; gap: 4px; font-size: 14px;
-               color: #60a5fa; font-weight: 600; line-height: 1.5; }
+  #team-box .field { position: relative; }
+  #team-box input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; color: var(--text); background: var(--field);
+                    border: 1px solid #60a5fa; border-radius: 999px; padding: 7px 40px 7px 14px; outline: none; }
+  #team-box input:focus { box-shadow: 0 0 0 3px rgba(96, 165, 250, .25); }
+  #team-box button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0; border: 0;
+                     border-radius: 50%; background: #3b82f6; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  #team-box button:disabled { opacity: .5; cursor: default; }
+  #team-box button svg { width: 15px; height: 15px; }
+  #team-box .hint { display: block; margin: 4px 0 0 14px; font-size: 12px; color: var(--muted); }
+  #team-box .hint:empty { display: none; } #team-box .hint.err { color: var(--loss); }
+  #team-chip { position: absolute; left: 11px; top: 10px; z-index: 3; display: inline-flex; align-items: center; font-size: 14px; line-height: 1.5;
+               color: #60a5fa; font-weight: 600; background: rgba(96, 165, 250, .16); border-radius: 6px; padding: 0 6px; }
   #team-chip[hidden] { display: none; }
-  #team-chip button { border: 0; background: none; color: #60a5fa; cursor: pointer; padding: 0 2px; font-size: 12px; opacity: .8; }
+  #team-chip button { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
+                      background: #3b82f6; color: #fff; font-size: 9px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+  #team-chip:hover button, #team-chip button:focus-visible { opacity: 1; }
+  .msg.me .mention { color: #2563eb; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -335,8 +342,9 @@
     <dialog id="pick-dialog"><form method="dialog"><p>이 답변을 선택할까요? 다른 답변은 사라지고 이 답변으로 대화를 이어 갑니다.</p>
       <div class="row"><button value="no">취소</button><button value="yes" class="yes">선택</button></div></form></dialog>
     <form id="chat-form">
-      <div id="team-box" hidden><span>닉네임</span><input id="team-name" maxlength="30" autocomplete="off" placeholder="팀을 불러올 FC온라인 닉네임">
-        <button type="button" class="ok" id="team-ok">확인</button><button type="button" id="team-cancel">취소</button><span class="hint" id="team-hint"></span></div>
+      <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="닉네임" aria-label="팀을 불러올 닉네임">
+        <button type="button" id="team-ok" aria-label="팀 불러오기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
+        <span class="hint" id="team-hint" role="alert"></span></div>
       <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button></div>
     </form>
   </section>
@@ -714,7 +722,7 @@ async function send(text) {
   if (inflight) return;
   const ctrl = new AbortController();
   setBusy(ctrl);
-  say("me", text);
+  mention(say("me", text));
   const mode = deepNext || deepAll || "auto";
   deepNext = null;
   const trace = traceOn ? traceBox() : null;
@@ -795,13 +803,13 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
     $("chat-form").requestSubmit();
   }
 });
-// @닉네임: 빈 입력창에 @를 치면 위에 작은 칸이 뜨고, 그 유저의 최근 경기 선발 11명을 불러와 대화에 붙인다 (✕·/cancel로 뗄 때까지)
+// @닉네임: 빈 입력창에 @를 치면 위에 작은 칸이 뜨고, 그 유저의 최근 경기 선발 11명을 불러와 다음 질문에 붙인다 (멘션처럼 그 질문 한 번)
 let team = null; // 붙인 팀 { nickname, label }
 function openTeamBox() {
   $("team-box").hidden = false; $("team-hint").textContent = ""; $("team-hint").className = "hint";
   $("team-name").value = ""; $("team-name").focus();
 }
-function closeTeamBox() { $("team-box").hidden = true; $("msg").focus(); }
+function closeTeamBox() { if (!$("team-box").hidden) { $("team-box").hidden = true; $("msg").focus(); } }
 function showTeam() { // 입력창 첫 줄을 표시만큼 들여 써서 "@닉네임 질문…"처럼 보이게
   $("team-chip").hidden = !team;
   $("team-chip-name").textContent = team ? "@" + team.nickname : "";
@@ -817,12 +825,19 @@ async function loadTeam() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { $("team-hint").className = "hint err"; $("team-hint").textContent = data.detail || "팀을 불러오지 못했어요."; return; }
     sessionId = data.session_id;
-    team = { nickname: data.nickname, label: data.label };
+    team = { nickname: data.nickname, label: data.label + (data.old ? " (30일 넘은 경기)" : "") };
     closeTeamBox(); showTeam();
-    note(`@${data.nickname} 팀을 붙였어요: ${data.label}${data.old ? " (30일 넘은 경기)" : ""}. 이제 질문에 이 팀이 함께 전달됩니다. ✕나 /cancel로 뗄 수 있어요.`);
   } catch {
     $("team-hint").className = "hint err"; $("team-hint").textContent = "연결하지 못했어요.";
   } finally { $("team-ok").disabled = false; }
+}
+// 질문 말풍선 앞에 파란 @닉네임. 팀은 그 질문이 가져가므로 입력창에서는 뗀다 (keep: 비교 세 칸 중 앞의 둘은 아직 떼지 않음)
+function mention(bubble, keep = false) {
+  if (team) {
+    bubble.prepend(el("span", { class: "mention", text: `@${team.nickname} ` }));
+    if (!keep) { team = null; showTeam(); }
+  }
+  return bubble;
 }
 function dropTeam() {
   if (!team) return;
@@ -834,7 +849,9 @@ $("msg").addEventListener("keydown", (ev) => { // 빈 입력창에서 지우기 
   if (ev.key === "Backspace" && team && !$("msg").value) dropTeam();
 });
 $("team-ok").addEventListener("click", loadTeam);
-$("team-cancel").addEventListener("click", closeTeamBox);
+document.addEventListener("pointerdown", (ev) => { // 칸 밖을 누르면 닫힌다
+  if (!$("team-box").hidden && !$("team-box").contains(ev.target)) closeTeamBox();
+});
 $("team-off").addEventListener("click", dropTeam);
 $("team-name").addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); loadTeam(); }
@@ -899,7 +916,7 @@ function command(text) {
       "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
       "/trace — 모델이 고른 경로·생각·도구 결과를 답 위에 함께 보여 줍니다",
       "/cancel — 켜 둔 명령어를 모두 끄고 기본 모델로 돌아갑니다",
-      "@닉네임 — 빈 입력창에 @를 치고 닉네임을 넣으면 그 유저의 최근 경기 선발 11명을 불러와 질문에 함께 보냅니다 (✕로 떼기)",
+      "@닉네임 — 빈 입력창에 @를 치고 닉네임을 넣으면 그 유저의 최근 경기 선발 11명을 불러와 그 질문에 함께 보냅니다",
       "/help — 이 목록",
     ].join("\n"));
   }
@@ -977,7 +994,7 @@ async function sendCompare(text) {
   $("compare").replaceChildren(...shuffled().map((key, i) => {
     const title = `답변 ${"ABC"[i]}`, stat = el("span", { class: "stat", text: "" }), body = el("div", { class: "body" });
     const trace = traceOn ? traceBox() : null, answer = el("div", { class: "msg bot" });
-    body.append(el("div", { class: "msg me", text }), ...(trace ? [trace] : []), answer);
+    body.append(mention(el("div", { class: "msg me", text }), i < 2), ...(trace ? [trace] : []), answer);
     answer.append(el("span", { class: "shimmer", text: THINKING }));
     const section = el("section", { class: "pane" }, el("h3", {}, el("span", { text: title }), stat), body);
     panes[key] = { key, title, section, stat, body, trace, answer, text: "" };
