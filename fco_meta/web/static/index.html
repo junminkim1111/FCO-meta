@@ -829,6 +829,18 @@ function command(text) {
     if ($("chat").classList.contains("comparing")) closeCompare();
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
+  if (cmd === "/help" && !flags.length) {
+    return note([
+      "명령어 (질문 대신 입력, 새로고침하면 모두 처음 상태로)",
+      "/deep — 다음 질문 하나를 DeepSeek V4 Pro(생각 끔)가 답합니다. 최대 5분",
+      "/deep --r — 같은데 생각을 켭니다 (더 깊게, 더 느리게)",
+      "/deep --a — 다음 질문만이 아니라 새로고침하기 전까지 계속 (--r과 함께 쓸 수 있음)",
+      "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
+      "/trace — 모델이 고른 경로·생각·도구 결과를 답 위에 함께 보여 줍니다",
+      "/cancel — 켜 둔 명령어를 모두 끄고 기본 모델로 돌아갑니다",
+      "/help — 이 목록",
+    ].join("\n"));
+  }
   if (cmd === "/compare" && !flags.length) {
     note("/compare 적용: 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답합니다. 마음에 드는 답을 누르고 한 번 더 눌러 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
     return openCompare();
