@@ -328,6 +328,17 @@ def test_chat_outcomes_are_logged_for_the_admin_page(db, tmp_path, monkeypatch):
     summary = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
     assert summary["total"] == 4 and summary["by_outcome"]["busy"] == 1
 
+    # 줄을 누르면: /trace를 안 켰어도 그 질문의 trace와 답변, 저장하면 저장한 기록에
+    key = {"X-Admin-Key": "secret"}
+    answered = next(r for r in summary["recent"] if r["outcome"] == "ok")
+    assert client.get("/api/admin/detail", params={"id": answered["id"]}).status_code == 401
+    detail = client.get("/api/admin/detail", params={"id": answered["id"]}, headers=key).json()
+    assert detail["answer"] and [t["kind"] for t in detail["trace"]][0] == "route" and not detail["saved"]
+    assert client.post(f"/api/admin/saved/{answered['id']}", headers=key).json()["answer"] == detail["answer"]
+    assert client.get("/api/admin/logs", headers=key).json()["saved"][0]["id"] == answered["id"]
+    assert client.delete(f"/api/admin/saved/{answered['id']}", headers=key).json() == {"ok": True}
+    assert client.get("/api/admin/detail", params={"id": "없는id"}, headers=key).status_code == 404
+
 
 def test_admin_page_is_hidden_without_a_key(client):
     assert client.get("/admin").status_code == 404
@@ -374,7 +385,7 @@ class Recorder:
     def ask_stream(self, message, **options):
         from fco_meta.chatbot.gemini import GeminiTurn, Thought
 
-        self.asked.append((self.name, message, options))
+        self.asked.append((self.name, message, {k: v for k, v in options.items() if k != "thoughts"}))  # 생각은 항상 받는다
         if options.get("thoughts"):
             yield Thought("생각")
         yield f"{self.name} 답"
@@ -390,7 +401,8 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: bots.setdefault("gemini", Recorder("gemini", asked)))
     monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: bots.setdefault(f"deep{reasoning}", Recorder(f"deep{reasoning}", asked)))
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
-    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret"))
+    limit = web_app.RateLimit(per_minute=20)
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret", limit=limit))
 
     _, done = ask(client, "아스널 볼란치 추천")  # 일반 → Flash-Lite, 두 번째 도구부터 3.5 Flash
     sid = done["session_id"]
@@ -410,6 +422,20 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     res = client.post("/api/chat", json={"message": "볼란치", "trace": True})
     traces = [json.loads(line) for line in res.text.splitlines() if '"trace"' in line]
     assert [t["kind"] for t in traces] == ["route", "thought"] and "Flash-Lite" in traces[0]["text"]
+
+    # 3.5 Flash가 한도 소진으로 쉬는 동안: 스쿼드·복잡한 질문은 DeepSeek 생각 끔이, 일반 질문은 Flash-Lite가 끝까지
+    import time
+
+    from fco_meta.chatbot import gemini
+
+    monkeypatch.setitem(gemini._COOLDOWN, web_app.FLASH_MODEL, time.time() + 600)
+    asked.clear()
+    ask(client, "레알 100억으로 짜 줘", session_id=sid)
+    ask(client, "레알 볼란치 추천", session_id=sid)
+    assert asked == [
+        ("deepFalse", "레알 100억으로 짜 줘", {"deadline": web_app.LONG_DEADLINE}),
+        ("gemini", "레알 볼란치 추천", {}),
+    ]  # fmt: skip
 
 
 def test_heavy_words():
@@ -438,7 +464,7 @@ def test_compare_answers_in_three_panes_twice_an_hour(db, tmp_path, monkeypatch)
     answers = {e["pane"]: e["text"] for e in events if e["type"] == "delta"}
     assert answers == {"flash": "flash 답", "deep_r": "deepTrue 답", "deep": "deepFalse 답"}
     assert events[-1]["type"] == "all_done" and sum(e["type"] == "done" for e in events) == 3
-    assert all(o == {"deadline": web_app.LONG_DEADLINE, "thoughts": False} for _, _, o in asked)
+    assert all(o == {"deadline": web_app.LONG_DEADLINE} for _, _, o in asked)
     assert client.post("/api/compare", json={"message": "2"}).status_code == 200
     third = client.post("/api/compare", json={"message": "3"})
     assert third.status_code == 429 and "1시간에 2번" in third.json()["detail"]

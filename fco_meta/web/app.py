@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..chatbot import gemini
 from ..chatbot.gemini import RESET, Escalate, Recheck, Thought, ToolCall, ToolResult, describe_error
 from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
@@ -170,33 +171,57 @@ class _Session:
             self.bots[key][1] = len(self.history)
 
 
-def _relay(stream: Any, trace: bool, **extra: Any):
-    """ask_stream events → NDJSON lines (trace adds the model's thoughts, tool results and hand-offs); returns the turn."""
+class _TraceLog:
+    """What /trace shows for one question — kept for the admin page whether or not the visitor turned it on."""
+
+    def __init__(self) -> None:
+        self.started, self.lines, self.answer = time.monotonic(), [], None
+
+    def add(self, kind: str, **fields: Any) -> None:
+        if kind == "thought" and self.lines and self.lines[-1]["kind"] == "thought":  # 생각은 조각으로 와서 한 줄로 잇는다
+            self.lines[-1]["text"] += fields["text"]
+            return
+        self.lines.append({"at": round(time.monotonic() - self.started, 1), "kind": kind, **fields})
+
+    def detail(self) -> dict[str, Any]:
+        return {"trace": self.lines, "answer": self.answer}
+
+
+def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any):
+    """ask_stream events → NDJSON lines (trace adds the model's thoughts, tool results and hand-offs; `keep` records
+    them all for the admin page either way); returns the turn."""
+    keep = keep or _TraceLog()
+    started = False
     while True:
         try:
             piece = next(stream)
         except StopIteration as stop:
             return stop.value
+        line: dict[str, Any] | None = None  # trace 한 줄
         if piece is RESET:
             yield _event(type="reset", **extra)
         elif isinstance(piece, ToolCall):
+            keep.add("tool", name=piece.name, args=piece.args)
             yield _event(type="tool", name=piece.name, args=piece.args, **extra)
         elif isinstance(piece, Recheck):  # 수치를 다시 쓰는 중 (화면에는 진행 문구)
             yield _event(type="tool", name="check_numbers", args={}, **extra)
-            if trace:
-                yield _event(type="trace", kind="recheck", text="결과에 없는 수치: " + ", ".join(piece.numbers), **extra)
+            line = {"kind": "recheck", "text": "결과에 없는 수치: " + ", ".join(piece.numbers)}
         elif isinstance(piece, Escalate):
             yield _event(type="tool", name="escalate", args={}, **extra)
-            if trace:
-                yield _event(type="trace", kind="escalate", text=f"{piece.reason} → {piece.model}이 이어받음", **extra)
+            line = {"kind": "escalate", "text": f"{piece.reason} → {piece.model}이 이어받음"}
         elif isinstance(piece, Thought):
-            if trace:
-                yield _event(type="trace", kind="thought", text=piece.text, **extra)
+            line = {"kind": "thought", "text": piece.text}
         elif isinstance(piece, ToolResult):
-            if trace:
-                yield _event(type="trace", kind="result", name=piece.name, ok=piece.ok, text=piece.preview, **extra)
+            line = {"kind": "result", "name": piece.name, "ok": piece.ok, "text": piece.preview}
         else:
+            if not started:
+                started = True
+                keep.add("first", text="답이 나오기 시작")
             yield _event(type="delta", text=piece, **extra)
+        if line:
+            keep.add(**line)
+            if trace:
+                yield _event(type="trace", **line, **extra)
 
 
 def _visitor(request: Request) -> str:
@@ -410,12 +435,13 @@ def create_app(
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
             entry: dict[str, Any] = {"q": req.message, "session": session_id[:8], "outcome": "cancelled"}
+            keep = _TraceLog()  # 관리자 페이지의 답변 기록에서 줄을 누르면 보이는 trace·답변
             try:
-                yield from answer_events(entry)
+                yield from answer_events(entry, keep)
             finally:
-                chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000))
+                chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
 
-        def answer_events(entry: dict[str, Any]):
+        def answer_events(entry: dict[str, Any], keep: _TraceLog):
             yield _event(type="start", session_id=session_id)
             # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
@@ -425,6 +451,8 @@ def create_app(
                 if route and route.blocked:  # 범위 밖·프롬프트 공격 → LLM 없이 거절 문구
                     session.answered(None, req.message, REFUSAL)
                     entry.update(outcome="blocked", route=f"{route.scope} ({route.describe()})")
+                    keep.add("route", text=f"{route.describe()} → 거절 문구 (모델 호출 없음)")
+                    keep.answer = REFUSAL
                     if req.trace:
                         yield _event(type="trace", kind="route", text=f"{route.describe()} → 거절 문구 (모델 호출 없음)")
                     yield _event(type="delta", text=REFUSAL)
@@ -435,6 +463,8 @@ def create_app(
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
                         entry.update(outcome="cached", chars=len(cached))
+                        keep.add("route", text="같은 첫 질문의 저장된 답 (모델 호출 없음)")
+                        keep.answer = cached
                         yield _event(type="delta", text=cached)
                         yield _event(type="done", tool_calls=[], cached=True)
                         return
@@ -445,8 +475,15 @@ def create_app(
                         word = heavy_word(req.message)
                         heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
                     options: dict[str, Any] = {"model": FLASH_MODEL} if heavy else {"escalate_to": FLASH_MODEL}
-                    entry["route"] = why
                     why += f" → {FLASH_MODEL}" if heavy else f" → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
+                    if _flash_blocked() and _deepseek_ready():  # 3.5 Flash 한도 소진·혼잡: 그 몫은 DeepSeek 생각 끔이
+                        if heavy:
+                            key, options = "deep", {"deadline": LONG_DEADLINE}
+                            why += f" (한도 소진 → {DEEP_LABEL['deep']})"
+                        else:  # 넘겨받을 모델이 없으니 Flash-Lite가 끝까지 답한다
+                            options = {}
+                            why += " (3.5 Flash 한도 소진 → Flash-Lite가 끝까지)"
+                    entry["route"] = why
                 else:
                     if not _deepseek_ready():
                         entry.update(outcome="error", error="OPENROUTER_API_KEY 없음")
@@ -455,16 +492,19 @@ def create_app(
                         return
                     key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/deep → {DEEP_LABEL[req.mode]}"
                     entry["mode"] = req.mode
+                options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
+                keep.add("route", text=why)
                 if req.trace:
-                    options["thoughts"] = True
                     yield _event(type="trace", kind="route", text=why)
                 bot = session.bot(key, make_bot(key))
                 stream = bot.ask_stream(req.message, **options)
                 try:
-                    turn = yield from _relay(stream, req.trace)
+                    turn = yield from _relay(stream, req.trace, keep)
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
                     entry.update(outcome="busy", error=describe_error(exc), model=getattr(bot, "last_model", None))
+                    keep.add("error", text=describe_error(exc))
+                    keep.answer = BUSY_MESSAGE
                     yield _event(type="reset")
                     yield _event(type="delta", text=BUSY_MESSAGE)
                     yield _event(type="done", tool_calls=[], error="unavailable")
@@ -478,6 +518,8 @@ def create_app(
                 answers.put(req.message, turn.text)
             entry.update(outcome="ok", model=bot.last_model, tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
+            keep.add("done", text=f"모델 {bot.last_model}")
+            keep.answer = turn.text
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model)
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
@@ -596,6 +638,28 @@ def create_app(
         admin.check(_visitor(request), x_admin_key)
         return chat_log.summary(days)
 
+    @app.get("/api/admin/detail", include_in_schema=False)
+    def admin_detail(request: Request, id: str = Query(max_length=40), x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
+        """A question's trace and answer (saved ones always, others for the last week)."""
+        admin.check(_visitor(request), x_admin_key)
+        if (found := chat_log.detail(id)) is None:
+            raise HTTPException(status_code=404, detail="일주일이 지나 지워졌거나 없는 기록입니다.")
+        return found
+
+    @app.post("/api/admin/saved/{item_id}", include_in_schema=False)
+    def admin_save(item_id: str, request: Request, x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
+        admin.check(_visitor(request), x_admin_key)
+        if (item := chat_log.save(item_id)) is None:
+            raise HTTPException(status_code=404, detail="일주일이 지나 지워졌거나 없는 기록입니다.")
+        return item
+
+    @app.delete("/api/admin/saved/{item_id}", include_in_schema=False)
+    def admin_unsave(item_id: str, request: Request, x_admin_key: str | None = Header(default=None)) -> dict[str, bool]:
+        admin.check(_visitor(request), x_admin_key)
+        if not chat_log.unsave(item_id):
+            raise HTTPException(status_code=404, detail="저장한 기록이 아닙니다.")
+        return {"ok": True}
+
     return app
 
 
@@ -656,6 +720,11 @@ def _jev_route(question: str, previous: str | None) -> Route | None:
     except Exception as exc:
         log.warning("jev routing failed, using keywords: %s", exc)
         return None
+
+
+def _flash_blocked() -> bool:
+    """3.5 Flash is being skipped now: it ran out of its daily quota (until midnight Pacific) or was overloaded."""
+    return gemini._COOLDOWN.get(FLASH_MODEL, 0.0) > time.time()
 
 
 def _deepseek_ready() -> bool:

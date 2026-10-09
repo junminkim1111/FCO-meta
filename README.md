@@ -26,12 +26,14 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
 
 - Render에서 **New → Blueprint**로 이 저장소를 고르면 `render.yaml`대로 만들어지고, `HF_DATA_REPO`·`HF_TOKEN`(데이터셋 **쓰기** 토큰 — 답변 기록을 올림)·`GEMINI_API_KEY`·`ADMIN_KEY`를 묻습니다.
 - **답변 기록**: `https://<서비스>/admin`에서 `ADMIN_KEY`로 들어가면 정상·캐시·혼잡 안내·질문 수 제한·정지 건수, 날짜별 표, 혼잡 안내가 나간 원인(오류)별 횟수, 최근 질문(원문·도구·모델·걸린 시간)을 봅니다.
+  최근 질문의 줄을 누르면 그 질문의 trace(/trace와 같은 내용, 사용자가 켜지 않았어도)와 답변이 펼쳐집니다. trace·답변은 일주일만 두고(데이터셋 `details/`, 지난 날짜 폴더는 지움), 저장 버튼을 누른 것은 `saved/`에 기간 없이 남아 '저장한 기록'에 보입니다.
   기록은 서버 메모리에 모았다가 10분마다(서버가 잠들 때도) 데이터셋의 `logs/날짜/*.jsonl`로 올립니다. 방문자 IP는 남기지 않습니다(`web/chatlog.py`).
   채팅창에 `/admin`을 입력해도 비밀번호 창이 뜹니다. 비밀번호를 3회 틀리면 경고, 5회 틀리면 그 IP는 관리자 페이지에 들어올 수 없습니다(서버 메모리 기준이라 재시작·재배포 때 풀림).
 - **질문 거르기·답하는 모델**: `OPENROUTER_API_KEY`가 있으면 질문마다 Jev(TypeSafe `typesafe/jev-1.13`, OpenRouter Decisions API, 약 0.6초)를 먼저 부릅니다(`chatbot/router.py`).
   범위 밖·프롬프트 공격이면 모델을 부르지 않고 거절 문구로 답하고(기록 결과 '차단'), 어려운 질문이면 처음부터 3.5 Flash, 아니면 Flash-Lite가 답합니다.
   키가 없거나 Jev가 실패하면 키워드 규칙(짜줘·스쿼드·업그레이드·대신·케미·현역 …, `web/app.py`의 `HEAVY_WORDS`)으로 고릅니다.
   어느 쪽이든 Flash-Lite가 두 번째 도구를 부르면 그때부터 3.5 Flash가 받은 도구 결과로 이어서 답합니다.
+  3.5 Flash가 한도 소진·혼잡으로 쉬는 동안(하루 한도면 태평양 자정까지)은 어려운 질문을 DeepSeek V4 Pro 생각 끔이 답하고, 나머지는 Flash-Lite가 넘기지 않고 끝까지 답합니다.
   Jev 판단 정확도는 `python -m fco_meta.chatbot.router`로 `eval/routes.txt` 라벨과 비교합니다.
 - **채팅 명령어** (`/`로 시작하면 모델에 보내지 않고, 모르는 명령어는 *invalid command.*):
   `/admin` 기록 페이지 · `/trace` 새로고침 전까지 모델 선택·생각·도구 결과를 답 위에 표시 ·

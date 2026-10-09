@@ -59,6 +59,20 @@
   .md h1, .md h2, .md h3, .md h4 { font-size: 13px; margin: 10px 0 4px; }
   .md table { display: block; overflow-x: auto; font-size: 12px; } .md th, .md td { padding: 4px 8px; white-space: nowrap; }
   .error { color: var(--busy); }
+  /* 최근 질문: 줄을 누르면 그 질문의 trace·답변 (일주일 안 · 저장한 것은 계속) */
+  tr.open-able { cursor: pointer; } tr.open-able:hover td { background: rgba(255, 255, 255, .03); }
+  tr.open-able td.q::after { content: " ▸"; color: var(--faint); } tr.open-able.open td.q::after { content: " ▾"; }
+  td.detail { background: rgba(0, 0, 0, .25); }
+  .detail-box { display: grid; gap: 10px; } .detail-box h3 { margin: 0; font-size: 13px; color: var(--muted); }
+  .trace { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted); }
+  .trace .tr { white-space: pre-wrap; word-break: break-word; }
+  .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
+  .trace .tr .at { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .trace .tr.thought span:last-child { color: var(--text); opacity: .75; }
+  details.saved { border-top: 1px solid var(--line); padding: 10px 0; }
+  details.saved > summary { cursor: pointer; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+  details.saved > summary .q { font-weight: 600; }
+  details.saved .detail-box { margin-top: 10px; }
   #login { max-width: 360px; }
   .back { color: var(--muted); text-decoration: none; font-size: 13px; } .back:hover { color: var(--text); }
   #login form { display: flex; gap: 8px; } #login input { flex: 1; }
@@ -80,6 +94,7 @@
     <section><h2>날짜별</h2><div class="scroll"><table id="days-table"></table></div></section>
     <section><h2>혼잡 안내가 나간 원인</h2><div class="scroll"><table id="errors"></table></div></section>
     <section><h2>모델 비교 (/compare)</h2><p class="muted">고른 답은 테두리로 표시됩니다. 걸린 시간은 칸마다 따로 잰 값입니다.</p><div id="compares"></div></section>
+    <section><h2>저장한 기록</h2><p class="muted">최근 질문에서 저장한 질문·trace·답변은 기간과 상관없이 여기 남습니다.</p><div id="saved"></div></section>
     <section><div class="bar"><h2>최근 질문</h2><span class="grow"></span><div id="filters" class="bar"></div></div>
       <div class="scroll"><table id="recent"></table></div></section>
   </div>
@@ -87,6 +102,9 @@
 <script>
 const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김", compare: "비교", blocked: "차단" };
 const MODE = { deep: "/deep", deep_r: "/deep --r" };
+const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사",
+                      first: "첫 글자", done: "완료", error: "오류" };
+const api = (path, options = {}) => fetch(path, { ...options, headers: { "X-Admin-Key": adminKey } });
 const md = import("/static/md.js"); // 비교 답은 채팅 화면과 같은 마크다운 표시
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => {
@@ -105,7 +123,7 @@ try { adminKey = sessionStorage.getItem("fclm-admin") || ""; } catch {}
 
 async function load() {
   if (!adminKey) return showLogin("");
-  const res = await fetch("/api/admin/logs?days=" + $("days").value, { headers: { "X-Admin-Key": adminKey } });
+  const res = await api("/api/admin/logs?days=" + $("days").value);
   if (res.status === 401 || res.status === 403) { // 3회부터 경고, 5회 틀리면 이 IP는 막힘 (서버 문구 그대로)
     adminKey = "";
     try { sessionStorage.removeItem("fclm-admin"); } catch {}
@@ -142,12 +160,69 @@ function render() {
     return b;
   }));
   renderCompares();
+  renderSaved();
   const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter);
   $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간"], true),
-    ...shown.map((r) => el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome)),
-      el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null),
-      cell("", (r.tools || []).join(", ")), cell("t", r.outcome === "compare" ? `3개 모델${r.chosen ? " · 고름" : ""}` : [MODE[r.mode], r.route, r.model].filter(Boolean).join(" · ")),
-      cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""))));
+    ...shown.map((r) => {
+      const tr = el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome)),
+        el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null),
+        cell("", (r.tools || []).join(", ")), cell("t", r.outcome === "compare" ? `3개 모델${r.chosen ? " · 고름" : ""}` : [MODE[r.mode], r.route, r.model].filter(Boolean).join(" · ")),
+        cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""));
+      // 일주일 안의 질문(또는 저장한 질문)은 누르면 아래에 trace·답변
+      if (r.id && (r.t >= data.detail_since || data.saved.some((x) => x.id === r.id))) {
+        tr.classList.add("open-able");
+        tr.addEventListener("click", () => toggleDetail(tr, r));
+      }
+      return tr;
+    }));
+}
+
+async function toggleDetail(tr, r) {
+  if (tr.nextElementSibling?.classList.contains("detail-row")) { tr.nextElementSibling.remove(); tr.classList.remove("open"); return; }
+  tr.classList.add("open");
+  const td = el("td", { class: "detail", colSpan: 6 }, el("p", { class: "muted", text: "불러오는 중…" }));
+  tr.after(el("tr", { class: "detail-row" }, td));
+  const res = await api("/api/admin/detail?id=" + encodeURIComponent(r.id));
+  if (!res.ok) return td.replaceChildren(el("p", { class: "muted", text: (await res.json().catch(() => ({}))).detail || "불러오지 못했습니다." }));
+  const d = await res.json();
+  const save = el("button", { type: "button", text: d.saved ? "저장됨" : "저장", disabled: d.saved });
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    const ok = (await api("/api/admin/saved/" + r.id, { method: "POST" })).ok;
+    if (ok) { save.textContent = "저장됨"; await load(); } else { save.disabled = false; save.textContent = "저장 실패 · 다시"; }
+  });
+  td.replaceChildren(await detailBox(d.trace, d.answer, save));
+}
+
+// trace 줄들 + 답변 (채팅 화면의 /trace와 같은 모양)
+async function detailBox(trace, answer, button) {
+  const { renderMarkdown } = await md;
+  const lines = (trace || []).map((t) => {
+    const text = t.kind === "tool" ? `${t.name} ${JSON.stringify(t.args || {})}` : t.kind === "result" ? `${t.name}${t.ok ? "" : " (오류)"} ${t.text}` : t.text || "";
+    return el("div", { class: "tr " + t.kind }, el("span", { class: "at", text: `+${t.at}초` }), el("b", { text: TRACE_LABEL[t.kind] || t.kind }), el("span", { text }));
+  });
+  const body = el("div", { class: "md" });
+  if (answer) renderMarkdown(body, answer); else body.append(el("p", { class: "muted", text: "답이 끝나기 전에 멈춘 질문입니다." }));
+  return el("div", { class: "detail-box" }, el("div", { class: "bar" }, el("h3", { text: "trace" }), el("span", { class: "grow" }), button),
+    lines.length ? el("div", { class: "trace" }, ...lines) : el("p", { class: "muted", text: "trace 없음" }),
+    el("h3", { text: "답변" }), body);
+}
+
+async function renderSaved() {
+  const box = $("saved"), list = data.saved || [];
+  if (!list.length) return box.replaceChildren(el("p", { class: "muted", text: "아직 저장한 기록이 없습니다. 최근 질문의 줄을 눌러 저장할 수 있습니다." }));
+  box.replaceChildren(...await Promise.all(list.map(async (item) => {
+    const r = item.record, unsave = el("button", { type: "button", text: "저장 취소" });
+    unsave.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      if (!confirm(`"${r.q}" 저장을 취소할까요? 일주일이 지난 질문이면 trace와 답변을 다시 볼 수 없습니다.`)) return;
+      if ((await api("/api/admin/saved/" + item.id, { method: "DELETE" })).ok) await load();
+    });
+    return el("details", { class: "saved" },
+      el("summary", {}, el("span", { class: "muted", text: r.t.slice(0, 16).replace("T", " ") }), badge(r.outcome), el("span", { class: "q", text: r.q }),
+        el("span", { class: "muted", text: [MODE[r.mode], r.model].filter(Boolean).join(" · ") })),
+      await detailBox(item.trace, item.answer, unsave));
+  })));
 }
 
 async function renderCompares() {

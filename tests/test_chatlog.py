@@ -22,6 +22,12 @@ class FakeApi:
     def list_repo_files(self, repo, repo_type):
         return [*self.files, "fco_meta.sqlite"]
 
+    def delete_folder(self, *, path_in_repo, repo_id, repo_type, commit_message):
+        self.files = {k: v for k, v in self.files.items() if not k.startswith(path_in_repo + "/")}
+
+    def delete_file(self, *, path_in_repo, repo_id, repo_type, commit_message):
+        del self.files[path_in_repo]
+
 
 def store(api, tmp_path, monkeypatch):
     import huggingface_hub
@@ -72,3 +78,23 @@ def test_without_a_store_records_stay_in_memory():
     log.record(q="q", outcome="cancelled")
     log.flush()  # 올릴 곳이 없으면 그대로 둔다
     assert log.summary(days=1)["by_outcome"]["cancelled"] == 1
+
+
+def test_details_last_a_week_unless_saved(tmp_path, monkeypatch):
+    api, clock = FakeApi(), [NOW]
+    log = ChatLog(store(api, tmp_path, monkeypatch), now=lambda: clock[0])
+    log.record(q="오래 둘 질문", outcome="ok", detail={"trace": [{"at": 0.0, "kind": "route", "text": "Flash-Lite"}], "answer": "답 A"})
+    log.record(q="그냥 질문", outcome="ok", detail={"trace": [], "answer": "답 B"})
+    keep_id, drop_id = (r["id"] for r in log.pending)
+    log.flush()
+    assert {p.split("/")[0] for p in api.files} == {"logs", "details"}
+    assert log.detail(drop_id) == {"trace": [], "answer": "답 B", "saved": False}
+    assert log.save(keep_id)["record"]["q"] == "오래 둘 질문" and f"saved/{keep_id}.json" in api.files
+
+    clock[0] += 8 * 86400  # 일주일이 지나면: 저장 안 한 것은 안 보이고, 다음 저장 때 날짜 폴더도 지운다
+    assert log.detail(drop_id) is None and log.save(drop_id) is None
+    log.flush()
+    assert not any(p.startswith("details/") for p in api.files)
+    fresh = ChatLog(store(api, tmp_path, monkeypatch), now=lambda: clock[0])  # 서버가 다시 떠도 저장한 것은 남는다
+    assert fresh.detail(keep_id)["answer"] == "답 A" and fresh.summary()["saved"][0]["id"] == keep_id
+    assert fresh.unsave(keep_id) and fresh.detail(keep_id) is None and not fresh.unsave(keep_id)
