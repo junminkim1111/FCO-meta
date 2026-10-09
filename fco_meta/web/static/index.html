@@ -653,7 +653,7 @@ const TOOL_STATUS = {
 // 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
 let deepNext = null, deepAll = null, traceOn = false, compareArmed = false;
 const DEEP_NAME = { deep: "DeepSeek V4 Pro(생각 끔)", deep_r: "DeepSeek V4 Pro(생각 켬)" };
-const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사",
+const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료" };
 // 생각 표시 줄 하나 (이어서 오는 생각 조각은 한 줄로 붙인다)
 // 줄마다 질문을 보낸 뒤 몇 초째인지(+1.2초)를 붙인다 → 도구·모델 단계별로 걸린 시간을 볼 수 있다

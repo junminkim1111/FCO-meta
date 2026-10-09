@@ -410,7 +410,7 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     res = client.post("/api/chat", json={"message": "업그레이드 추천", "session_id": sid, "mode": "deep_r"})
     assert [(n, q, o) for n, q, o in asked] == [
         ("gemini", "아스널 볼란치 추천", {"escalate_to": web_app.FLASH_MODEL}),
-        ("gemini", "리버풀 100억으로 짜 줘", {"model": web_app.FLASH_MODEL}),
+        ("gemini", "리버풀 100억으로 짜 줘", {"model": web_app.FLASH_MODEL, "fallback": False}),
         ("deepTrue", "업그레이드 추천", {"deadline": web_app.LONG_DEADLINE}),  # /deep --r: 시간 상한 5분
     ]  # fmt: skip
     assert bots["deepTrue"].remembered == [("아스널 볼란치 추천", "gemini 답"), ("리버풀 100억으로 짜 줘", "gemini 답")]  # 앞 대화를 맥락으로
@@ -542,7 +542,7 @@ def test_jev_blocks_out_of_scope_and_picks_the_model(db, tmp_path, monkeypatch):
     _, done = ask(client, "롬바르디아 4-1-4-1 톱")  # 키워드는 없지만 Jev가 쉬운 질문 → Flash-Lite (두 번째 도구부터 Flash)
     ask(client, "이 스쿼드 업그레이드", session_id=done["session_id"])  # Jev가 어려운 질문 → 처음부터 Flash
     ask(client, "그럼 더 싸게", session_id=done["session_id"])
-    assert [o for _, _, o in asked] == [{"escalate_to": web_app.FLASH_MODEL}, {"model": web_app.FLASH_MODEL}, {"escalate_to": web_app.FLASH_MODEL}]
+    assert [o for _, _, o in asked] == [{"escalate_to": web_app.FLASH_MODEL}, {"model": web_app.FLASH_MODEL, "fallback": False}, {"escalate_to": web_app.FLASH_MODEL}]
     assert jev.states[-1] == "이전 질문: 이 스쿼드 업그레이드\n현재 질문: 그럼 더 싸게"  # 이어지는 말은 앞 질문과 함께 판단
     assert sorted(r["outcome"] for r in log.pending) == ["blocked", "blocked", "ok", "ok", "ok"]
 
@@ -560,4 +560,31 @@ def test_without_jev_the_keyword_rule_routes(db, tmp_path, monkeypatch):  # noqa
     monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: Recorder("gemini", asked))
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
     answer, _ = ask(client, "리버풀 짜줘")  # Jev 실패 → 막지 않고 키워드로
-    assert answer == "gemini 답" and asked[0][2] == {"model": web_app.FLASH_MODEL}
+    assert answer == "gemini 답" and asked[0][2] == {"model": web_app.FLASH_MODEL, "fallback": False}
+
+
+def test_failed_flash_question_is_answered_by_deepseek_from_scratch(db, tmp_path, monkeypatch):  # noqa: F811
+    import json
+
+    import fco_meta.web.app as web_app
+    from fco_meta.chatbot.gemini import GeminiUnavailable
+
+    class OutOfQuota(Recorder):
+        def ask_stream(self, message, **options):
+            self.asked.append((self.name, message, {k: v for k, v in options.items() if k != "thoughts"}))
+            yield "쓰다 만 글"
+            raise GeminiUnavailable([(web_app.FLASH_MODEL, RuntimeError("429"))])
+
+    asked = []
+    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: OutOfQuota("gemini", asked))
+    monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder(f"deep{reasoning}", asked))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret"))
+    res = client.post("/api/chat", json={"message": "리버풀 100억으로 짜 줘", "trace": True})
+    events = [json.loads(line) for line in res.text.splitlines()]
+    assert [(n, o) for n, _, o in asked] == [
+        ("gemini", {"model": web_app.FLASH_MODEL, "fallback": False}), ("deepFalse", {"deadline": web_app.LONG_DEADLINE}),
+    ]  # fmt: skip
+    kinds = [e.get("kind") or e["type"] for e in events]
+    assert kinds.index("reset") > kinds.index("fallback")  # 쓰다 만 글은 지우고
+    assert "".join(e["text"] for e in events[kinds.index("reset"):] if e["type"] == "delta") == "deepFalse 답"

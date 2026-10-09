@@ -33,7 +33,7 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
   범위 밖·프롬프트 공격이면 모델을 부르지 않고 거절 문구로 답하고(기록 결과 '차단'), 어려운 질문이면 처음부터 3.5 Flash, 아니면 Flash-Lite가 답합니다.
   키가 없거나 Jev가 실패하면 키워드 규칙(짜줘·스쿼드·업그레이드·대신·케미·현역 …, `web/app.py`의 `HEAVY_WORDS`)으로 고릅니다.
   어느 쪽이든 Flash-Lite가 두 번째 도구를 부르면 그때부터 3.5 Flash가 받은 도구 결과로 이어서 답합니다.
-  3.5 Flash가 한도 소진·혼잡으로 쉬는 동안(하루 한도면 태평양 자정까지)은 어려운 질문을 DeepSeek V4 Pro 생각 끔이 답하고, 나머지는 Flash-Lite가 넘기지 않고 끝까지 답합니다.
+  3.5 Flash가 한도 소진·혼잡으로 쉬는 동안(하루 한도면 태평양 자정까지)은 어려운 질문을 DeepSeek V4 Pro 생각 끔이 답하고, 나머지는 Flash-Lite가 넘기지 않고 끝까지 답합니다. 3.5 Flash로 간 질문은 다른 Gemini 모델로 대체하지 않고, 실패하면 그 질문을 DeepSeek 생각 끔이 처음부터 답합니다. 대체가 일어나면 trace에 '모델 대체' 줄이 남습니다.
   Jev 판단 정확도는 `python -m fco_meta.chatbot.router`로 `eval/routes.txt` 라벨과 비교합니다.
 - **채팅 명령어** (`/`로 시작하면 모델에 보내지 않고, 모르는 명령어는 *invalid command.*):
   `/admin` 기록 페이지 · `/trace` 새로고침 전까지 모델 선택·생각·도구 결과를 답 위에 표시 ·

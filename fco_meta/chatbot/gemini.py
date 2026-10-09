@@ -118,6 +118,15 @@ class Escalate:
     reason: str
 
 
+@dataclass
+class Fallback:
+    """A model failed or was being skipped, and another one answered this request instead (ask_stream event)."""
+
+    failed: str
+    reason: str
+    model: str
+
+
 TRACE_PREVIEW = 600  # ToolResult.preview 길이 (관리자 생각 표시용)
 
 
@@ -144,6 +153,18 @@ def unchecked_squad(calls: list[tuple[str, dict[str, Any]]]) -> bool:
     """The model got squad candidates but answered without checking its picks."""
     names = {name for name, _ in calls}
     return "squad_candidates" in names and "check_squad" not in names
+
+
+def _short_reason(exc: Exception) -> str:
+    """Why a model was not used, in a few words for the trace."""
+    if isinstance(exc, CoolingDown):
+        return "최근 한도 소진·혼잡이라 건너뜀"
+    code = getattr(exc, "code", None)
+    if code == 429:
+        return "429 하루 한도 소진" if quota_info(exc)[1] else "429 분당 한도"
+    if code in UNAVAILABLE:
+        return f"{code} 이 키로 쓸 수 없음"
+    return f"{code} 혼잡" if code else type(exc).__name__
 
 
 def _started(stream: Any) -> Iterator[Any]:
@@ -326,6 +347,8 @@ class GeminiChat:
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
         self._escalate: str | None = None  # 두 번째 도구부터 이 모델이 이어받는다 (ask_stream이 정한다)
+        self._fallback = True  # 실패하면 대체 모델로 (ask_stream이 정한다: 끄면 실패를 그대로 올려 호출한 쪽이 다른 회사 모델로)
+        self.skipped: list[tuple[str, Exception]] = []  # 마지막 요청에서 실패·건너뛴 모델
         self._ends_at = float("inf")  # 이번 질문을 끝내야 하는 시각 (ask_stream이 정한다)
         self.discover = True  # 설정한 모델이 모두 실패하면 키로 쓸 수 있는 모델 목록에서 찾아 시도
         self._discovered: list[str] | None = None
@@ -374,7 +397,7 @@ class GeminiChat:
         from google.genai import errors
 
         failures: list[tuple[str, Exception]] = []
-        configured = [self.model, *self.fallback_models]
+        configured = [self.model, *self.fallback_models] if self._fallback else [self.model]
 
         def fail(model: str, exc: Any) -> None:
             failures.append((model, exc))
@@ -418,10 +441,10 @@ class GeminiChat:
                     continue
                 if model != self.model:
                     log.warning("answered by fallback model %s", model)
-                self.last_model = model
+                self.last_model, self.skipped = model, failures
                 return response
         # 설정한 모델이 모두 혼잡·사용 불가 → 이 키로 쓸 수 있는 다른 모델을 한 번씩
-        for model in self._discover(set(configured)):
+        for model in self._discover(set(configured)) if self._fallback else []:
             if cooling(model):
                 continue
             try:
@@ -432,7 +455,7 @@ class GeminiChat:
                 fail(model, exc)
                 continue
             log.warning("answered by discovered model %s", model)
-            self.last_model = model
+            self.last_model, self.skipped = model, failures
             return response
         raise GeminiUnavailable(failures)
 
@@ -453,7 +476,7 @@ class GeminiChat:
 
     def ask_stream(
         self, question: str, *, model: str | None = None, escalate_to: str | None = None, thoughts: bool = False,
-        deadline: float | None = None,
+        deadline: float | None = None, fallback: bool = True,
     ) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         """One user turn: yields answer text as it arrives (RESET = drop what was yielded so far,
         ToolCall = a tool is about to run, Recheck = figures are being rewritten) and
@@ -461,18 +484,19 @@ class GeminiChat:
         history is rolled back so the next question starts clean.
 
         For this question only: `model` answers instead of the usual one, `escalate_to` takes over from the second
-        tool call on (Escalate event), `thoughts` adds Thought events, `deadline` replaces the time cap."""
+        tool call on (Escalate event), `thoughts` adds Thought events, `deadline` replaces the time cap, `fallback=False`
+        raises when the model fails instead of trying the other Gemini models (the caller hands over elsewhere)."""
         self._drop_tool_history()
         self._ends_at = self.now() + (deadline or self.deadline)
         checkpoint, usual = len(self.contents), self.model
-        self.model, self._escalate, self.thoughts = model or usual, escalate_to, thoughts
+        self.model, self._escalate, self.thoughts, self._fallback = model or usual, escalate_to, thoughts, fallback
         try:
             return (yield from self._ask(question))
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
         finally:
-            self.model, self._escalate, self.thoughts = usual, None, False
+            self.model, self._escalate, self.thoughts, self._fallback = usual, None, False, True
 
     def remember(self, question: str, answer: str) -> None:
         """Add a question answered without the model (answer cache), so follow-ups keep the context."""
@@ -506,7 +530,10 @@ class GeminiChat:
             received: list[Any] = []
             finish, blocked, started, shown, usage = "None", None, False, False, None
             try:
-                for chunk in self._generate(config):
+                response = self._generate(config)
+                for failed, exc in self.skipped:  # 대체 모델로 넘어간 이유 (관리자 trace)
+                    yield Fallback(failed, _short_reason(exc), self.last_model)
+                for chunk in response:
                     started = True
                     usage = chunk.usage_metadata or usage  # 마지막 조각에 이 요청의 합계가 온다
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:

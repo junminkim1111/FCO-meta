@@ -211,6 +211,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             line = {"kind": "escalate", "text": f"{piece.reason} → {piece.model}이 이어받음"}
         elif isinstance(piece, Thought):
             line = {"kind": "thought", "text": piece.text}
+        elif isinstance(piece, gemini.Fallback):
+            line = {"kind": "fallback", "text": f"{piece.failed} {piece.reason} → {piece.model}이 대신"}
         elif isinstance(piece, ToolResult):
             line = {"kind": "result", "name": piece.name, "ok": piece.ok, "text": piece.preview}
         else:
@@ -496,10 +498,29 @@ def create_app(
                 keep.add("route", text=why)
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
+                # 3.5 Flash로 가는 질문은 Gemini 대체 모델을 쓰지 않고, 실패하면 DeepSeek 생각 끔이 처음부터 답한다
+                handover = key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready()
+                if handover:
+                    options["fallback"] = False
                 bot = session.bot(key, make_bot(key))
                 stream = bot.ask_stream(req.message, **options)
                 try:
-                    turn = yield from _relay(stream, req.trace, keep)
+                    try:
+                        turn = yield from _relay(stream, req.trace, keep)
+                    except gemini.GeminiUnavailable as exc:
+                        if not handover:
+                            raise
+                        stream.close()
+                        line = {"kind": "fallback", "text": f"{FLASH_MODEL} 실패 ({describe_error(exc)}) → {DEEP_LABEL['deep']}이 처음부터"}
+                        keep.add(**line)
+                        entry["route"] = f"{entry.get('route', '')} (3.5 Flash 실패 → {DEEP_LABEL['deep']})"
+                        if req.trace:
+                            yield _event(type="trace", **line)
+                        yield _event(type="reset")
+                        key = "deep"
+                        bot = session.bot(key, make_bot(key))
+                        stream = bot.ask_stream(req.message, deadline=LONG_DEADLINE, thoughts=True)
+                        turn = yield from _relay(stream, req.trace, keep)
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
                     entry.update(outcome="busy", error=describe_error(exc), model=getattr(bot, "last_model", None))

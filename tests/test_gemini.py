@@ -588,7 +588,10 @@ def test_stream_broken_mid_answer_is_asked_again_on_the_next_model(toolbox):
     })  # fmt: skip
     chat = GeminiChat(client, toolbox, model="primary", fallback_models=["backup"], sleep=lambda s: None)
     events, turn = events_of(chat.ask_stream("포메이션 순위"))
-    assert events == ["4-2-3-1이 ", RESET, "4-2-3-1이 1위입니다."]  # 보인 글은 지우고 처음부터 다시
+    from fco_meta.chatbot.gemini import Fallback
+
+    # 보인 글은 지우고 처음부터 다시, 끊긴 모델을 건너뛰고 대체 모델이 답했다는 줄과 함께
+    assert events == ["4-2-3-1이 ", RESET, Fallback("primary", "최근 한도 소진·혼잡이라 건너뜀", "backup"), "4-2-3-1이 1위입니다."]
     assert turn.text == "4-2-3-1이 1위입니다." and chat.last_model == "backup"  # 끊긴 모델은 잠시 건너뜀
     assert [c.role for c in chat.contents] == ["user", "model"]  # 끊긴 답은 기록에 남지 않는다
 
@@ -689,3 +692,13 @@ def test_squad_answered_without_check_is_sent_back_once(toolbox):
     turn = chat.ask("아스널 스쿼드 짜줘")
     assert turn.text == "검사한 스쿼드" and [n for n, _ in turn.tool_calls] == ["squad_candidates", "check_squad"]
     assert client.models.requests[2]["contents"][-1].parts[0].text == CHECK_REQUEST
+
+
+def test_without_fallback_a_failing_model_raises_instead_of_trying_others(toolbox):
+    client = FakeClient([])
+    client.models = ByModel({"flash": [_unavailable()] * 3, "backup": [response([{"text": "대체 답"}])]})
+    chat = GeminiChat(client, toolbox, model="lite", fallback_models=["backup"], sleep=lambda s: None)
+    chat.discover = False
+    with pytest.raises(GeminiUnavailable):  # 호출한 쪽(웹)이 DeepSeek으로 넘긴다
+        chat.ask_stream("q", model="flash", fallback=False).__next__()
+    assert {r["model"] for r in client.models.requests} == {"flash"}

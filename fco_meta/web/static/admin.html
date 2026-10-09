@@ -102,7 +102,7 @@
 <script>
 const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김", compare: "비교", blocked: "차단" };
 const MODE = { deep: "/deep", deep_r: "/deep --r" };
-const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사",
+const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료", error: "오류" };
 const api = (path, options = {}) => fetch(path, { ...options, headers: { "X-Admin-Key": adminKey } });
 const md = import("/static/md.js"); // 비교 답은 채팅 화면과 같은 마크다운 표시
