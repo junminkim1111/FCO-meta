@@ -239,7 +239,7 @@
   #compare-note { display: none; color: var(--muted); font-size: 13px; font-weight: 400; }
   #chat.comparing #compare-note { display: inline; }
   #chat.comparing #chat-title > .stat { display: none; }
-  /* /admin --l: 모델 선택·생각·도구 결과를 답 위에 */
+  /* /trace: 모델 선택·생각·도구 결과를 답 위에 */
   .trace { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
            display: flex; flex-direction: column; gap: 4px; } /* 글이 늘면 칸도 같이 커진다 */
   .trace .tr { white-space: pre-wrap; word-break: break-word; }
@@ -650,8 +650,8 @@ const TOOL_STATUS = {
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
   escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
-// 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /admin --l = 생각 표시, /compare = 다음 질문을 셋이 비교
-let deepNext = null, deepAll = null, traceKey = null, compareArmed = false;
+// 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
+let deepNext = null, deepAll = null, traceOn = false, compareArmed = false;
 const DEEP_NAME = { deep: "DeepSeek V4 Pro(생각 끔)", deep_r: "DeepSeek V4 Pro(생각 켬)" };
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", recheck: "수치 검사",
                       first: "첫 글자", done: "완료" };
@@ -671,7 +671,7 @@ function traceBox() {
   box.started = performance.now();
   return box;
 }
-const headers = () => ({ "Content-Type": "application/json", ...(traceKey ? { "X-Admin-Key": traceKey } : {}) });
+const headers = () => ({ "Content-Type": "application/json" });
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
 let inflight = null;
 function setBusy(ctrl) {
@@ -702,7 +702,7 @@ async function send(text) {
   say("me", text);
   const mode = deepNext || deepAll || "auto";
   deepNext = null;
-  const trace = traceKey ? traceBox() : null;
+  const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace);
   const bubble = el("div");
   $("log").append(bubble);
@@ -780,8 +780,8 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
     $("chat-form").requestSubmit();
   }
 });
-// 채팅에 "/admin": 질문으로 보내지 않고 관리자 비밀번호를 받아, 맞으면 답변 기록 페이지로 간다 (onOk가 있으면 그것을 한다)
-function adminPrompt(onOk) {
+// 채팅에 "/admin": 질문으로 보내지 않고 관리자 비밀번호를 받아, 맞으면 답변 기록 페이지로 간다
+function adminPrompt() {
   const input = el("input", { type: "password", placeholder: "관리자 비밀번호", autocomplete: "current-password", required: true });
   const note = el("div", { class: "admin-note", role: "alert" });
   const form = el("form", { class: "msg bot" }, el("div", { text: "관리자 비밀번호를 입력하세요." }),
@@ -790,7 +790,6 @@ function adminPrompt(onOk) {
     ev.preventDefault();
     const res = await fetch("/api/admin/logs?days=1", { headers: { "X-Admin-Key": input.value } }).catch(() => null);
     if (res && res.ok) {
-      if (onOk) return onOk(input.value, form);
       try { sessionStorage.setItem("fclm-admin", input.value); } catch {} // 기록 페이지가 다시 묻지 않도록 (이 탭에만)
       form.replaceWith(el("div", { class: "msg bot note done", text: "/admin 적용: 답변 기록 페이지로 이동합니다." }));
       location.href = "/admin";
@@ -813,11 +812,9 @@ function command(text) {
   const cmd = name.toLowerCase();
   const only = (allowed) => new Set(flags).size === flags.length && flags.every((f) => allowed.includes(f));
   if (cmd === "/admin" && !flags.length) return adminPrompt();
-  if (cmd === "/admin" && flags.length === 1 && flags[0] === "--l") {
-    return adminPrompt((key, form) => {
-      traceKey = key; // 이 페이지에서 새로고침하기 전까지
-      form.replaceWith(el("div", { class: "msg bot note done", text: "/admin --l 적용: 지금부터 모델의 생각·도구 결과를 답 위에 함께 보여 줍니다. 새로고침하면 꺼집니다." }));
-    });
+  if (cmd === "/trace" && !flags.length) {
+    traceOn = true; // 이 페이지에서 새로고침하기 전까지
+    return note("/trace 적용: 지금부터 모델의 생각·도구 결과를 답 위에 함께 보여 줍니다. 새로고침하거나 /cancel로 끕니다.");
   }
   if (cmd === "/deep" && only(["--r", "--a"])) {
     const mode = flags.includes("--r") ? "deep_r" : "deep";
@@ -826,9 +823,9 @@ function command(text) {
     return note(`${text} 적용: 다음 질문 하나만 ${DEEP_NAME[mode]}가 답합니다. 최대 5분 걸릴 수 있어요.`);
   }
   if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
-    const off = [deepNext && `/deep(${DEEP_NAME[deepNext]})`, deepAll && `/deep --a(${DEEP_NAME[deepAll]})`, traceKey && "/admin --l(생각 표시)",
+    const off = [deepNext && `/deep(${DEEP_NAME[deepNext]})`, deepAll && `/deep --a(${DEEP_NAME[deepAll]})`, traceOn && "/trace(생각 표시)",
                  $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
-    deepNext = deepAll = traceKey = null;
+    deepNext = deepAll = null; traceOn = false;
     if ($("chat").classList.contains("comparing")) closeCompare();
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
@@ -905,7 +902,7 @@ async function sendCompare(text) {
   const panes = {}, started = performance.now();
   $("compare").replaceChildren(...shuffled().map((key, i) => {
     const title = `답변 ${"ABC"[i]}`, stat = el("span", { class: "stat", text: "" }), body = el("div", { class: "body" });
-    const trace = traceKey ? traceBox() : null, answer = el("div", { class: "msg bot" });
+    const trace = traceOn ? traceBox() : null, answer = el("div", { class: "msg bot" });
     body.append(el("div", { class: "msg me", text }), ...(trace ? [trace] : []), answer);
     answer.append(el("span", { class: "shimmer", text: THINKING }));
     const section = el("section", { class: "pane" }, el("h3", {}, el("span", { text: title }), stat), body);
@@ -914,7 +911,7 @@ async function sendCompare(text) {
   }));
   try {
     const res = await fetch("/api/compare", { method: "POST", headers: headers(), signal: ctrl.signal,
-                                              body: JSON.stringify({ message: text, session_id: sessionId, trace: !!traceKey }) });
+                                              body: JSON.stringify({ message: text, session_id: sessionId, trace: traceOn }) });
     if (!res.ok) throw await failure(res);
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let rest = "";

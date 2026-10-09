@@ -406,9 +406,8 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     assert bots["gemini"].remembered == [("업그레이드 추천", "deepTrue 답")]  # DeepSeek이 답한 턴도 이어서 안다
     assert "deepTrue 답" in res.text
 
-    # 생각 표시(/admin --l)는 관리자 비밀번호가 있어야 한다
-    assert client.post("/api/chat", json={"message": "q", "trace": True}).status_code == 401
-    res = client.post("/api/chat", json={"message": "볼란치", "trace": True}, headers={"X-Admin-Key": "secret"})
+    # 생각 표시(/trace)는 비밀번호 없이
+    res = client.post("/api/chat", json={"message": "볼란치", "trace": True})
     traces = [json.loads(line) for line in res.text.splitlines() if '"trace"' in line]
     assert [t["kind"] for t in traces] == ["route", "thought"] and "Flash-Lite" in traces[0]["text"]
 

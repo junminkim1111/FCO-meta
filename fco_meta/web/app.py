@@ -258,7 +258,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
     mode: Literal["auto", "deep", "deep_r"] = "auto"  # deep = /deep (DeepSeek 생각 끔), deep_r = /deep --r (생각 켬)
-    trace: bool = False  # /admin --l: 모델의 생각·도구 결과·모델 전환도 보낸다 (X-Admin-Key 필요)
+    trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
 
 
 def _open_readonly(db_path: Path) -> sqlite3.Connection:
@@ -387,13 +387,11 @@ def create_app(
         return lambda: _deepseek_chat(gemini_tools, reasoning=key == "deep_r")
 
     @app.post("/api/chat")
-    def chat(req: ChatRequest, request: Request, x_admin_key: str | None = Header(default=None)) -> StreamingResponse:
+    def chat(req: ChatRequest, request: Request) -> StreamingResponse:
         """답을 한 줄에 하나씩 JSON 이벤트로 흘려보낸다: start(session_id) → delta(text)… → done.
         reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args).
-        trace = (관리자 생각 표시) 모델 선택·생각·도구 결과·모델 전환. 질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
+        trace = (/trace) 모델 선택·생각·도구 결과·모델 전환. 질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
         who = _visitor(request)
-        if req.trace:
-            admin.check(who, x_admin_key)
         if refused := limit.check(who):
             chat_log.record(q=req.message, outcome="limited", error=refused)
             raise HTTPException(status_code=429, detail=refused)
@@ -485,12 +483,10 @@ def create_app(
         return StreamingResponse(events(), media_type="application/x-ndjson")
 
     @app.post("/api/compare")
-    def compare(req: ChatRequest, request: Request, x_admin_key: str | None = Header(default=None)) -> StreamingResponse:
+    def compare(req: ChatRequest, request: Request) -> StreamingResponse:
         """/compare: 같은 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 동시에 답한다. 이벤트는 /api/chat과 같고 pane으로 구분하며,
         칸마다 done이 온 뒤 마지막에 all_done. 대화의 앞선 질문·답은 맥락으로 주되 이 비교 답은 대화에 남기지 않는다."""
         who = _visitor(request)
-        if req.trace:
-            admin.check(who, x_admin_key)
         if backend != "gemini":
             raise HTTPException(status_code=400, detail="비교는 AI 모델이 켜져 있을 때만 쓸 수 있어요.")
         if not compare_limit.check(who):

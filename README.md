@@ -34,7 +34,7 @@ python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_
   어느 쪽이든 Flash-Lite가 두 번째 도구를 부르면 그때부터 3.5 Flash가 받은 도구 결과로 이어서 답합니다.
   Jev 판단 정확도는 `python -m fco_meta.chatbot.router`로 `eval/routes.txt` 라벨과 비교합니다.
 - **채팅 명령어** (`/`로 시작하면 모델에 보내지 않고, 모르는 명령어는 *invalid command.*):
-  `/admin` 기록 페이지 · `/admin --l` 비밀번호 확인 뒤 새로고침 전까지 모델 선택·생각·도구 결과를 답 위에 표시 ·
+  `/admin` 기록 페이지 · `/trace` 새로고침 전까지 모델 선택·생각·도구 결과를 답 위에 표시 ·
   `/deep` 다음 질문만 DeepSeek V4 Pro(생각 끔), `--r` 생각 켬, `--a` 새로고침 전까지 유지 ·
   `/compare` 다음 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 전체 화면 세 칸에서 동시에 답함(IP당 1시간 2회) ·
   `/cancel` 위 명령어로 켠 것을 모두 끄고 기본 상태로.
