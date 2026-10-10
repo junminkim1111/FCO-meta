@@ -104,3 +104,16 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 도와주�
 - 시세는 모은 시각 기준이라 이적시장에 따라 조금 다를 수 있습니다. 능력치는 1강 기준입니다.
 - 랭커들이 쓰지 않은 카드는 시세·능력치가 없을 수 있습니다.
 - 질문 수는 한 사람당 1분에 6개, 하루 60개까지입니다.
+
+## 기술 스택
+
+| 영역 | 사용한 것 |
+|---|---|
+| 백엔드 | Python 3.12, FastAPI + Uvicorn (답을 한 줄씩 흘려보내는 NDJSON 스트리밍) |
+| 데이터베이스 | SQLite (랭킹·스쿼드·경기·시세·집계를 한 파일에), 비공개 Hugging Face 데이터셋에 보관 |
+| 데이터 수집 | NEXON Open API (랭커 경기·선수 명단·@닉네임 팀), FC온라인 데이터센터 웹 수집 (httpx + selectolax) |
+| AI 모델 | Gemini 3.5 Flash-Lite·3.5 Flash (google-genai), DeepSeek V4 Pro (OpenRouter) — 도구 호출(function calling)로 DB 조회 |
+| 질문 분류 | Jev (OpenRouter Decisions API) — 범위 밖·공격 차단, 가벼운/어려운 질문 나누기 |
+| 프런트엔드 | 프레임워크 없는 HTML·CSS·JavaScript, marked + DOMPurify(답 마크다운), border-beam·thinking-orbs(입력창 빛·기다림 오브) |
+| 자동화·배포 | GitHub Actions (매일 0시 30분 수집 → 데이터셋 갱신), Render (웹 서버, 갱신되면 다시 배포) |
+| 테스트 | pytest, 질문 세트로 모델 답을 비교하는 평가 스크립트 |
