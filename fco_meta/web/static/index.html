@@ -22,7 +22,7 @@
     --pitch-name: var(--text); --ph-bg: #1a1d24; --name-shadow: 0 1px 3px rgba(0, 0, 0, .9); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
     --radius: 16px; --pick: #4ade80; /* /compare에서 고를 답 테두리 */
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; } /* 모바일 회색 탭 상자 대신 :active 반응 */
   body { margin: 0; color: var(--text); min-height: 100vh; background: var(--bg);
          font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
          -webkit-font-smoothing: antialiased; }
@@ -33,6 +33,8 @@
                              linear-gradient(120deg, var(--bg), var(--bg-2)); } /* 왼쪽 위 → 오른쪽 아래로 밝아진다 */
   /* 휴대폰 화면에선 반투명 칸이 바탕과 잘 구분되지 않아 칸과 테두리를 조금 진하게 */
   @media (max-width: 860px) { :root { --panel: rgba(255, 255, 255, .06); --line: rgba(255, 255, 255, .13); } }
+  /* '투명도 줄이기'를 켠 사용자: 반투명 칸 대신 불투명 칸 */
+  @media (prefers-reduced-transparency: reduce) { :root { --panel: #191a21; } section { backdrop-filter: none; -webkit-backdrop-filter: none; } }
   /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
   header { display: flex; align-items: center; gap: 14px; height: var(--head-h); padding: 0 2px; }
   header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
@@ -54,8 +56,10 @@
   .error { color: var(--error); font-size: 14px; margin-top: 12px; }
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
   button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
-           cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s; }
-  button:hover { opacity: .9; }
+           cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s, transform .1s ease-out; }
+  @media (hover: hover) { button:hover { opacity: .9; } } /* 터치 화면에서 흐린 상태가 남지 않게 */
+  /* 누르는 순간 살짝 눌린다 (막대 줄·고무 세그먼트는 제외) */
+  @media (prefers-reduced-motion: no-preference) { button:not(.row, .rubber-segment__item, :disabled):active { transform: scale(.96); } }
   button:disabled { opacity: .5; cursor: wait; }
   button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   textarea { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 16px;
@@ -69,18 +73,22 @@
   .fchart .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; margin: 0 -8px;
                  padding: 4px 8px; font: inherit; color: inherit; text-align: left; background: none; border: 1px solid transparent;
                  border-radius: 10px; cursor: pointer; transition: background-color .15s, border-color .15s; }
-  .fchart .row:hover, .fchart .row:focus-visible { background: rgba(255, 255, 255, .05); border-color: var(--line-strong); }
+  .fchart .row:focus-visible { background: rgba(255, 255, 255, .05); border-color: var(--line-strong); }
+  @media (hover: hover) { .fchart .row:hover { background: rgba(255, 255, 255, .05); border-color: var(--line-strong); } }
+  .fchart .row:active { background: rgba(255, 255, 255, .09); transition-duration: 0s; } /* 누르는 순간 바로 */
+  .fchart.open .row.extra { animation: fade-in .2s ease-out; }
   .fchart .row.sel { border-color: var(--text); }
   .fchart .f { font-size: 13px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
   .fchart .logo { width: 18px; height: 18px; flex: none; object-fit: contain; } /* 팀컬러 엠블럼·국기 (없으면 빈 자리) */
   .fchart .track { height: 14px; display: block; width: 100%; }
   .fchart .track > span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; transition: filter .15s; }
-  .fchart .row:hover .track > span, .fchart .row:focus-visible .track > span { filter: brightness(1.2); }
+  .fchart .row:focus-visible .track > span { filter: brightness(1.2); }
+  @media (hover: hover) { .fchart .row:hover .track > span { filter: brightness(1.2); } }
   .fchart .v { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .fchart:not(.open) .row.extra { display: none; } /* 6위부터는 더보기를 눌러야 보인다 */
   .fchart .more { grid-column: 1 / -1; justify-self: end; margin-top: 2px; padding: 2px 0; font: inherit; font-size: 12px;
                   color: var(--muted); background: none; border: 0; cursor: pointer; }
-  .fchart .more:hover { color: var(--text); }
+  @media (hover: hover) { .fchart .more:hover { color: var(--text); } }
 
   /* formation detail */
   .fd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -232,6 +240,10 @@
   .pane.gone { opacity: 0; }
   #pick-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
   #pick-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  #pick-dialog, #pick-dialog::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
+  #pick-dialog:not([open]), #pick-dialog:not([open])::backdrop { opacity: 0; transform: scale(.96); }
+  @starting-style { #pick-dialog[open], #pick-dialog[open]::backdrop { opacity: 0; transform: scale(.96); } }
+  #pick-dialog::backdrop { transform: none !important; }
   #pick-dialog p { margin: 0 0 14px; font-size: 14px; }
   #pick-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
   #pick-dialog button { padding: 6px 14px; }
@@ -249,6 +261,8 @@
   .trace .tr.thought span { color: var(--text); opacity: .75; }
   /* /compare: 챗봇 칸이 화면 전체로 커지고 세 모델이 나란히 답한다 */
   #chat.comparing { position: fixed; inset: 12px; z-index: 20; height: auto; min-height: 0; background: var(--bg); }
+  #chat { view-transition-name: chat; }
+  ::view-transition-group(chat) { animation-duration: .35s; animation-timing-function: cubic-bezier(.23, 1, .32, 1); }
   #chat.comparing #log { display: none; }
   #compare-close { display: none; margin-left: auto; padding: 4px 12px; font-size: 13px; }
   #chat.comparing #compare-close { display: inline-block; }
@@ -270,7 +284,18 @@
   .shimmer.fresh { animation: shimmer 2.2s linear infinite, status-in .35s ease-out; }
   @keyframes status-in { from { opacity: 0; transform: translateY(4px); } }
   .pending .shimmer { display: inline-block; }
-  @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; } }
+  /* 이전 문구는 그 자리에서 흐려지며 사라진다 (새 문구와 같은 칸에 겹쳐 둔다) */
+  .status { display: inline-grid; } .status > * { grid-area: 1 / 1; }
+  .shimmer.out { animation: shimmer 2.2s linear infinite, status-out .15s ease-in forwards; }
+  @keyframes status-out { to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .shimmer, .shimmer.fresh { animation: none; color: var(--muted); background: none; }
+                                            .shimmer.out { animation: status-out .15s ease-in forwards; } }
+  /* 기다리던 말풍선이 답으로 바뀔 때 툭 끊기지 않게 */
+  .msg.arrive { animation: fade-in .2s ease-out; }
+  @keyframes fade-in { from { opacity: 0; } }
+  /* 다시 불러오는 동안 기존 내용을 흐리게 두어 높이가 출렁이지 않게 (빨리 오면 흐려지지도 않게 잠깐 기다린다) */
+  #fchart, #fdetail { transition: opacity .2s ease-out; }
+  #fchart[aria-busy="true"], #fdetail[aria-busy="true"] { opacity: .45; transition-delay: .15s; }
   #chat form { margin-top: 10px; position: relative; } /* 명령어 목록이 입력창 위에 뜨는 기준 (#msg-beam은 빛 때문에 넘침을 자른다) */
   /* 입력창은 칸 끝까지, 보내기 버튼은 입력창 안 오른쪽 아래 (테두리 빛 위에 오도록 z-index) */
   #msg-beam { display: flex; position: relative; }
@@ -279,7 +304,12 @@
   #send { position: absolute; right: 10px; bottom: 10px; z-index: 4; width: 36px; height: 36px; padding: 0; border-radius: 50%;
           display: flex; align-items: center; justify-content: center; background: #fff; color: #0b0b0d;
           box-shadow: 0 1px 3px rgba(0, 0, 0, .2); font-size: 14px; line-height: 1; }
-  #send svg { width: 18px; height: 18px; }
+  /* 보내기 화살표 ↔ 정지 사각형: 같은 자리에 겹쳐 두고 서로 줄었다 커지며 바뀐다 */
+  #send svg { position: absolute; inset: 0; margin: auto; width: 18px; height: 18px;
+              transition: opacity .15s ease-out, transform .25s cubic-bezier(.23, 1, .32, 1); }
+  #send .i-stop, #send[data-busy] .i-send { opacity: 0; transform: scale(.5); }
+  #send[data-busy] .i-stop { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { #send svg { transform: none !important; } }
   /* @닉네임: 빈 입력창에 @ → 입력창 위 작은 닉네임 칸(안쪽 → 버튼, 밖을 누르면 닫힘). 불러오면 입력창 첫 줄 앞에 하늘색 @닉네임 (✕는 올렸을 때만) */
   #team-box { width: 50%; min-width: 200px; margin-bottom: 8px; }
   #team-box[hidden] { display: none; }
@@ -299,6 +329,7 @@
   #team-chip button { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
                       background: #3b82f6; color: #fff; font-size: 9px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity .15s; }
   #team-chip:hover button, #team-chip button:focus-visible { opacity: 1; }
+  @media (hover: none) { #team-chip button { opacity: 1; } } /* 터치 화면엔 올리기가 없다 */
   .msg.me .mention { color: #2563eb; font-weight: 600; }
   /* /를 치면 입력창 위에 펼쳐지는 명령어 목록 (↑↓ 고르기, Enter·클릭 실행, Tab 채우기, Esc 닫기).
      명령어만 보이고, 설명은 올린 줄(키보드로 고른 줄) 오른쪽에 작은 말풍선으로 */
@@ -313,6 +344,15 @@
   #cmd-menu li:hover span, #cmd-menu.kb li[aria-selected="true"] span { display: block; }
   #cmd-menu li:hover, #cmd-menu.kb li[aria-selected="true"] { background: rgba(255, 255, 255, .08); }
   #cmd-menu li:hover b, #cmd-menu.kb li[aria-selected="true"] b { color: var(--accent); }
+  #cmd-menu, #team-box, #jump { transform-origin: bottom left; transition: opacity .15s ease-out, transform .15s ease-out, display .15s allow-discrete; }
+  #cmd-menu[hidden], #team-box[hidden], #jump[hidden] { opacity: 0; transform: scale(.96) translateY(4px); }
+  @starting-style { #cmd-menu:not([hidden]), #team-box:not([hidden]), #jump:not([hidden]) { opacity: 0; transform: scale(.96) translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #pick-dialog { transform: none !important; } }
+  /* 위로 올려 읽는 동안 새 답이 오면 입력창 위 가운데에 '↓ 새 답' */
+  #jump { position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 5; translate: -50% 0; transform-origin: bottom center;
+          padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: var(--text); background: var(--tip-bg);
+          border: 1px solid var(--line-strong); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+  #jump[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -359,7 +399,8 @@
         <button type="button" id="team-ok" aria-label="팀 불러오기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
         <span class="hint" id="team-hint" role="alert"></span></div>
       <ul id="cmd-menu" role="listbox" aria-label="명령어" hidden></ul>
-      <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button></div>
+      <button type="button" id="jump" hidden>↓ 새 답</button>
+      <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg class="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></button></div>
     </form>
   </section>
   </div>
@@ -373,7 +414,6 @@ import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입�
 import { mountSegment } from "/static/segment.js"; // 포메이션 분포 / 팀컬러 분포 전환
 const $ = (id) => document.getElementById(id);
 const beam = mountBeam($("msg-beam"));
-const SEND_ICON = $("send").innerHTML; // 위쪽 화살표 (답을 기다리는 동안은 ■)
 
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
@@ -460,6 +500,7 @@ function logo(path) {
 
 async function loadChart() {
   const m = MODES[mode], want = mode, box = $("fchart");
+  box.ariaBusy = "true";
   try {
     const d = await api(m.list);
     if (mode !== want) return;  // 그사이 전환했으면 버린다
@@ -492,6 +533,8 @@ async function loadChart() {
     showDetail(m.key(shown[0]));
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
+  } finally {
+    if (mode === want) box.ariaBusy = "false";
   }
 }
 
@@ -613,7 +656,8 @@ async function showDetail(name) {
   markSelected();
   const want = mode, isForm = mode === "formation";
   const box = $("fdetail");
-  box.replaceChildren(el("p", { class: "stat", text: `${plain(name)} 불러오는 중…` }));
+  if (box.childElementCount) box.ariaBusy = "true"; // 이미 보이는 내용은 흐리게만 두고 그 자리를 지킨다
+  else box.replaceChildren(el("p", { class: "stat", text: `${plain(name)} 불러오는 중…` }));
   try {
     const d = await api(MODES[mode].detail(name));
     if (selected !== name || mode !== want) return;  // 그사이 다른 막대를 눌렀거나 전환했으면 버린다
@@ -651,6 +695,8 @@ async function showDetail(name) {
     box.replaceChildren(...out);
   } catch (e) {
     box.replaceChildren(el("p", { class: "error", text: e.message }));
+  } finally {
+    if (selected === name && mode === want) box.ariaBusy = "false";
   }
 }
 
@@ -715,7 +761,7 @@ function setBusy(ctrl) {
   inflight = ctrl;
   beam.set(!!ctrl);
   $("send").type = ctrl ? "button" : "submit";
-  $("send").innerHTML = ctrl ? "■" : SEND_ICON;
+  $("send").toggleAttribute("data-busy", !!ctrl); // 위쪽 화살표 ↔ 정지 사각형
   $("send").setAttribute("aria-label", ctrl ? "답변 정지" : "보내기");
 }
 $("send").addEventListener("click", (ev) => {
@@ -723,12 +769,18 @@ $("send").addEventListener("click", (ev) => {
   ev.preventDefault(); // 취소하면 버튼이 곧바로 '보내기'로 돌아오므로, 이 클릭이 폼 제출까지 되지 않게 막는다
   inflight.abort();
 });
+// 반짝이는 문구. 새로 만들어도 빛이 지나가는 위치가 처음으로 튀지 않게 같은 시계에 맞춘다
+const shimmer = (text, cls = "") => {
+  const node = el("span", { class: ("shimmer " + cls).trim(), text });
+  node.style.animationDelay = `${-(performance.now() % 2200)}ms, 0s`;
+  return node;
+};
 // 답을 기다리는 말풍선: 오브 + "랭커데이터를 살펴보고 있어요...". 멈추는 함수를 돌려준다
 function thinking(bubble) {
   const canvas = el("canvas", { ariaHidden: "true" });
   bubble.className = "msg bot pending";
   bubble.title = "답을 만드는 동안 왼쪽 포메이션을 둘러보세요";
-  bubble.replaceChildren(canvas, el("span", { class: "shimmer", text: THINKING }));
+  bubble.replaceChildren(canvas, el("span", { class: "status" }, shimmer(THINKING)));
   return mountOrb(canvas, "connecting", 20);
 }
 // 서버는 답을 몇 단어씩 묶어 보낸다(/api/chat, 한 줄에 JSON 이벤트 하나). 받은 글은 프레임마다 몇 글자씩 풀어 그린다
@@ -747,8 +799,10 @@ async function send(text) {
   let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0;
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
+    const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
     renderMarkdown(bubble, answer.slice(0, shown));
-    $("log").scrollTop = $("log").scrollHeight;
+    if (stick) log.scrollTop = log.scrollHeight;
+    else $("jump").hidden = false;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
   };
   // 기다리는 문구: 도구에 맞는 문구, 1분·1분 30초가 넘으면 오래 걸린다는 안내 (수치 재검토 안내는 그대로)
@@ -758,12 +812,16 @@ async function send(text) {
     waitLine = line;
     const waited = (performance.now() - started) / 1000;
     const text = line === RECHECK ? line : waited >= 90 ? ALMOST : waited >= 60 ? longWait : line;
-    const node = bubble.querySelector(".shimmer"); // 답이 나오기 시작했으면 없다
-    if (node && node.textContent !== text) node.replaceWith(el("span", { class: "shimmer fresh", text }));
+    const box = bubble.querySelector(".status"), node = box?.lastElementChild; // 답이 나오기 시작했으면 없다
+    if (!node || node.textContent === text) return;
+    node.className = "shimmer out"; // 이전 문구는 흐려지며 사라지고 새 문구가 떠오른다
+    node.ariaHidden = "true";
+    node.addEventListener("animationend", (e) => e.animationName === "status-out" && node.remove());
+    box.append(shimmer(text, "fresh"));
   };
   const timers = [60, 90].map((sec) => setTimeout(() => status(waitLine), sec * 1000));
   const grow = (piece) => {
-    if (stopOrb) { stopOrb(); stopOrb = null; bubble.className = "msg bot"; bubble.removeAttribute("title"); bubble.replaceChildren(); }
+    if (stopOrb) { stopOrb(); stopOrb = null; bubble.className = "msg bot arrive"; bubble.removeAttribute("title"); bubble.replaceChildren(); }
     answer += piece;
     if (!frame) frame = requestAnimationFrame(draw);
   };
@@ -994,10 +1052,14 @@ function command(text) {
 // 모델 이름은 가리고 칸 순서도 비교마다 섞는다 (어느 모델인지는 /admin 기록에만)
 const PANE_KEYS = ["flash", "deep_r", "deep"];
 const shuffled = () => PANE_KEYS.map((k) => [Math.random(), k]).sort((a, b) => a[0] - b[0]).map(([, k]) => k);
+// 챗봇 칸이 그 자리에서 전체 화면으로 커지고 닫으면 그 자리로 줄어든다 (지원하지 않거나 동작 줄이기면 바로)
+const morph = (change) => {
+  if (!document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return change();
+  document.startViewTransition(change).ready.catch(() => {}); // 숨은 탭 등에서 전환만 건너뛰면 바뀐 화면은 그대로 적용된다
+};
 function openCompare() {
   compareArmed = true;
-  $("chat").classList.add("comparing");
-  $("compare").hidden = false;
+  morph(() => { $("chat").classList.add("comparing"); $("compare").hidden = false; });
   $("compare").replaceChildren(...["A", "B", "C"].map((letter) => el("section", { class: "pane" }, el("h3", { text: `답변 ${letter}` }),
     el("div", { class: "body" }, el("p", { class: "caption", text: "질문을 입력하면 세 모델이 동시에 답합니다. (1시간에 2번)" })))));
   $("msg").focus();
@@ -1005,10 +1067,18 @@ function openCompare() {
 function closeCompare() {
   if (inflight && !compareArmed) inflight.abort();
   compareArmed = false;
-  $("chat").classList.remove("comparing");
-  $("compare").hidden = true;
+  morph(() => { $("chat").classList.remove("comparing"); $("compare").hidden = true; });
 }
 $("compare-close").addEventListener("click", closeCompare);
+// '↓ 새 답': 누르면 맨 아래로, 맨 아래 가까이 내려오면 저절로 사라진다
+$("jump").addEventListener("click", () => {
+  const log = $("log");
+  log.scrollTo({ top: log.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+});
+$("log").addEventListener("scroll", () => {
+  const log = $("log");
+  if (log.scrollHeight - log.scrollTop - log.clientHeight < 40) $("jump").hidden = true;
+}, { passive: true });
 
 // /compare 다음 질문: 세 칸이 같은 질문에 동시에 답한다 (/api/compare, 이벤트마다 pane)
 let compareId = null;
