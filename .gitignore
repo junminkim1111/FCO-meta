@@ -34,3 +34,7 @@ scripts/
 docs/PLAN.md
 docs/RESEARCH.md
 docs/nexon-openapi-spec/
+docs/DEVELOPMENT.md
+tests/
+eval/
+.env.example

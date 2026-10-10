@@ -2,7 +2,7 @@
 
 FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI 챗봇입니다. 랭킹 상위 랭커들이 실제로 쓰는 선수·카드·포메이션을 매일 모아 데이터로 답합니다.
 
-**사이트: <https://fclm.onrender.com>** · 개발·운영 문서: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
+**사이트: <https://fclm.onrender.com>**
 
 ## 화면
 

@@ -201,7 +201,7 @@ class RuleBot:
         data = self._call("list_available_data", {})
         combos = [c for c in data["combos"] if c["formation"] != "전체"][:12]
         if not combos:
-            return "아직 집계된 데이터가 없습니다. docs/DEVELOPMENT.md의 수집 순서를 참고하세요."
+            return "아직 집계된 데이터가 없습니다."
         lines = []
         if scope := data.get("daily_scope"):
             lines.append(
