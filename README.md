@@ -9,11 +9,11 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 ![첫 화면](docs/images/home.jpg)
 
 - **왼쪽**: 랭커들의 포메이션·팀컬러 분포. 줄을 누르면 승률·ELO·구단가치와 최상위 랭커 스쿼드, 랭커 베스트 11이 나옵니다.
-- **오른쪽**: 챗봇. 입력창의 회색 글씨는 질문 예시입니다.
+- **오른쪽**: 챗봇.
 
 ## 질문하기
 
-질문을 쓰고 Enter(줄바꿈은 Shift+Enter). 기다리는 동안 ↑ 버튼은 정지(■)가 됩니다.
+질문을 쓰고 Enter 또는 보내기 버튼을 누르면 모델이 질문에 답합니다.
 
 ![질문과 답](docs/images/chat-answer.jpg)
 
@@ -25,21 +25,6 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 | 비교·대체 | 라이스랑 수비멘디 비교해줘 · UC마네 대신 급여를 1 줄일 수 있는 윙어 |
 | 메타 | 요즘 사용률이 가장 많이 오른 팀컬러는? |
 
-- 팀컬러 별칭(레알, 바르샤, 뮌헨…)과 특성 줄임말(라브, 트릭, 체, 파, 크포…)을 알아듣습니다.
-- "달린" = 원래 가진 카드, "달 수 있는" = 8강(금카) 이상에서 하나를 새로 다는 카드까지.
-- 이어서 물어도 앞 대화를 기억합니다("그럼 더 싼 걸로").
-
-## 스쿼드 짜기
-
-![스쿼드 답](docs/images/squad.jpg)
-
-- 표 위에 **총 급여·총액**(예산을 말했으면 남은 금액도), 케미 적용 선수에는 **★**.
-- 조건은 말로 쓰면 됩니다.
-  - 예산·급여: "150억으로", "급여 300에 맞춰줘", "급여 315로"(상한 310을 넘으면 알려 줌)
-  - 선수: "슈케르를 포함해서", "벨링엄은 빼줘", "손흥민은 이미 TK 10강 있어"(총액에서 뺌)
-  - 방향: "골키퍼는 싸게", "남는 돈은 공격진에", "ST는 키 큰 선수로", "8강 이상만"
-- 예산이 남으면 많이 쓰이는 자리부터 강화·시즌을 올립니다.
-
 ## @닉네임 — 내 팀으로 묻기
 
 빈 입력창에 `@` → 닉네임 입력 → →(또는 Enter). 그 유저의 **최근 공식·친선경기 선발 11명**을 불러옵니다. 칸 밖을 누르면 취소.
@@ -50,8 +35,8 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 
 ![닉네임이 붙은 입력창](docs/images/team-chip.jpg)
 
-- 그 질문 한 번에만 붙고, 이어지는 질문도 그 팀을 기억합니다. 떼려면 ✕(마우스를 올리면 보임) 또는 빈 입력창에서 지우기.
-- 다른 사람 닉네임도 됩니다. 최근 공식·친선경기가 없으면 불러올 수 없고, 보유 선수 전체가 아니라 최근 경기의 선발입니다.
+- 이어지는 질문도 해당 팀을 기억합니다.
+- 최근 공식·친선경기가 없으면 불러올 수 없고, 최근 경기 선발출전한 인원을 기준으로 합니다.
 
 ## 명령어
 
@@ -67,8 +52,6 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 | `/cancel` | 켜 둔 명령어를 모두 끔 |
 | `/help` | 사용법 |
 
-![trace](docs/images/trace.jpg)
-
 ## 답이 만들어지는 과정
 
 ![질문 처리 흐름](docs/images/flow.svg)
@@ -80,17 +63,16 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 
 - 공식경기(1vs1) 랭킹 상위 10,000명의 순위·팀컬러·포메이션·전적, 그 랭커들이 직전 공식경기에 낸 선발 명단, 카드 시세·급여·능력치(1강 기준).
 - 매일 0시 30분(한국 시간)쯤 갱신. 시세는 수집 시각 기준이라 실제와 조금 다를 수 있습니다.
-- 질문은 한 사람당 1분 6개, 하루 60개까지.
 
-## 기술 스택
+## Tech Stack
 
-| 영역 | 사용한 것 |
+| Area | Stack |
 |---|---|
-| 백엔드 | Python 3.12, FastAPI + Uvicorn (NDJSON 스트리밍) |
-| 데이터 | SQLite, 비공개 Hugging Face 데이터셋에 보관 |
-| 수집 | NEXON Open API, FC온라인 데이터센터 웹 수집 (httpx + selectolax) |
-| AI | Gemini 3.5 Flash-Lite·Flash (google-genai), DeepSeek V4 Pro (OpenRouter), 도구 호출로 DB 조회 |
-| 질문 분류 | Jev (OpenRouter Decisions API) |
-| 프런트엔드 | 프레임워크 없는 HTML·CSS·JS, marked + DOMPurify, border-beam·thinking-orbs |
-| 자동화·배포 | GitHub Actions (매일 수집), Render |
-| 테스트 | pytest, 질문 세트로 모델을 비교하는 평가 스크립트 |
+| Backend | Python 3.12, FastAPI + Uvicorn (NDJSON streaming) |
+| Data | SQLite, stored in a private Hugging Face dataset |
+| Collection | NEXON Open API, FC Online Data Center scraping (httpx + selectolax) |
+| AI | Gemini 3.5 Flash-Lite / Flash (google-genai), DeepSeek V4 Pro (OpenRouter), DB queries via tool calling |
+| Question routing | Jev (OpenRouter Decisions API) |
+| Frontend | Vanilla HTML / CSS / JS, marked + DOMPurify, border-beam, thinking-orbs |
+| Automation / Deploy | GitHub Actions (daily collection), Render |
+| Testing | pytest, eval script comparing models on question sets |
