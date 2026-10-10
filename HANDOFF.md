@@ -1,7 +1,7 @@
 # 인수인계 — FCO 랭커 메타 챗봇
 
 > 다음 Claude Code 세션에게: 이 파일을 먼저 끝까지 읽고 이어서 작업하십시오.
-> 설계 상세는 `docs/PLAN.md`, 조사 자료는 `docs/RESEARCH.md`, 사용법은 `README.md`에 있습니다.
+> 설계 상세는 `docs/PLAN.md`, 조사 자료는 `docs/RESEARCH.md`, 개발·운영 문서는 `docs/DEVELOPMENT.md`, 사이트 사용법은 `README.md`에 있습니다.
 
 작성: 2026-09-29 (클라우드 세션 → 로컬 Mac Claude Code로 이전)
 브랜치: `claude/fco-ranker-chatbot-plan-tyzgns` (마지막 커밋 `d8fa335` 웹 화면 개선) · 테스트 166개 통과
@@ -100,7 +100,7 @@ python -m fco_meta.daily run [--top 10000 --no-wait --ranker-stats-calls 200 --p
 python -m fco_meta.daily status
 python -m fco_meta.daily schedule --at 00:00                                 # KST 자정마다 실행 (프로세스 상주)
 python -m fco_meta.pipeline squads --top 300 | meta | budget | formations | ranker-stats
-python -m fco_meta.analytics ...                                              # README '집계' 참고
+python -m fco_meta.analytics ...                                              # docs/DEVELOPMENT.md '집계' 참고
 python -m fco_meta.market used | details
 python -m fco_meta.chatbot.evaluate [--only 1-10]                              # eval/questions.txt로 챗봇 평가 → reports/
 python -m fco_meta.chatbot [--backend gemini|rules] [--list-models] [--ask "..."]
