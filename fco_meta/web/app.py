@@ -353,6 +353,7 @@ def create_app(
         # 브라우저가 옛 화면을 저장해 두고 쓰지 않도록 매번 확인하게 한다 (바뀌지 않았으면 304로 가볍게)
         response = await call_next(request)
         response.headers.setdefault("Cache-Control", "no-cache")
+        response.headers.setdefault("X-Frame-Options", "DENY")  # 다른 사이트가 iframe으로 끼워 넣지 못하게 (/admin 등)
         return response
 
     def tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:

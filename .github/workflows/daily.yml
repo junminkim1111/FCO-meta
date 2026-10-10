@@ -9,6 +9,9 @@ on:
     - cron: "30 15 * * *"  # 매일 00:30 KST (15:30 UTC)
   workflow_dispatch:  # Actions 탭에서 직접 실행
 
+permissions:
+  contents: read  # 저장소를 읽기만 한다 (DB는 HF 데이터셋에 올림)
+
 concurrency:
   group: daily-collection  # 한 번에 하나만 (앞의 수집이 끝나기 전에 다음이 시작되지 않게)
   cancel-in-progress: false
