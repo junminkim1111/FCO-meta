@@ -1,19 +1,8 @@
 # FCLM 개발·운영 문서
 
 FC온라인 랭커 데이터를 기반으로 선수를 추천하는 챗봇 프로젝트입니다.
-계획: [`docs/PLAN.md`](PLAN.md) · 조사 결과: [`docs/RESEARCH.md`](RESEARCH.md)
 
-## 더블클릭 실행 (Mac)
-
-설치(아래)를 한 번 마친 뒤에는 Finder에서 저장소 폴더의 파일을 더블클릭하면 됩니다.
-
-| 파일 | 하는 일 |
-|---|---|
-| `start_web.command` | 웹 서버를 켜고 브라우저를 엶. 창을 닫으면 종료 |
-| `run_daily.command` | 오늘 수집(랭킹 → 스쿼드 → 집계 → 시세)을 한 번 실행하고 상태 표시. `.env`에 `HF_TOKEN`이 있으면 끝나고 배포한 웹(Render)에 새 DB를 올림 |
-| `start_share.command` | 웹 서버를 켜고 Cloudflare 임시 터널로 공유 주소(`https://….trycloudflare.com`)를 만듦 (지인 베타). 창을 닫으면 종료 |
-
-### Render에 올리기 (무료 호스팅)
+## Render에 올리기 (무료 호스팅)
 
 Render 무료 웹 서비스가 GitHub 코드로 빌드하고(`render.yaml`), 켜질 때 **비공개 Hugging Face 데이터셋**에서 DB를 받아 웹을 엽니다.
 매일 수집은 맥에서 하고 DB만 올립니다. 무료 서비스는 15분 방문이 없으면 잠들고, 다음 방문 때 약 1분 걸려 다시 켜집니다.
@@ -21,7 +10,7 @@ Render 무료 웹 서비스가 GitHub 코드로 빌드하고(`render.yaml`), 켜
 
 ```bash
 pip install -e ".[cloud]"
-python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_TOKEN, 쓰기) Render에 재배포 요청 (run_daily.command가 수집 뒤 자동 실행)
+python -m fco_meta.cloud push-db   # DB를 데이터셋에 올리고(.env의 HF_TOKEN, 쓰기) Render에 재배포 요청
 ```
 
 - Render에서 **New → Blueprint**로 이 저장소를 고르면 `render.yaml`대로 만들어지고, `HF_DATA_REPO`·`HF_TOKEN`(데이터셋 **쓰기** 토큰 — 답변 기록을 올림)·`GEMINI_API_KEY`·`ADMIN_KEY`를 묻습니다.

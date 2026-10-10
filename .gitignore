@@ -26,3 +26,11 @@ graphify-out/
 
 # huggingface_hub가 data/로 받을 때 남기는 메타데이터 (python -m fco_meta.cloud pull-db)
 data/.cache/
+
+# 로컬 전용 (인계 메모, 더블클릭 실행 파일)
+HANDOFF.md
+*.command
+scripts/
+docs/PLAN.md
+docs/RESEARCH.md
+docs/nexon-openapi-spec/
