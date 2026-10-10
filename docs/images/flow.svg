@@ -7,16 +7,15 @@
   </defs>
   <rect width="760" height="640" rx="16" fill="#f8fafc"/>
   <g font-size="14" fill="#0f172a">
-    <!-- 1. 질문 -->
+    <!-- 1. 사용자의 질문 -->
     <rect x="250" y="24" width="260" height="56" rx="10" fill="#fff" stroke="#cbd5e1"/>
-    <text x="380" y="48" text-anchor="middle" font-weight="700">질문</text>
-    <text x="380" y="68" text-anchor="middle" font-size="12" fill="#475569">@닉네임이면 그 팀 정보를 함께</text>
+    <text x="380" y="57" text-anchor="middle" font-weight="700">사용자의 질문</text>
     <path d="M380 80V112" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
 
     <!-- 2. Jev -->
     <rect x="210" y="116" width="340" height="66" rx="10" fill="#eef2ff" stroke="#818cf8"/>
-    <text x="380" y="142" text-anchor="middle" font-weight="700">Jev 분류 · 약 0.6초</text>
-    <text x="380" y="164" text-anchor="middle" font-size="12" fill="#3730a3">범위(FC온라인 · 인사 · 범위 밖 · 공격) · 어려움(가벼움 · 어려움)</text>
+    <text x="380" y="142" text-anchor="middle" font-weight="700">Jev 분류 (~0.9초)</text>
+    <text x="380" y="164" text-anchor="middle" font-size="12" fill="#3730a3">scope: (fco, greeting, off_topic, attack) / effort: (simple, heavy)</text>
 
     <!-- 갈래 -->
     <path d="M300 182L130 236" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
