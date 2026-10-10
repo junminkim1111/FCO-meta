@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 640" width="760" height="640" font-family="'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',sans-serif">
+  <title>FCLM 질문 처리 흐름</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="760" height="640" rx="16" fill="#f8fafc"/>
+  <g font-size="14" fill="#0f172a">
+    <!-- 1. 질문 -->
+    <rect x="250" y="24" width="260" height="56" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="380" y="48" text-anchor="middle" font-weight="700">질문</text>
+    <text x="380" y="68" text-anchor="middle" font-size="12" fill="#475569">@닉네임이면 그 팀 정보를 함께</text>
+    <path d="M380 80V112" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <!-- 2. Jev -->
+    <rect x="210" y="116" width="340" height="66" rx="10" fill="#eef2ff" stroke="#818cf8"/>
+    <text x="380" y="142" text-anchor="middle" font-weight="700">Jev 분류 · 약 0.6초</text>
+    <text x="380" y="164" text-anchor="middle" font-size="12" fill="#3730a3">범위(FC온라인 · 인사 · 범위 밖 · 공격) · 어려움(가벼움 · 어려움)</text>
+
+    <!-- 갈래 -->
+    <path d="M300 182L130 236" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+    <path d="M380 182V236" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+    <path d="M460 182L630 236" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+    <text x="196" y="204" text-anchor="middle" font-size="12" fill="#475569">범위 밖 · 공격</text>
+    <text x="408" y="216" font-size="12" fill="#475569">가벼움 · 인사</text>
+    <text x="566" y="204" text-anchor="middle" font-size="12" fill="#475569">어려움</text>
+
+    <!-- 3a. 거절 -->
+    <rect x="24" y="240" width="212" height="76" rx="10" fill="#fff1f2" stroke="#fda4af"/>
+    <text x="130" y="268" text-anchor="middle" font-weight="700">정해진 거절 문구</text>
+    <text x="130" y="290" text-anchor="middle" font-size="12" fill="#9f1239">모델을 부르지 않음</text>
+
+    <!-- 3b. Lite -->
+    <rect x="274" y="240" width="212" height="76" rx="10" fill="#ecfdf5" stroke="#6ee7b7"/>
+    <text x="380" y="268" text-anchor="middle" font-weight="700">Gemini 3.5 Flash-Lite</text>
+    <text x="380" y="290" text-anchor="middle" font-size="12" fill="#065f46">도구를 두 번째 부르면</text>
+    <text x="380" y="306" text-anchor="middle" font-size="12" fill="#065f46">3.5 Flash가 이어받음</text>
+
+    <!-- 3c. Flash -->
+    <rect x="524" y="240" width="212" height="76" rx="10" fill="#fffbeb" stroke="#fcd34d"/>
+    <text x="630" y="268" text-anchor="middle" font-weight="700">Gemini 3.5 Flash</text>
+    <text x="630" y="290" text-anchor="middle" font-size="12" fill="#92400e">한도 소진·실패하면</text>
+    <text x="630" y="306" text-anchor="middle" font-size="12" fill="#92400e">DeepSeek V4 Pro가 대신</text>
+
+    <path d="M130 316V606H286" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/>
+
+    <!-- 모델 → 도구 -->
+    <path d="M380 316V368" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+    <path d="M630 316V340H470V368" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <!-- 4. 도구 + DB -->
+    <rect x="160" y="372" width="440" height="88" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="380" y="398" text-anchor="middle" font-weight="700">도구 호출 ⇄ 랭커 데이터 (SQLite)</text>
+    <text x="380" y="420" text-anchor="middle" font-size="12" fill="#475569">선수 추천 · 스쿼드 짜기(예산·급여·팀컬러·케미·특성) · 선수 상세</text>
+    <text x="380" y="438" text-anchor="middle" font-size="12" fill="#475569">메타 동향 · 포메이션·팀컬러 정보 · 랭킹 집계</text>
+    <path d="M380 460V492" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <!-- 5. 수치 검사 -->
+    <rect x="200" y="496" width="360" height="56" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="380" y="520" text-anchor="middle" font-weight="700">답 작성 · 수치 검사</text>
+    <text x="380" y="540" text-anchor="middle" font-size="12" fill="#475569">도구 결과에 없는 숫자가 있으면 한 번 다시 쓰기</text>
+    <path d="M380 552V584" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <!-- 6. 답 -->
+    <rect x="290" y="588" width="180" height="36" rx="18" fill="#0f172a"/>
+    <text x="380" y="611" text-anchor="middle" font-weight="700" fill="#fff">답변 (한 줄씩 스트리밍)</text>
+  </g>
+</svg>
