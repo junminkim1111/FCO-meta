@@ -77,7 +77,7 @@ def fetch_team(
     try:
         ouid = api.get_ouid(nickname)
     except NotFoundError:
-        raise TeamNotFound("이 닉네임의 유저를 찾지 못했어요.") from None
+        raise TeamNotFound("이 구단주명의 유저를 찾지 못했어요.") from None
     found: list[tuple[datetime, str, str, list[tuple[int, int, int]]]] = []  # (경기 시각, 출처, 경기 id, 선발)
     latest = None
     for match_type in MATCH_TYPES:

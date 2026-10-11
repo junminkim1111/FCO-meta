@@ -395,7 +395,7 @@
     <dialog id="pick-dialog"><form method="dialog"><p>이 답변을 선택할까요? 다른 답변은 사라지고 이 답변으로 대화를 이어 갑니다.</p>
       <div class="row"><button value="no">취소</button><button value="yes" class="yes">선택</button></div></form></dialog>
     <form id="chat-form">
-      <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="닉네임" aria-label="팀을 불러올 닉네임">
+      <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="구단주명" aria-label="팀을 불러올 구단주명">
         <button type="button" id="team-ok" aria-label="팀 불러오기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
         <span class="hint" id="team-hint" role="alert"></span></div>
       <ul id="cmd-menu" role="listbox" aria-label="명령어" hidden></ul>
@@ -875,7 +875,7 @@ const COMMANDS = [
   ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"],
   ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
-  ["/help", "명령어와 @닉네임 사용법"],
+  ["/help", "명령어와 @구단주명 사용법"],
 ];
 let cmdShown = [], cmdIndex = 0;
 function updateCmdMenu() {
@@ -1037,7 +1037,7 @@ function command(text) {
       "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
       "/trace — 모델이 고른 경로·생각·도구 결과를 답 위에 함께 보여 줍니다",
       "/cancel — 켜 둔 명령어를 모두 끄고 기본 모델로 돌아갑니다",
-      "@닉네임 — 빈 입력창에 @를 치고 닉네임을 넣으면 그 유저의 최근 경기 선발 11명을 불러와 그 질문에 함께 보냅니다",
+      "@구단주명 — 빈 입력창에 @를 치고 구단주명을 넣으면 그 유저의 최근 경기 선발 11명을 불러와 그 질문에 함께 보냅니다",
       "/help — 이 목록",
     ].join("\n"));
   }
