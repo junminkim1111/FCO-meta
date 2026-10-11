@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 # 2026-10: 응답 속도 때문에 lite가 기본. flash 계열은 생각하는 시간이 길고(한 단어 답에 8~17초) 무료 등급에서 혼잡(503)이
 # 잦아 질문 하나에 수십 초가 걸렸고, lite는 같은 질문에 5~6초
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
+MAX_HISTORY_TURNS = 10  # 이전 질문·답은 최근 이만큼만 모델에 다시 보낸다 (긴 대화의 토큰과 흐려지는 맥락을 막는다)
 # 기본 모델이 과부하(503)·한도(429)로 계속 실패하거나 사용 불가(404)면 차례로 시도할 모델
 # 무료 한도는 모델마다 따로라 여러 개를 차례로 쓴다 (--list-models로 확인한 이 키의 모델, 2026-09-30)
 DEFAULT_FALLBACK_MODELS = ("gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash")
@@ -344,6 +345,8 @@ class GeminiChat:
         self.now = now
         self.last_model: str | None = None  # 마지막 응답을 만든 모델 (대체 모델로 바뀌었는지 확인용)
         self.tokens: Counter[str] = Counter()  # 입력·출력·생각 토큰 합 (비용 비교용)
+        self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output, 생각은 output에) — 웹의 질문당 비용
+        self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치 (다시 쓰기 뒤에도 남은 것)
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
         self._escalate: str | None = None  # 두 번째 도구부터 이 모델이 이어받는다 (ask_stream이 정한다)
@@ -487,6 +490,7 @@ class GeminiChat:
         tool call on (Escalate event), `thoughts` adds Thought events, `deadline` replaces the time cap, `fallback=False`
         raises when the model fails instead of trying the other Gemini models (the caller hands over elsewhere)."""
         self._drop_tool_history()
+        self.unverified = []
         self._ends_at = self.now() + (deadline or self.deadline)
         checkpoint, usual = len(self.contents), self.model
         self.model, self._escalate, self.thoughts, self._fallback = model or usual, escalate_to, thoughts, fallback
@@ -515,7 +519,8 @@ class GeminiChat:
             parts = [p for p in content.parts or [] if p.text and not p.thought]
             if parts:
                 kept.append(types.Content(role=content.role, parts=parts))
-        self.contents = kept
+        asked = [i for i, c in enumerate(kept) if c.role == "user"]
+        self.contents = kept[asked[-MAX_HISTORY_TURNS]:] if len(asked) > MAX_HISTORY_TURNS else kept
 
     def _round(self, config: Any = None) -> Generator[str | Reset, None, tuple[list[Any], str, Any]]:
         """One model call: yields its text as it arrives and returns (parts, finish reason, block reason).
@@ -556,6 +561,8 @@ class GeminiChat:
                         self.tokens.update(reasoning=usage.thoughts_token_count)
                     if usage.cached_content_token_count:  # 입력 중 캐시에서 읽은 부분 (싼 단가)
                         self.tokens.update(cached=usage.cached_content_token_count)
+                    self.billed.setdefault(self.last_model or self.model, Counter()).update(
+                        input=usage.prompt_token_count or 0, output=(usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0))
                 return received, finish, blocked
             except (errors.APIError, httpx.TransportError) as exc:
                 code = getattr(exc, "code", None)
@@ -578,6 +585,7 @@ class GeminiChat:
             return text, finish
         if self._left() <= 0:  # 다시 쓸 시간이 없으면 처음 답을 그대로 둔다
             log.warning("numbers not in tool results %s — no time left for a rewrite", missing)
+            self.unverified = missing
             return text, finish
         log.warning("numbers not in tool results %s — asking for one rewrite", missing)
         yield RESET
@@ -589,6 +597,7 @@ class GeminiChat:
         received, new_finish, _ = yield from self._round(self._config(final=True))
         new_text = "".join(p.text for p in received if p.text and not p.thought).strip()
         if not new_text:  # 다시 쓰기가 비면 처음 답을 그대로 둔다
+            self.unverified = missing
             del self.contents[flagged + 1 :]
             yield RESET
             yield text
@@ -596,6 +605,7 @@ class GeminiChat:
         self.contents[flagged:] = [types.Content(role="model", parts=received)]
         if still := unsupported_numbers(new_text, known, question):
             log.warning("rewrite still has numbers not in tool results %s", still)
+            self.unverified = still
         return new_text, new_finish
 
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:

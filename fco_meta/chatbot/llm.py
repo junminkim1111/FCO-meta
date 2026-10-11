@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .gemini import (
-    ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
+    ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_HISTORY_TURNS, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
     GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, _drain, _preview, unchecked_squad,
 )  # fmt: skip
 from .numbers import unsupported_numbers
@@ -57,6 +57,8 @@ class ToolChat:
         self.deadline = ANSWER_DEADLINE
         self.history: list[tuple[str, str]] = []  # (질문, 답)
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
+        self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output) — 웹의 질문당 비용
+        self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치
         self._ends_at = float("inf")
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
 
@@ -75,7 +77,7 @@ class ToolChat:
     @property
     def contents(self) -> list[dict[str, Any]]:
         """Earlier turns as messages (the web checks it to tell a conversation's first question)."""
-        return [m for q, a in self.history for m in ({"role": "user", "content": q}, {"role": "assistant", "content": a})]
+        return [m for q, a in self.history[-MAX_HISTORY_TURNS:] for m in ({"role": "user", "content": q}, {"role": "assistant", "content": a})]
 
     def remember(self, question: str, answer: str) -> None:
         self.history.append((question, answer))
@@ -87,7 +89,7 @@ class ToolChat:
         self, question: str, *, thoughts: bool = False, deadline: float | None = None
     ) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         self._ends_at = self.now() + (deadline or self.deadline)
-        self.thoughts = thoughts
+        self.thoughts, self.unverified = thoughts, []
         try:
             turn = yield from self._ask(question)  # 실패·정지면 기록에 남기지 않는다
         finally:
@@ -163,7 +165,10 @@ class ToolChat:
     def _checked(self, messages: list[dict[str, Any]], question: str, text: str, known: list[Any]) -> Generator[Any, None, str]:
         """Figures no tool result backs up → one rewrite without tools (appended, never edited in place)."""
         missing = unsupported_numbers(text, known, question)
-        if not missing or self._ends_at - self.now() < MIN_REQUEST_TIMEOUT:
+        if not missing:
+            return text
+        if self._ends_at - self.now() < MIN_REQUEST_TIMEOUT:
+            self.unverified = missing
             return text
         log.warning("numbers not in tool results %s — asking for one rewrite", missing)
         yield RESET
@@ -171,9 +176,11 @@ class ToolChat:
         messages.append({"role": "user", "content": RECHECK_REQUEST.format(numbers=", ".join(missing))})
         reply = yield from self._round(messages, final=True)
         if not reply.text.strip():  # 다시 쓰기가 비면 처음 답
+            self.unverified = missing
             yield RESET
             yield text
             return text
+        self.unverified = unsupported_numbers(reply.text, known, question)
         return reply.text.strip()
 
 
@@ -205,6 +212,7 @@ class ClaudeChat(ToolChat):
         if usage is not None:
             self.tokens.update(input=usage.input_tokens or 0, output=usage.output_tokens or 0,
                                cache_read=getattr(usage, "cache_read_input_tokens", 0) or 0)  # fmt: skip
+            self.billed.setdefault(self.model, Counter()).update(input=usage.input_tokens or 0, output=usage.output_tokens or 0)
         stop = {"end_turn": "end", "tool_use": "tool", "max_tokens": "max_tokens", "refusal": "refusal"}.get(message.stop_reason, "end")
         return Reply(
             text="".join(b.text for b in message.content if b.type == "text"),
@@ -254,6 +262,7 @@ class OpenAIChat(ToolChat):
         self.last_model = data.get("model", self.model)
         usage = data.get("usage") or {}
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
+        self.billed.setdefault(self.model, Counter()).update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))
         if reasoning := (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"):
             self.tokens.update(reasoning=reasoning)
         if cached := (usage.get("prompt_tokens_details") or {}).get("cached_tokens"):  # 입력 중 캐시에서 읽은 부분

@@ -114,9 +114,10 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 const row = (cells, head) => el("tr", {}, ...cells.map((c) => (c instanceof Node ? el(head ? "th" : "td", {}, c) : el(head ? "th" : "td", { text: c ?? "" }))));
-const cell = (cls, text) => el("td", { class: cls, text });
+const cell = (cls, text, title) => el("td", { class: cls, text, ...(title && { title }) });
 const badge = (o) => el("span", { class: "badge " + o, text: LABEL[o] || o });
 const VOTE = { up: "👍", down: "👎" }; // 답 아래 👍/👎 (사용자에게 가끔만 보임)
+const usd = (v) => "$" + (v || 0).toFixed(v >= 1 ? 2 : 4); // 유료 등급 기준 추정 (무료 등급이라 실제 청구는 없음)
 let data = null, filter = "all";
 // 비밀번호는 이 탭에만 기억한다 (저장소를 못 쓰는 브라우저면 이 페이지를 연 동안만)
 let adminKey = "";
@@ -149,28 +150,35 @@ function render() {
       el("div", { class: "p", text: total ? ((data.by_outcome[o] / total) * 100).toFixed(1) + "%" : "-" }))),
     ...Object.entries(VOTE).map(([v, icon]) => el("div", { class: "tile" }, el("div", { class: "k", text: icon }),
       el("div", { class: "v", text: (data.votes?.[v] || 0).toLocaleString() }))),
+    el("div", { class: "tile", title: "다시 쓰기 뒤에도 도구 결과로 확인되지 않은 수치가 남은 답" }, el("div", { class: "k", text: "수치 미확인" }),
+      el("div", { class: "v", text: (data.unverified || 0).toLocaleString() })),
+    el("div", { class: "tile", title: "유료 등급 단가로 셈한 추정치 (캐시 할인 제외). 무료 등급이라 실제 청구는 없음" },
+      el("div", { class: "k", text: "모델 비용 (추정)" }), el("div", { class: "v", text: usd(data.cost) }),
+      el("div", { class: "p", text: data.by_outcome?.ok ? `답 1개당 ${usd(data.cost / data.by_outcome.ok)}` : "-" })),
   );
   $("note").textContent = `${data.since}부터 · 기록은 10분마다(서버가 잠들 때도) 저장됩니다` +
     (data.pending ? ` · 아직 저장 전 ${data.pending}건 포함` : "");
-  $("days-table").replaceChildren(row(["날짜", ...Object.values(LABEL)], true),
-    ...data.by_day.map((d) => el("tr", {}, cell("t", d.date), ...Object.keys(LABEL).map((o) => cell("n", d[o] || "")))));
+  $("days-table").replaceChildren(row(["날짜", ...Object.values(LABEL), "비용 (추정)"], true),
+    ...data.by_day.map((d) => el("tr", {}, cell("t", d.date), ...Object.keys(LABEL).map((o) => cell("n", d[o] || "")), cell("n", d.cost ? usd(d.cost) : ""))));
   $("errors").replaceChildren(row(["원인", "횟수", "마지막"], true),
     ...(data.errors.length ? data.errors.map((e) => el("tr", {}, cell("err", e.error), cell("n", e.count), cell("t", e.last.slice(5, 16).replace("T", " "))))
                            : [el("tr", {}, el("td", { colSpan: 3, class: "muted", text: "없음" }))]));
-  $("filters").replaceChildren(...["all", ...Object.keys(LABEL), ...Object.keys(VOTE)].map((o) => {
-    const b = el("button", { type: "button", text: o === "all" ? "전체" : LABEL[o] || VOTE[o], class: o === filter ? "on" : "" });
+  $("filters").replaceChildren(...["all", ...Object.keys(LABEL), ...Object.keys(VOTE), "unverified"].map((o) => {
+    const b = el("button", { type: "button", text: o === "all" ? "전체" : o === "unverified" ? "수치 미확인" : LABEL[o] || VOTE[o], class: o === filter ? "on" : "" });
     b.addEventListener("click", () => { filter = o; render(); });
     return b;
   }));
   renderCompares();
   renderSaved();
-  const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter || r.vote === filter);
-  $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간"], true),
+  const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter || r.vote === filter || (filter === "unverified" && r.unverified));
+  $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간", "비용"], true),
     ...shown.map((r) => {
       const tr = el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome), r.vote ? el("span", { class: "vote", text: " " + VOTE[r.vote] }) : null),
-        el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null),
+        el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null,
+          r.unverified ? el("div", { class: "err", text: `확인 안 된 수치: ${r.unverified.join(", ")}` }) : null),
         cell("", (r.tools || []).join(", ")), cell("t", r.outcome === "compare" ? `3개 모델${r.chosen ? " · 고름" : ""}` : [MODE[r.mode], r.route, r.model].filter(Boolean).join(" · ")),
-        cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""));
+        cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""),
+        cell("n", r.cost != null ? usd(r.cost) : "", r.tokens ? `토큰 ${r.tokens.toLocaleString()}` : ""));
       // 일주일 안의 질문(또는 저장한 질문)은 누르면 아래에 trace·답변
       if (r.id && (r.t >= data.detail_since || data.saved.some((x) => x.id === r.id))) {
         tr.classList.add("open-able");

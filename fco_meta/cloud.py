@@ -3,6 +3,7 @@
     python -m fco_meta.cloud pull-db   # 데이터셋의 DB를 data/로 받는다 (GitHub Actions 매일 수집의 첫 단계, 맥에서 최신본 받기)
     python -m fco_meta.cloud push-db   # 매일 수집 뒤: DB를 데이터셋에 올리고 Render에 재배포를 요청
     python -m fco_meta.cloud serve     # 서버에서 (Render 시작 명령): 데이터셋의 DB를 받아 웹을 연다
+    python -m fco_meta.cloud rollback-db  # 올린 DB가 잘못됐을 때: 직전 DB(백업)로 되돌리고 Render에 재배포를 요청
 
 맥 .env: HF_TOKEN(쓰기 권한), 선택으로 HF_DATA_REPO(기본 <계정>/fclm-data), RENDER_DEPLOY_HOOK(Render의 Deploy Hook 주소).
 서버 환경 변수: HF_DATA_REPO, HF_TOKEN(쓰기 권한 — 답변 기록을 logs/에 올림), GEMINI_API_KEY, ADMIN_KEY(/admin 비밀번호). 포트는 PORT(Render가 넣어 줌).
@@ -24,6 +25,7 @@ from .config import load_env
 
 DB = Path("data/fco_meta.sqlite")
 DB_NAME = "fco_meta.sqlite"  # 데이터셋 안 파일 이름
+DB_PREV = "fco_meta.prev.sqlite"  # 올리기 직전의 DB (기록을 합쳐 지우므로 되돌릴 곳은 이것뿐)
 
 
 def data_repo(api: Any) -> str:
@@ -42,13 +44,37 @@ def snapshot(db: Path, dest: Path) -> None:
 def push_db(api: Any, post: Any, db: Path = DB) -> None:
     repo = data_repo(api)
     api.create_repo(repo, repo_type="dataset", private=True, exist_ok=True)  # 랭커 데이터는 비공개
+    if api.file_exists(repo, DB_NAME, repo_type="dataset"):  # 지금 DB를 서버 안에서 백업으로 복사 (받거나 다시 올리지 않음)
+        _copy(api, repo, DB_NAME, DB_PREV, "DB backup before upload")
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / DB_NAME
         snapshot(db, copy)
         api.upload_file(path_or_fileobj=str(copy), path_in_repo=DB_NAME, repo_id=repo, repo_type="dataset",
                         commit_message=f"DB {datetime.now():%Y-%m-%d %H:%M}")  # fmt: skip
-    api.super_squash_history(repo, repo_type="dataset")  # 매일 27MB씩 쌓이지 않게 최신 DB만 남긴다
+    api.super_squash_history(repo, repo_type="dataset")  # 매일 쌓이지 않게 최신 DB와 그 직전 백업만 남긴다
     print(f"DB를 올렸습니다: {repo} (비공개)")
+    _redeploy(post)
+
+
+def rollback_db(api: Any, post: Any) -> None:
+    """Put the backup (the DB before the last upload) back as the DB and redeploy."""
+    repo = data_repo(api)
+    if not api.file_exists(repo, DB_PREV, repo_type="dataset"):
+        raise SystemExit("되돌릴 백업이 없습니다 (DB를 한 번 더 올린 뒤부터 생깁니다).")
+    _copy(api, repo, DB_PREV, DB_NAME, "DB rollback to the previous upload")
+    api.super_squash_history(repo, repo_type="dataset")
+    print(f"직전 DB로 되돌렸습니다: {repo}")
+    _redeploy(post)
+
+
+def _copy(api: Any, repo: str, src: str, dest: str, message: str) -> None:
+    from huggingface_hub import CommitOperationCopy
+
+    api.create_commit(repo, operations=[CommitOperationCopy(src_path_in_repo=src, path_in_repo=dest)], repo_type="dataset",
+                      commit_message=message)  # fmt: skip
+
+
+def _redeploy(post: Any) -> None:
     if hook := os.environ.get("RENDER_DEPLOY_HOOK"):
         post(hook).raise_for_status()  # 다시 켜질 때 새 DB를 받는다
         print("Render에 재배포를 요청했습니다 (몇 분 걸림)")
@@ -77,7 +103,7 @@ def serve(port: int) -> int:
 def main(argv: list[str] | None = None) -> int:
     load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.cloud")
-    parser.add_argument("command", choices=["pull-db", "push-db", "serve"])
+    parser.add_argument("command", choices=["pull-db", "push-db", "rollback-db", "serve"])
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
     args = parser.parse_args(argv)
     try:
@@ -95,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     import httpx
 
-    push_db(HfApi(), httpx.post)
+    (rollback_db if args.command == "rollback-db" else push_db)(HfApi(), httpx.post)
     return 0
 
 

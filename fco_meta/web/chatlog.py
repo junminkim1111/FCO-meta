@@ -30,6 +30,7 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(Gemini·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
 # · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
 # · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
+# 모델을 부른 질문은 tokens·cost(유료 등급 기준 달러 추정), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified
 # 답 아래 👍/👎(가끔만 보임)는 feedback 기록(ref = 그 질문의 id, vote = up·down)으로 따로 남아 그 질문의 vote가 된다
 OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare", "blocked")
 MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
@@ -200,8 +201,10 @@ class ChatLog:
         compares = [r for r in records if r["outcome"] == "compare"]
         by_day: dict[str, Counter[str]] = {}
         errors: dict[str, dict[str, Any]] = {}
+        cost_by_day: Counter[str] = Counter()
         for r in records:
             by_day.setdefault(r["t"][:10], Counter())[r["outcome"]] += 1
+            cost_by_day[r["t"][:10]] += r.get("cost", 0)
             if r.get("error"):
                 e = errors.setdefault(r["error"], {"error": r["error"], "count": 0, "last": r["t"]})
                 e["count"] += 1
@@ -210,7 +213,9 @@ class ChatLog:
             "days": days, "since": since, "total": len(records), "pending": len(pending) if self.store else 0,
             "by_outcome": {o: sum(1 for r in records if r["outcome"] == o) for o in OUTCOMES},
             "votes": dict(Counter(r["vote"] for r in records if r.get("vote"))),
-            "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}} for d, c in sorted(by_day.items(), reverse=True)],
+            "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 4)} for d, c in sorted(by_day.items(), reverse=True)],
+            "cost": round(sum(cost_by_day.values()), 4),
+            "unverified": sum(1 for r in records if r.get("unverified")),
             "errors": sorted(errors.values(), key=lambda e: (-e["count"], e["error"])),
             "recent": [{k: v for k, v in r.items() if k != "panes"} for r in records[::-1][:RECENT]],
             "compares": compares[::-1][:MAX_COMPARES],

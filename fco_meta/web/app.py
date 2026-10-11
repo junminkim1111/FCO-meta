@@ -12,8 +12,8 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections import Counter, OrderedDict, deque
+from collections.abc import Callable, Iterable
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -42,6 +42,10 @@ KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
 DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"  # /deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
 LONG_DEADLINE = 300.0  # /deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
+WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
+# 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
+# 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
+PRICES = {"flash-lite": (0.30, 2.50), "flash": (1.50, 9.00), "deepseek": (0.21, 0.42)}
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
@@ -246,6 +250,24 @@ def _visitor(request: Request) -> str:
     return request.headers.get("cf-connecting-ip") or forwarded or (request.client.host if request.client else "?")
 
 
+def _billed(bots: Iterable[Any]) -> Counter[tuple[str, str]]:
+    """Tokens billed so far by these chats, keyed (model, input|output)."""
+    total: Counter[tuple[str, str]] = Counter()
+    for bot in bots:
+        for model, used in getattr(bot, "billed", {}).items():
+            total.update({(model, kind): n for kind, n in used.items()})
+    return total
+
+
+def _cost(billed: Counter[tuple[str, str]]) -> dict[str, Any]:
+    """{'tokens': 입력+출력, 'cost': 달러 추정} for log records (models without a known price count tokens only)."""
+    usd = 0.0
+    for (model, kind), n in billed.items():
+        price = next((p for name, p in PRICES.items() if name in model), None)
+        usd += n * price[kind == "output"] / 1e6 if price else 0
+    return {"tokens": sum(billed.values()), "cost": round(usd, 5)} if billed else {}
+
+
 def _event(**fields: Any) -> str:
     """One line of the /api/chat stream (NDJSON)."""
     return json.dumps(fields, ensure_ascii=False) + "\n"
@@ -378,11 +400,12 @@ def create_app(
         try:
             tool("list_available_data", {})
             formations = tool("list_formations", {"team_color": None})["formations"]
-            if formations:
-                tool("get_formation_overview", {"formation": formations[0]["formation"]})
             colors = tool("query_rankers", {"group_by": "team_color", "limit": 30})["rows"]
-            if colors:
-                tool("get_team_color_overview", {"team_color": colors[0]["team_color"]})
+            # 왼쪽 패널에서 누를 수 있는 순위까지 (더보기 포함). 하나씩 잠금을 잡았다 놓아 그동안 온 질문도 처리된다
+            for f in formations[:WARM_FORMATIONS]:
+                tool("get_formation_overview", {"formation": f["formation"]})
+            for c in colors[:WARM_TEAM_COLORS]:
+                tool("get_team_color_overview", {"team_color": c["team_color"]})
         except Exception:
             log.exception("warming the page cache failed")
 
@@ -473,6 +496,8 @@ def create_app(
             try:
                 yield from answer_events(entry, keep, ask, team)
             finally:
+                if "billed" in entry:  # 모델을 부른 질문: 그 사이 이 세션의 모델들이 쓴 토큰 (실패·정지도 청구된다)
+                    entry.update(_cost(_billed(e[0] for e in session.bots.values()) - entry.pop("billed")))
                 chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
 
         def answer_events(entry: dict[str, Any], keep: _TraceLog, ask: str, team: Team | None):
@@ -534,6 +559,7 @@ def create_app(
                 handover = key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready()
                 if handover:
                     options["fallback"] = False
+                entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key))
                 stream = bot.ask_stream(ask, **options)
                 try:
@@ -571,6 +597,8 @@ def create_app(
                 answers.put(req.message, turn.text)
             entry.update(outcome="ok", model=bot.last_model, tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
+            if unverified := getattr(bot, "unverified", None):  # 다시 쓰기 뒤에도 도구 결과로 확인되지 않은 수치 (관리자 페이지에서 모아 본다)
+                entry["unverified"] = unverified
             keep.add("done", text=f"모델 {bot.last_model}")
             keep.answer = turn.text
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"])
@@ -613,7 +641,8 @@ def create_app(
                 while len(compares) > MAX_SESSIONS:
                     compares.popitem(last=False)
             chat_log.record(q=req.message, outcome="compare", session=session_id[:8], compare_id=compare_id, panes=panes,
-                            ms=round((time.monotonic() - started_all) * 1000))  # fmt: skip
+                            ms=round((time.monotonic() - started_all) * 1000),
+                            cost=round(sum(p.get("cost", 0) for p in panes.values()), 5))  # fmt: skip
 
         def run(pane: str) -> None:
             # ponytail: 사용자가 창을 닫아도 세 칸은 끝까지 답한다 (스레드를 멈출 방법이 없음 — 비교는 시간당 2번이라 둠)
@@ -636,7 +665,8 @@ def create_app(
                 lines.put(_event(type="delta", pane=pane, text=BUSY_MESSAGE))
                 lines.put(_event(type="done", pane=pane, tool_calls=[], error="unavailable"))
             finally:
-                result.update(model=getattr(bot, "last_model", None), ms=round((time.monotonic() - started) * 1000))
+                result.update(model=getattr(bot, "last_model", None), ms=round((time.monotonic() - started) * 1000),
+                              **_cost(_billed([bot] if bot else [])))  # fmt: skip
                 with lock:
                     result["finished"] = True
                     last = all(results.get(p, {}).get("finished") for p in COMPARE_PANES)
