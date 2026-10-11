@@ -42,6 +42,7 @@ KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
 DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"  # /deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
 LONG_DEADLINE = 300.0  # /deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
+FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
@@ -294,6 +295,11 @@ class CompareChoice(BaseModel):
     pane: Literal["flash", "deep_r", "deep"]
 
 
+class Feedback(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{12}$")  # 답과 함께 받은 그 질문의 기록 id
+    vote: Literal["up", "down"]
+
+
 class TeamRequest(BaseModel):
     nickname: str = Field(min_length=1, max_length=30)
     session_id: str | None = Field(default=None, max_length=64)
@@ -339,6 +345,7 @@ def create_app(
     sessions: OrderedDict[str, _Session] = OrderedDict()
     compare_limit = HourlyLimit(COMPARE_PER_HOUR)
     team_limit = HourlyLimit(TEAM_PER_HOUR)
+    feedback_limit = HourlyLimit(FEEDBACK_PER_HOUR)
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
     team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
     compares: OrderedDict[str, dict[str, Any]] = OrderedDict()  # compare_id → 질문·칸별 답 (답 고르기용, 최근 것만)
@@ -458,7 +465,7 @@ def create_app(
         def events():
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
-            entry: dict[str, Any] = {"q": req.message, "session": session_id[:8], "outcome": "cancelled"}
+            entry: dict[str, Any] = {"id": uuid.uuid4().hex[:12], "q": req.message, "session": session_id[:8], "outcome": "cancelled"}
             ask, team = session.take(req.message)
             if team:
                 entry["team"] = team.nickname
@@ -493,7 +500,7 @@ def create_app(
                         keep.add("route", text="같은 첫 질문의 저장된 답 (모델 호출 없음)")
                         keep.answer = cached
                         yield _event(type="delta", text=cached)
-                        yield _event(type="done", tool_calls=[], cached=True)
+                        yield _event(type="done", tool_calls=[], cached=True, id=entry["id"])
                         return
                     key = "gemini"
                     if route:  # Jev가 판단 (없거나 실패하면 키워드)
@@ -566,7 +573,7 @@ def create_app(
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
             keep.add("done", text=f"모델 {bot.last_model}")
             keep.answer = turn.text
-            yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model)
+            yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"])
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
 
@@ -688,6 +695,14 @@ def create_app(
     @app.delete("/api/team")
     def detach_team(session_id: str = Query(max_length=64)) -> dict[str, bool]:
         session_for(session_id).team = None
+        return {"ok": True}
+
+    @app.post("/api/feedback")
+    def feedback(req: Feedback, request: Request) -> dict[str, bool]:
+        """👍/👎 under an answer (shown only now and then): kept as its own record, joined to the question by id."""
+        if not feedback_limit.check(_visitor(request)):
+            raise HTTPException(status_code=429, detail="잠시 후 다시 눌러 주세요.")
+        chat_log.record(outcome="feedback", ref=req.id, vote=req.vote)
         return {"ok": True}
 
     @app.post("/api/compare/choice")

@@ -232,6 +232,12 @@
   /* 명령어 안내 (/deep, /compare …) */
   .msg.note { color: var(--muted); font-size: 13px; }
   .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
+  /* 답 아래 👍/👎 (가끔만): 고르면 고마움 인사로 바뀌고 잠시 뒤 사라진다 */
+  .rate { align-self: flex-start; display: flex; align-items: center; gap: 4px; margin-top: -4px; font-size: 12px; color: var(--faint);
+          animation: fade-in .3s ease-out; transition: opacity .4s ease-out; }
+  .rate button { padding: 2px 8px; font-size: 14px; line-height: 1.4; background: none; border: 1px solid var(--line); color: var(--text); }
+  @media (hover: hover) { .rate button:hover { background: var(--panel-strong); opacity: 1; } }
+  .rate.gone { opacity: 0; }
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/deep·/compare) */
   /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
   .pane.selectable { cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .25s; }
@@ -796,7 +802,7 @@ async function send(text) {
   const bubble = el("div");
   $("log").append(bubble);
   $("log").scrollTop = $("log").scrollHeight;
-  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0;
+  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0, answerId = null;
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
@@ -842,6 +848,7 @@ async function send(text) {
         if (trace && ev.type === "delta" && !answer) addTrace(trace, { kind: "first", text: "답이 나오기 시작" });
         if (trace && ev.type === "done") addTrace(trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
+        else if (ev.type === "done") answerId = ev.id || null; // 끝까지 받은 답에만 온다 (👍/👎가 이 id로 간다)
         else if (ev.type === "delta") grow(ev.text);
         else if (ev.type === "tool" && stopOrb) status(TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING); // 기다리는 중이면 문구를 그 도구에 맞게
         else if (ev.type === "reset" && !stopOrb) { // 도구를 부르기 전에 쓴 글 → 지우고 다시 기다린다
@@ -868,6 +875,22 @@ async function send(text) {
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
   if (mode !== "auto") bubble.after(el("div", { class: "applied", text: `/deep 적용: ${DEEP_NAME[mode]}가 답했습니다` }));
+  if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
+}
+// 답 아래 👍/👎: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
+const RATE_CHANCE = 0.3;
+function rateRow(id) {
+  const row = el("div", { class: "rate" }, el("span", { text: "이 답이 도움이 됐나요?" }));
+  for (const [vote, icon, label] of [["up", "👍", "도움이 됐어요"], ["down", "👎", "아쉬워요"]]) {
+    const b = el("button", { type: "button", text: icon, ariaLabel: label, title: label });
+    b.addEventListener("click", () => {
+      fetch("/api/feedback", { method: "POST", headers: headers(), body: JSON.stringify({ id, vote }) }).catch(() => {});
+      row.replaceChildren(el("span", { text: vote === "up" ? "고마워요!" : "알려 주셔서 고마워요. 더 나아질게요." }));
+      setTimeout(() => { row.classList.add("gone"); row.addEventListener("transitionend", () => row.remove(), { once: true }); }, 2000);
+    });
+    row.append(b);
+  }
+  return row;
 }
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [

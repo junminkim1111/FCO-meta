@@ -30,6 +30,7 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(Gemini·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
 # · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
 # · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
+# 답 아래 👍/👎(가끔만 보임)는 feedback 기록(ref = 그 질문의 id, vote = up·down)으로 따로 남아 그 질문의 vote가 된다
 OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare", "blocked")
 MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
 
@@ -103,7 +104,7 @@ class ChatLog:
         entry = {"t": datetime.fromtimestamp(self.now(), KST).isoformat(timespec="seconds"), **fields}
         with self.lock:
             if detail is not None:
-                entry["id"] = uuid.uuid4().hex[:12]
+                entry.setdefault("id", uuid.uuid4().hex[:12])  # 답과 함께 미리 보낸 id가 있으면 그것 (👍/👎가 이 id로 온다)
                 self.details_pending.append({"id": entry["id"], "t": entry["t"], **detail})
             self.pending.append(entry)
             for pending in (self.pending, self.details_pending):
@@ -192,8 +193,10 @@ class ChatLog:
             pending = list(self.pending)
         everything = sorted((r for r in stored + pending if r["t"][:10] >= since), key=lambda r: r["t"])
         picks = {r["compare_id"]: r["pane"] for r in everything if r["outcome"] == "compare_pick"}
-        records = [{**r, "chosen": picks.get(r["compare_id"])} if r["outcome"] == "compare" else r
-                   for r in everything if r["outcome"] != "compare_pick"]  # fmt: skip
+        votes = {r["ref"]: r["vote"] for r in everything if r["outcome"] == "feedback"}  # 다시 누르면 나중 것
+        records = [{**r, "chosen": picks.get(r["compare_id"])} if r["outcome"] == "compare"
+                   else {**r, "vote": votes[r["id"]]} if r.get("id") in votes else r
+                   for r in everything if r["outcome"] not in ("compare_pick", "feedback")]  # fmt: skip
         compares = [r for r in records if r["outcome"] == "compare"]
         by_day: dict[str, Counter[str]] = {}
         errors: dict[str, dict[str, Any]] = {}
@@ -206,6 +209,7 @@ class ChatLog:
         return {
             "days": days, "since": since, "total": len(records), "pending": len(pending) if self.store else 0,
             "by_outcome": {o: sum(1 for r in records if r["outcome"] == o) for o in OUTCOMES},
+            "votes": dict(Counter(r["vote"] for r in records if r.get("vote"))),
             "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}} for d, c in sorted(by_day.items(), reverse=True)],
             "errors": sorted(errors.values(), key=lambda e: (-e["count"], e["error"])),
             "recent": [{k: v for k, v in r.items() if k != "panes"} for r in records[::-1][:RECENT]],

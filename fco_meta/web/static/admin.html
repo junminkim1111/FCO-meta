@@ -116,6 +116,7 @@ const el = (tag, props = {}, ...kids) => {
 const row = (cells, head) => el("tr", {}, ...cells.map((c) => (c instanceof Node ? el(head ? "th" : "td", {}, c) : el(head ? "th" : "td", { text: c ?? "" }))));
 const cell = (cls, text) => el("td", { class: cls, text });
 const badge = (o) => el("span", { class: "badge " + o, text: LABEL[o] || o });
+const VOTE = { up: "👍", down: "👎" }; // 답 아래 👍/👎 (사용자에게 가끔만 보임)
 let data = null, filter = "all";
 // 비밀번호는 이 탭에만 기억한다 (저장소를 못 쓰는 브라우저면 이 페이지를 연 동안만)
 let adminKey = "";
@@ -146,6 +147,8 @@ function render() {
     ...Object.keys(LABEL).map((o) => el("div", { class: "tile" }, el("div", { class: "k " + o, text: LABEL[o] }),
       el("div", { class: "v", text: (data.by_outcome[o] || 0).toLocaleString() }),
       el("div", { class: "p", text: total ? ((data.by_outcome[o] / total) * 100).toFixed(1) + "%" : "-" }))),
+    ...Object.entries(VOTE).map(([v, icon]) => el("div", { class: "tile" }, el("div", { class: "k", text: icon }),
+      el("div", { class: "v", text: (data.votes?.[v] || 0).toLocaleString() }))),
   );
   $("note").textContent = `${data.since}부터 · 기록은 10분마다(서버가 잠들 때도) 저장됩니다` +
     (data.pending ? ` · 아직 저장 전 ${data.pending}건 포함` : "");
@@ -154,17 +157,17 @@ function render() {
   $("errors").replaceChildren(row(["원인", "횟수", "마지막"], true),
     ...(data.errors.length ? data.errors.map((e) => el("tr", {}, cell("err", e.error), cell("n", e.count), cell("t", e.last.slice(5, 16).replace("T", " "))))
                            : [el("tr", {}, el("td", { colSpan: 3, class: "muted", text: "없음" }))]));
-  $("filters").replaceChildren(...["all", ...Object.keys(LABEL)].map((o) => {
-    const b = el("button", { type: "button", text: o === "all" ? "전체" : LABEL[o], class: o === filter ? "on" : "" });
+  $("filters").replaceChildren(...["all", ...Object.keys(LABEL), ...Object.keys(VOTE)].map((o) => {
+    const b = el("button", { type: "button", text: o === "all" ? "전체" : LABEL[o] || VOTE[o], class: o === filter ? "on" : "" });
     b.addEventListener("click", () => { filter = o; render(); });
     return b;
   }));
   renderCompares();
   renderSaved();
-  const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter);
+  const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter || r.vote === filter);
   $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간"], true),
     ...shown.map((r) => {
-      const tr = el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome)),
+      const tr = el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome), r.vote ? el("span", { class: "vote", text: " " + VOTE[r.vote] }) : null),
         el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null),
         cell("", (r.tools || []).join(", ")), cell("t", r.outcome === "compare" ? `3개 모델${r.chosen ? " · 고름" : ""}` : [MODE[r.mode], r.route, r.model].filter(Boolean).join(" · ")),
         cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""));
