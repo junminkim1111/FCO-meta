@@ -38,7 +38,8 @@ class CallBudget:
         run_limit: int | None = None,
         today: Callable[[], str] = kst_today,
     ):
-        self._conn = conn or sqlite3.connect(":memory:")
+        # 웹은 요청마다 다른 스레드에서 부른다 (@닉네임 조회는 team_lock으로 한 번에 하나라 같이 써도 안전)
+        self._conn = conn or sqlite3.connect(":memory:", check_same_thread=False)
         self._conn.executescript(SCHEMA)
         self.daily_limit = daily_limit
         self.run_limit = run_limit
