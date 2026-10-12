@@ -528,8 +528,9 @@ def create_app(
                         yield _event(type="done", tool_calls=[], cached=True, id=entry["id"])
                         return
                     key = "gemini"
-                    if route:  # Jev가 판단 (없거나 실패하면 키워드)
-                        heavy, why = route.heavy, route.describe()
+                    if route:  # Jev가 판단하고, 어려운 질문 단어(짜줘·스쿼드·업그레이드…)가 있으면 그래도 어려움 — Jev가 스쿼드 질문을 가볍게 볼 때가 있다
+                        word = heavy_word(req.message) if route.scope == "fco" else None
+                        heavy, why = route.heavy or bool(word), route.describe() + (f" + 키워드 '{word}'" if word and not route.heavy else "")
                     else:
                         word = heavy_word(req.message)
                         heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
