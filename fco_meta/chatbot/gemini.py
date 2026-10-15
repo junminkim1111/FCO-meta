@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .numbers import unsupported_numbers
+from .numbers import RECHECK_AT, unsupported_numbers
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
@@ -581,7 +581,8 @@ class GeminiChat:
         """If the answer has figures no tool result (or earlier answer) backs up, ask once for a rewrite
         without tools. The flagged answer and the request are then dropped from the history."""
         missing = unsupported_numbers(text, known, question)
-        if not missing:
+        if len(missing) < RECHECK_AT:  # 없거나 하나뿐: 다시 쓰지 않는다 (하나면 관리자 기록에 '수치 미확인')
+            self.unverified = missing
             return text, finish
         if self._left() <= 0:  # 다시 쓸 시간이 없으면 처음 답을 그대로 둔다
             log.warning("numbers not in tool results %s — no time left for a rewrite", missing)

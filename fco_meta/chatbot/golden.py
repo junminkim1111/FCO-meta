@@ -9,6 +9,7 @@ Each case's `expect` (all optional):
     route              "light"(Flash-Lite로 시작) | "heavy"(처음부터 3.5 Flash)
     no_tools           도구를 부르지 않는다
     tools / tools_any  모두 / 하나 이상 불러야 할 도구
+    max_calls          도구 호출 수 상한 (한 명씩 조회하는 비효율 잡기)
     detail             get_player_detail로 조회해야 할 선수 이름들
     players            마지막 recommend_players 결과: team_color, roles(하나 이상 겹침), max_price, max_salary, traits
     squad              마지막 recommend_squad·check_squad 결과: team_color(전원 소속, 카드 상세로 따로 확인), players(기본 11),
@@ -74,6 +75,8 @@ def check(expect: dict[str, Any], record: dict[str, Any] | None, calls: list[tup
     names = [n for n, _ in calls]
     if expect.get("no_tools"):
         add("도구 없음", not calls, ", ".join(names))
+    if (most := expect.get("max_calls")) is not None:
+        add(f"도구 {most}번 이하", len(calls) <= most, str(len(calls)))
     for tool in expect.get("tools", []):
         add(f"{tool} 호출", tool in names, ", ".join(names))
     if wanted := expect.get("tools_any"):

@@ -519,6 +519,15 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": None,
     },
     {
+        "name": "diagnose_team",
+        "description": (
+            "사용자 팀(@구단주명 블록) 진단을 한 번에: 선발마다 그 팀컬러(·포메이션) 랭커들이 그 자리에 그 선수를 얼마나 쓰는지(사용률 순위)와 "
+            "더 많이 쓰는 선수(최대 3명, 카드·시세·급여)를 준다. 팀 평가·약점·업그레이드할 자리 질문은 이 도구 한 번으로 시작한다 "
+            "(선수마다 get_player_detail·recommend_players를 부르지 않는다)"
+        ),
+        "input_schema": None,
+    },
+    {
         "name": "get_player_detail",
         "description": (
             "선수 이름(일부 가능)으로 랭커 사용 현황을 조회한다: 역할별 사용률과 그 역할 내 순위, 경기 평점, 시즌 카드별 사용 수·강화·시세, "
@@ -722,6 +731,9 @@ for _tool in TOOLS:
             "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"}}}
     elif _tool["name"] == "check_squad":
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **_SQUAD_ARGS["properties"]}, "required": ["picks"]}
+    elif _tool["name"] == "diagnose_team":  # 블록의 선발을 그대로 picks로, 팀컬러 줄·포메이션을 조건으로
+        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **{k: _SQUAD_ARGS["properties"][k] for k in ("team_color", "formation")}},
+                                 "required": ["picks"]}  # fmt: skip
 
 JUDGE_TOOLS = ("squad_candidates", "check_squad")  # 큰 모델: 도구의 초안을 사용자 요청에 맞게 고친다
 
@@ -759,6 +771,7 @@ class Toolbox:
             "recommend_squad": self.recommend_squad,
             "squad_candidates": self.squad_candidates,
             "check_squad": self.check_squad,
+            "diagnose_team": self.diagnose_team,
             "get_player_detail": self.get_player_detail,
             "get_meta_trends": self.get_meta_trends,
             "query_squads": self.query_squads,
@@ -1631,6 +1644,56 @@ class Toolbox:
         if owned := [c["entry"]["name"] for c in chosen if c and c.get("owned")]:
             out["owned"] = {"players": owned, "note": "이미 가진 카드라 총액·남은 예산에서 시세를 뺌"}
         return {"ok": not problems, "problems": problems, **out}
+
+    def diagnose_team(self, picks: list[dict[str, Any]], team_color: str | None = None, formation: str | None = None) -> dict[str, Any]:
+        """A user's starting XI against the rankers of its team color, in one call: per starter, its rank among the players
+        rankers use in that role and the players they use more (not already in the team)."""
+        if not isinstance(picks, list) or not all(isinstance(p, dict) for p in picks):
+            raise ToolError("picks는 [{role, player, season, grade}] 목록 (사용자 팀 블록의 선발)")
+        roles = []
+        for p in picks:
+            found = resolve_roles(str(p.get("role") or ""))
+            if not found or len(found) != 1:
+                raise ToolError(f"'{p.get('role')}'는 자리 하나가 아님 (예: ST, RW, CB)")
+            roles.append(found[0])
+        names = ["".join(str(p.get("player") or "").split()) for p in picks]
+        sq = self._squad_setup(team_color, formation, False, None, None, ",".join(roles), None, None, names)
+        if isinstance(sq, dict):
+            return sq
+        by_role = dict(sq.slot_options)
+        mine = [n for n in names if n]
+
+        def card(o: dict[str, Any]) -> dict[str, Any]:
+            c = o["card"]
+            return {"season": c["season"], "grade": c["most_used_grade"], "price": (c["price_at_most_used_grade"] or {}).get("price"), "salary": o["salary"]}
+
+        slots = []
+        for pick, name, role in zip(picks, names, roles):
+            used: list[dict[str, Any]] = []  # 그 자리에 쓰인 선수, 사용률 순 (선수당 한 번)
+            for o in by_role.get(role, []):
+                if all(u["entry"]["pid"] != o["entry"]["pid"] for u in used):
+                    used.append(o)
+            at = next((i for i, o in enumerate(used) if name and name in "".join((o["entry"]["name"] or "").split())), None)
+            row: dict[str, Any] = {"role": role, "player": pick.get("player"), "season": pick.get("season"), "grade": pick.get("grade")}
+            if at is None:
+                row["note"] = "이 범위 랭커들이 이 자리에 쓴 기록이 없음 (또는 이 팀컬러 소속 카드가 아님)"
+            else:
+                e = used[at]["entry"]
+                row.update(usage_rank=at + 1, usage_rate=e["usage_rate"], rankers=e["rankers"], rankers_card=card(used[at]))
+            others = [o for o in used[:at] if not any(n in "".join((o["entry"]["name"] or "").split()) for n in mine)]
+            row["used_more"] = [{"player": o["entry"]["name"], "usage_rate": o["entry"]["usage_rate"], **card(o)} for o in others[:3]]
+            slots.append(row)
+        return {
+            "team_color": sq.tc_name, "formation": sq.formation or "전체", "data_as_of": sq.first.data_as_of,
+            "sample_size": sq.first.sample_size, "fallback_to_all_formations": sq.first.fallback, "slots": slots,
+            "definitions": {
+                "usage_rank": "이 범위 랭커들이 그 자리에 쓴 선수 중 사용률 순위 (1 = 가장 많이 씀)",
+                "usage_rate": "표본 랭커 중 이 선수를 이 자리에 선발로 쓴 비율",
+                "rankers_card": "랭커들이 이 선수를 쓸 때 가장 많이 쓴 카드·강화와 그 시세·급여",
+                "used_more": "이 자리에 이 선수보다 많이 쓰이는 선수 (사용자 팀에 이미 있는 선수 제외, 최대 3명)",
+            },
+            "note": "사용률 순위가 낮은 자리가 랭커 기준 약점 후보 (능력치가 아니라 사용 기록 기준). 대안은 used_more, 더 찾을 때만 그 자리로 recommend_players",
+        }  # fmt: skip
 
     @staticmethod
     def _trait_card(card: dict[str, Any]) -> dict[str, Any]:
@@ -2578,6 +2641,8 @@ class Toolbox:
             return f"{result['scope']['description']} — 랭커 {result['rankers']}명, 랭킹 페이지 기준 ({format_as_of(result['scope']['data_as_of'])})"
         if name == "get_formation_overview" and result.get("ranking"):
             return f"{result['formation']} — 랭킹 상위 {result['ranking_scope']}명 + 수집 경기 {result['matchups']['games']}경기 ({format_as_of(result['data_as_of'])})"
+        if name == "diagnose_team" and result.get("slots"):
+            return f"사용자 팀 진단 — {result['team_color']} {result['formation']} 랭커 {result['sample_size']}명 스쿼드 ({as_of})"
         if name == "list_formations" and result.get("formations"):
             return f"{result['team_color']} 포메이션 분포 ({as_of})"
         return None

@@ -25,7 +25,7 @@ from .gemini import (
     ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_HISTORY_TURNS, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
     GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, _drain, _preview, unchecked_squad,
 )  # fmt: skip
-from .numbers import unsupported_numbers
+from .numbers import RECHECK_AT, unsupported_numbers
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
@@ -105,7 +105,7 @@ class ToolChat:
 
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         messages = self._start(question)
-        known: list[Any] = [a for _, a in self.history]  # 앞선 답에 나온 수치는 다시 써도 된다
+        known: list[Any] = [x for turn in self.history for x in turn]  # 앞선 질문(팀 블록)·답에 나온 수치는 다시 써도 된다
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()
         evidence: list[str] = []
@@ -165,7 +165,8 @@ class ToolChat:
     def _checked(self, messages: list[dict[str, Any]], question: str, text: str, known: list[Any]) -> Generator[Any, None, str]:
         """Figures no tool result backs up → one rewrite without tools (appended, never edited in place)."""
         missing = unsupported_numbers(text, known, question)
-        if not missing:
+        if len(missing) < RECHECK_AT:  # 없거나 하나뿐: 다시 쓰지 않는다 (하나면 관리자 기록에 '수치 미확인')
+            self.unverified = missing
             return text
         if self._ends_at - self.now() < MIN_REQUEST_TIMEOUT:
             self.unverified = missing
