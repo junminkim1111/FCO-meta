@@ -40,8 +40,8 @@ MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
-DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"  # /deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
-LONG_DEADLINE = 300.0  # /deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
+DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"  # /model deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
+LONG_DEADLINE = 300.0  # /model deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
 # 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
 # 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
@@ -56,7 +56,7 @@ DEEP_LABEL = {"deep": "DeepSeek V4 Pro 생각 끔", "deep_r": "DeepSeek V4 Pro �
 
 
 def gemini_fallbacks(models: Iterable[str]) -> list[str]:
-    """/gemini: when 3.5 Flash fails, the other Flash models first, then the Lite ones."""
+    """/model gemini·flash: when 3.5 Flash fails, the other Flash models first, then the Lite ones."""
     others = [m for m in models if m != FLASH_MODEL]
     return [m for m in others if "lite" not in m] + [m for m in others if "lite" in m]
 
@@ -336,9 +336,10 @@ class TeamRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    mode: Literal["auto", "deep", "deep_r"] = "auto"  # deep = /deep (DeepSeek 생각 끔), deep_r = /deep --r (생각 켬)
+    # /model: auto(기본, Jev가 고름) · gemini(auto와 같되 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini) · flash · lite
+    # · deep(DeepSeek 생각 끔) · deep_r(/model deep --r, 생각 켬)
+    mode: Literal["auto", "gemini", "flash", "lite", "deep", "deep_r"] = "auto"
     trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
-    gemini: bool = False  # /gemini: 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini Flash 모델로
 
 
 def _open_readonly(db_path: Path) -> sqlite3.Connection:
@@ -524,8 +525,8 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode == "auto":
-                    cached = answers.get(req.message) if first and not team else None
+                if req.mode in ("auto", "gemini"):  # Jev가 질문을 보고 Flash-Lite·3.5 Flash를 고른다
+                    cached = answers.get(req.message) if req.mode == "auto" and first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
                         entry.update(outcome="cached", chars=len(cached))
@@ -543,8 +544,9 @@ def create_app(
                         heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
                     options: dict[str, Any] = {"model": FLASH_MODEL} if heavy else {"escalate_to": FLASH_MODEL}
                     why += f" → {FLASH_MODEL}" if heavy else f" → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
-                    if req.gemini:  # /gemini: DeepSeek으로 넘기지 않고 Gemini 안에서 (다른 Flash 먼저, 그다음 Lite)
-                        why += " · /gemini: 3.5 Flash가 안 되면 다른 Gemini 모델로"
+                    if req.mode == "gemini":  # DeepSeek으로 넘기지 않고 Gemini 안에서 (다른 Flash 먼저, 그다음 Lite)
+                        entry["mode"] = req.mode
+                        why += " · /model gemini: 3.5 Flash가 안 되면 다른 Gemini 모델로"
                     elif _flash_blocked() and _deepseek_ready():  # 3.5 Flash 한도 소진·혼잡: 그 몫은 DeepSeek 생각 끔이
                         if heavy:
                             key, options = "deep", {"deadline": LONG_DEADLINE}
@@ -553,26 +555,29 @@ def create_app(
                             options = {}
                             why += " (3.5 Flash 한도 소진 → Flash-Lite가 끝까지)"
                     entry["route"] = why
+                elif req.mode in ("flash", "lite"):  # 사용자가 고른 Gemini 모델 (Jev 판단 없이)
+                    key, options = "gemini", {"model": FLASH_MODEL} if req.mode == "flash" else {}
+                    why = f"/model flash → {FLASH_MODEL} (안 되면 다른 Gemini Flash)" if req.mode == "flash" else "/model lite → Flash-Lite (3.5 Flash로 넘기지 않음)"
+                    entry["mode"] = req.mode
                 else:
                     if not _deepseek_ready():
                         entry.update(outcome="error", error="OPENROUTER_API_KEY 없음")
                         yield _event(type="delta", text="지금은 DeepSeek을 쓸 수 없어요 (서버에 OpenRouter 키가 없습니다).")
                         yield _event(type="done", tool_calls=[], error="unavailable")
                         return
-                    key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/deep → {DEEP_LABEL[req.mode]}"
+                    key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {'deep --r' if req.mode == 'deep_r' else 'deep'} → {DEEP_LABEL[req.mode]}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
                 keep.add("route", text=why)
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
                 # 3.5 Flash로 가는 질문은 Gemini 대체 모델을 쓰지 않고, 실패하면 DeepSeek 생각 끔이 처음부터 답한다
-                handover = key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready() and not req.gemini
+                handover = req.mode == "auto" and key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready()
                 if handover:
                     options["fallback"] = False
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key))
-                if req.gemini and key == "gemini":
-                    entry["mode"] = "gemini"
+                if key == "gemini" and req.mode in ("gemini", "flash"):  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
                     options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
                 stream = bot.ask_stream(ask, **options)
                 try:

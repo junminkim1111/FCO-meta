@@ -229,7 +229,7 @@
                      border-radius: 10px; padding: 8px 12px; }
   .admin-row button { padding: 8px 14px; }
   .admin-note { color: var(--error); font-size: 13px; margin-top: 6px; }
-  /* 명령어 안내 (/deep, /compare …) */
+  /* 명령어 안내 (/model, /compare …) */
   .msg.note { color: var(--muted); font-size: 13px; }
   .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
   /* 답 아래 👍/👎 (가끔만): 고르면 고마움 인사로 바뀌고 잠시 뒤 사라진다 */
@@ -238,7 +238,7 @@
   .rate button { padding: 2px 8px; font-size: 14px; line-height: 1.4; background: none; border: 1px solid var(--line); color: var(--text); }
   @media (hover: hover) { .rate button:hover { background: var(--panel-strong); opacity: 1; } }
   .rate.gone { opacity: 0; }
-  .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/deep·/compare) */
+  .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model·/compare) */
   /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
   .pane.selectable { cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .25s; }
   .pane.selectable.marked { border-color: var(--pick); box-shadow: 0 0 0 1px var(--pick); }
@@ -346,7 +346,8 @@
   #cmd-menu li b { color: var(--text); font-weight: 600; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
   #cmd-menu li span { display: none; position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%); white-space: nowrap;
                       font-size: 11.5px; color: var(--text); background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 8px;
-                      padding: 3px 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; white-space: pre; line-height: 1.5; }
+                      padding: 3px 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; white-space: pre-wrap; line-height: 1.5;
+                      width: max-content; max-width: 240px; } /* 긴 설명은 줄을 바꿔 챗봇 칸 밖으로 나가지 않게 */
   #cmd-menu li:hover span, #cmd-menu.kb li[aria-selected="true"] span { display: block; }
   #cmd-menu li:hover, #cmd-menu.kb li[aria-selected="true"] { background: rgba(255, 255, 255, .08); }
   #cmd-menu li:hover b, #cmd-menu.kb li[aria-selected="true"] b { color: var(--accent); }
@@ -740,10 +741,20 @@ const TOOL_STATUS = {
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
   escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
-// 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
-let deepNext = null, deepAll = null, traceOn = false, compareArmed = false;
-let geminiNext = false, geminiAll = false; // /gemini: 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델로 (다음 질문만 / --a 계속)
-const DEEP_NAME = { deep: "DeepSeek V4 Pro(생각 끔)", deep_r: "DeepSeek V4 Pro(생각 켬)" };
+// 명령어 상태 (새로고침하면 처음으로): /model 값 = 다음 질문만, --a = 계속, /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
+let modelNext = null, modelAll = null, traceOn = false, compareArmed = false;
+// /model 값 → [서버 mode, 이름, 짧은 설명(목록), 설명(/model·/help)]. deep --r은 생각 켬
+const MODELS = {
+  auto: ["auto", "자동", "기본: 질문에 맞춰 고름", "기본: 질문을 보고 Flash-Lite·3.5 Flash를 고르고, 3.5 Flash가 안 되면 DeepSeek"],
+  gemini: ["gemini", "Gemini만", "자동, 실패해도 Gemini 안에서", "자동과 같지만 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)"],
+  flash: ["flash", "Gemini 3.5 Flash", "늘 3.5 Flash", "늘 3.5 Flash (안 되면 다른 Gemini Flash)"],
+  lite: ["lite", "Gemini 3.5 Flash-Lite", "늘 Flash-Lite (빠르고 가볍게)", "늘 Flash-Lite (3.5 Flash로 넘기지 않음, 빠르고 가볍게)"],
+  deep: ["deep", "DeepSeek V4 Pro(생각 끔)", "DeepSeek 생각 끔 (최대 5분)", "DeepSeek V4 Pro 생각 끔. 최대 5분"],
+  "deep --r": ["deep_r", "DeepSeek V4 Pro(생각 켬)", "DeepSeek 생각 켬 (더 깊게)", "DeepSeek V4 Pro 생각 켬 (더 깊게, 더 느리게). 최대 5분"],
+};
+const MODEL_NAME = Object.fromEntries(Object.values(MODELS).map(([mode, name]) => [mode, name]));
+const MODEL_ARG = Object.fromEntries(Object.entries(MODELS).map(([arg, [mode]]) => [mode, arg]));
+const MODEL_ITEMS = Object.entries(MODELS).map(([arg, [, , short]]) => [`/model ${arg}`, short]); // /model 뒤에 뜨는 목록
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료" };
 // 생각 표시 줄 하나 (이어서 오는 생각 조각은 한 줄로 붙인다)
@@ -797,9 +808,8 @@ async function send(text) {
   const ctrl = new AbortController();
   setBusy(ctrl);
   mention(say("me", text));
-  const mode = deepNext || deepAll || "auto";
-  const gemini = geminiNext || geminiAll;
-  deepNext = null; geminiNext = false;
+  const mode = modelNext || modelAll || "auto";
+  modelNext = null;
   const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace);
   const bubble = el("div");
@@ -836,7 +846,7 @@ async function send(text) {
   };
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: headers(), signal: ctrl.signal,
-                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, trace: !!trace, gemini }) });
+                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, trace: !!trace }) });
     if (!res.ok) throw await failure(res);
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let rest = "";
@@ -877,7 +887,7 @@ async function send(text) {
   }
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
-  if (mode !== "auto") bubble.after(el("div", { class: "applied", text: `/deep 적용: ${DEEP_NAME[mode]}가 답했습니다` }));
+  if (mode !== "auto") bubble.after(el("div", { class: "applied", text: `/model ${MODEL_ARG[mode]} 적용: ${MODEL_NAME[mode]}` }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
 }
 // 답 아래 👍/👎: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
@@ -897,8 +907,7 @@ function rateRow(id) {
 }
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [
-  ["/deep", "다음 질문 하나를 DeepSeek V4 Pro(생각 끔)가 답함\n--r 생각 켬 · --a 새로고침 전까지 계속 (함께 쓸 수 있음)"],
-  ["/gemini", "다음 질문에서 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델로\n--a 새로고침 전까지 계속"],
+  ["/model", "다음 질문을 답할 모델 (auto·gemini·flash·lite·deep)\n--a 새로고침 전까지 계속"],
   ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"],
   ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
@@ -907,7 +916,8 @@ const COMMANDS = [
 let cmdShown = [], cmdIndex = 0;
 function updateCmdMenu() {
   const v = $("msg").value;
-  cmdShown = /^\/[^\n]*$/.test(v) ? COMMANDS.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
+  const pool = /^\/model\s/i.test(v) ? MODEL_ITEMS : COMMANDS; // /model 뒤에서는 고를 수 있는 모델
+  cmdShown = /^\/[^\n]*$/.test(v) ? pool.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
   cmdIndex = Math.min(cmdIndex, Math.max(cmdShown.length - 1, 0));
   $("cmd-menu").hidden = !cmdShown.length;
   $("cmd-menu").replaceChildren(...cmdShown.map(([c, desc], i) => {
@@ -920,6 +930,7 @@ function updateCmdMenu() {
 function pickCmd(c) {
   $("msg").value = c + " "; cmdShown = []; $("cmd-menu").hidden = true;
   $("msg").focus(); $("msg").setSelectionRange($("msg").value.length, $("msg").value.length);
+  if (c === "/model") updateCmdMenu(); // 이어서 모델 목록
 }
 function cmdKeys(ev) {
   if ($("cmd-menu").hidden || ev.isComposing) return false;
@@ -1041,34 +1052,35 @@ function command(text) {
     traceOn = true; // 이 페이지에서 새로고침하기 전까지
     return note("/trace 적용: 지금부터 모델의 생각·도구 결과를 답 위에 함께 보여 줍니다. 새로고침하거나 /cancel로 끕니다.");
   }
-  if (cmd === "/deep" && only(["--r", "--a"])) {
-    const mode = flags.includes("--r") ? "deep_r" : "deep";
-    if (flags.includes("--a")) { deepAll = mode; deepNext = null; return note(`${text} 적용: 새로고침하기 전까지 ${DEEP_NAME[mode]}가 답합니다. 답마다 최대 5분 걸릴 수 있어요.`); }
-    deepNext = mode;
-    return note(`${text} 적용: 다음 질문 하나만 ${DEEP_NAME[mode]}가 답합니다. 최대 5분 걸릴 수 있어요.`);
-  }
-  if (cmd === "/gemini" && only(["--a"])) {
-    if (flags.includes("--a")) { geminiAll = true; geminiNext = false; return note(`${text} 적용: 새로고침하기 전까지 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)이 답합니다.`); }
-    geminiNext = true;
-    return note(`${text} 적용: 다음 질문 하나만, 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)이 답합니다.`);
+  if (cmd === "/model") {
+    const [value, ...rest] = flags.map((f) => f.toLowerCase());
+    if (!value) { // 값 없이: 지금 설정과 고를 수 있는 값
+      const now = modelAll ? `지금: ${MODEL_NAME[modelAll]} (--a, 계속)` : modelNext ? `지금: 다음 질문만 ${MODEL_NAME[modelNext]}` : "지금: 자동 (기본)";
+      return note([now, ...Object.entries(MODELS).map(([arg, [, , , desc]]) => `/model ${arg} — ${desc}`), "--a를 붙이면 새로고침하기 전까지 계속"].join("\n"));
+    }
+    const arg = value === "deep" && rest.includes("--r") ? "deep --r" : value;
+    const allowed = arg === "deep --r" ? ["--r", "--a"] : ["--a"];
+    if (MODELS[arg] && new Set(rest).size === rest.length && rest.every((f) => allowed.includes(f))) {
+      const [mode, name] = MODELS[arg], slow = mode.startsWith("deep") ? " 답마다 최대 5분 걸릴 수 있어요." : "";
+      if (rest.includes("--a")) { modelAll = mode === "auto" ? null : mode; modelNext = null; return note(`${text} 적용: 새로고침하기 전까지 ${name}.${slow}`); }
+      modelNext = mode;
+      return note(`${text} 적용: 다음 질문 하나만 ${name}.${slow}`);
+    }
   }
   if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
-    const off = [deepNext && `/deep(${DEEP_NAME[deepNext]})`, deepAll && `/deep --a(${DEEP_NAME[deepAll]})`, traceOn && "/trace(생각 표시)",
-                 geminiNext && "/gemini", geminiAll && "/gemini --a",
+    const off = [modelNext && `/model ${MODEL_ARG[modelNext]}`, modelAll && `/model ${MODEL_ARG[modelAll]} --a`, traceOn && "/trace(생각 표시)",
                  team && `@${team.nickname}(팀)`,
                  $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
-    deepNext = deepAll = null; traceOn = geminiNext = geminiAll = false; dropTeam();
+    modelNext = modelAll = null; traceOn = false; dropTeam();
     if ($("chat").classList.contains("comparing")) closeCompare();
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
   if (cmd === "/help" && !flags.length) {
     return note([
       "명령어 (질문 대신 입력, 새로고침하면 모두 처음 상태로)",
-      "/deep — 다음 질문 하나를 DeepSeek V4 Pro(생각 끔)가 답합니다. 최대 5분",
-      "/deep --r — 같은데 생각을 켭니다 (더 깊게, 더 느리게)",
-      "/deep --a — 다음 질문만이 아니라 새로고침하기 전까지 계속 (--r과 함께 쓸 수 있음)",
-      "/gemini — 다음 질문 하나만, 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)이 답합니다",
-      "/gemini --a — 같은데 새로고침하기 전까지 계속",
+      "/model — 다음 질문을 답할 모델을 고릅니다 (값 없이 치면 지금 설정과 목록)",
+      ...Object.entries(MODELS).map(([arg, [, , , desc]]) => `  /model ${arg} — ${desc}`),
+      "  --a를 붙이면 다음 질문만이 아니라 새로고침하기 전까지 계속",
       "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
       "/trace — 모델이 고른 경로·생각·도구 결과를 답 위에 함께 보여 줍니다",
       "/cancel — 켜 둔 명령어를 모두 끄고 기본 모델로 돌아갑니다",
