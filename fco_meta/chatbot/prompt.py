@@ -143,7 +143,9 @@ _JUDGE_SQUAD_RULE = _SQUAD_RULE.replace(
 ) + """\
 - 인자로 옮길 수 없는 바람이 남았을 때만(드물게) 초안을 고칩니다: 바꿀 자리만 squad_candidates(roles)로 후보를 보고,
   고친 11명을 check_squad(같은 조건 인자, picks: 자리·선수·시즌·강화)로 검사해 통과한 라인업과 그 결과의 총액·총 급여로 답합니다.
-  바꾼 자리와 이유를 데이터로 한 줄씩 밝힙니다.
+  바꾼 자리와 이유를 데이터로 한 줄씩 밝힙니다. 검사 과정은 답에 쓰지 않습니다('검사를 통과했습니다' 같은 말로 시작하지 않음).
+- 사용자 팀을 바탕으로 고칠 때: 블록에서 그대로 두는 카드는 picks에 owned: true를 붙이고(랭커가 잘 안 쓰는 시즌이어도 받아 준다),
+  사용자가 바꾸라고 하지 않은 자리는 바꾸지 않습니다.
 """
 JUDGE_PROMPT = SYSTEM_PROMPT.replace(_SQUAD_RULE, _JUDGE_SQUAD_RULE)
 

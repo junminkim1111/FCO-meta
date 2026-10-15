@@ -348,6 +348,7 @@ class GeminiChat:
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output, 생각은 output에) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치 (다시 쓰기 뒤에도 남은 것)
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
+        self._fallbacks: list[str] | None = None  # 이 질문만의 대체 모델 순서 (ask_stream)
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
         self._escalate: str | None = None  # 두 번째 도구부터 이 모델이 이어받는다 (ask_stream이 정한다)
         self._fallback = True  # 실패하면 대체 모델로 (ask_stream이 정한다: 끄면 실패를 그대로 올려 호출한 쪽이 다른 회사 모델로)
@@ -400,7 +401,8 @@ class GeminiChat:
         from google.genai import errors
 
         failures: list[tuple[str, Exception]] = []
-        configured = [self.model, *self.fallback_models] if self._fallback else [self.model]
+        fallbacks = self._fallbacks if self._fallbacks is not None else self.fallback_models
+        configured = [self.model, *(m for m in fallbacks if m != self.model)] if self._fallback else [self.model]
 
         def fail(model: str, exc: Any) -> None:
             failures.append((model, exc))
@@ -479,7 +481,7 @@ class GeminiChat:
 
     def ask_stream(
         self, question: str, *, model: str | None = None, escalate_to: str | None = None, thoughts: bool = False,
-        deadline: float | None = None, fallback: bool = True,
+        deadline: float | None = None, fallback: bool = True, fallbacks: list[str] | None = None,
     ) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         """One user turn: yields answer text as it arrives (RESET = drop what was yielded so far,
         ToolCall = a tool is about to run, Recheck = figures are being rewritten) and
@@ -488,19 +490,21 @@ class GeminiChat:
 
         For this question only: `model` answers instead of the usual one, `escalate_to` takes over from the second
         tool call on (Escalate event), `thoughts` adds Thought events, `deadline` replaces the time cap, `fallback=False`
-        raises when the model fails instead of trying the other Gemini models (the caller hands over elsewhere)."""
+        raises when the model fails instead of trying the other Gemini models (the caller hands over elsewhere),
+        `fallbacks` replaces the fallback models and their order."""
         self._drop_tool_history()
         self.unverified = []
         self._ends_at = self.now() + (deadline or self.deadline)
         checkpoint, usual = len(self.contents), self.model
         self.model, self._escalate, self.thoughts, self._fallback = model or usual, escalate_to, thoughts, fallback
+        self._fallbacks = fallbacks
         try:
             return (yield from self._ask(question))
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
         finally:
-            self.model, self._escalate, self.thoughts, self._fallback = usual, None, False, True
+            self.model, self._escalate, self.thoughts, self._fallback, self._fallbacks = usual, None, False, True, None
 
     def remember(self, question: str, answer: str) -> None:
         """Add a question answered without the model (answer cache), so follow-ups keep the context."""

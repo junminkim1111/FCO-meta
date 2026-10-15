@@ -728,7 +728,7 @@ for _tool in TOOLS:
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], **_KNOBS}}
     if _tool["name"] == "squad_candidates":
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], "roles": {
-            "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"}}}
+            "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"}, "exclude": _KNOBS["exclude"]}}
     elif _tool["name"] == "check_squad":
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **_SQUAD_ARGS["properties"]}, "required": ["picks"]}
     elif _tool["name"] == "diagnose_team":  # 블록의 선발을 그대로 picks로, 팀컬러 줄·포메이션을 조건으로
@@ -1460,12 +1460,14 @@ class Toolbox:
         chemistry: str | None = None,
         include: str | None = None,
         roles: str | None = None,
+        exclude: str | None = None,
     ) -> dict[str, Any]:
         """Per slot 3~5 players with the data to judge them; the model picks and check_squad verifies.
 
         The players of one combination within every limit are always among them (so a passing squad exists), but
         that combination is not shown — the model judges on its own."""
-        sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include)
+        knobs = self._squad_knobs(exclude, None, None, None, None, None)
+        sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs)
         if isinstance(sq, dict):
             return sq
         feasible = _choose(sq.slot_options, sq.limits, sq.reqs)
@@ -1612,9 +1614,16 @@ class Toolbox:
             matches = [o for o in options if name and name in "".join((o["entry"]["name"] or "").split())]
             season = "".join(str(pick.get("season") or "").split()).casefold()
             if matches and season:
-                matches = [o for o in matches if season in "".join((o["card"]["season"] or "").split()).casefold()]
+                same = [o for o in matches if season in "".join((o["card"]["season"] or "").split()).casefold()]
+                if not same and pick.get("owned"):  # 가진 카드: 랭커들이 이 자리에 안 쓴 시즌이어도 수집된 카드에서 (recommend_squad의 owned와 같게)
+                    found = self._owned_cards(matches[0]["entry"]["pid"], season, sq.fits if not sq.season_rule else None)
+                    tags = {t for t in matches[0]["tags"] if t != "season"}
+                    same = [{**matches[0], "card": c, "salary": c["salary"], "price": None,
+                             "tags": tags | ({"season"} if sq.season_rule and sq.fits(c["sp_id"]) else set())} for c in found[:1]]  # fmt: skip
+                matches = same
                 if not matches:
-                    problems.append(f"{label}: '{pick.get('season')}' 카드는 이 범위 랭커들이 이 자리에 쓴 카드가 아님 (squad_candidates의 cards에서 고를 것)")
+                    problems.append(f"{label}: '{pick.get('season')}' 카드는 이 범위 랭커들이 이 자리에 쓴 카드가 아님 "
+                                    "(squad_candidates의 cards에서 고르거나, 사용자가 가진 카드면 owned: true)")
                     continue
             if not matches:
                 problems.append(f"{label}: 이 범위 랭커들이 {role}에 쓴 선수가 아니거나 조건(팀컬러 소속 등)에 맞는 카드가 없음")

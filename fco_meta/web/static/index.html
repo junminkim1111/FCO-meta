@@ -742,6 +742,7 @@ const TOOL_STATUS = {
 };
 // 명령어 상태 (새로고침하면 처음으로): /deep = 다음 질문만, /deep --a = 계속, /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
 let deepNext = null, deepAll = null, traceOn = false, compareArmed = false;
+let geminiNext = false, geminiAll = false; // /gemini: 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델로 (다음 질문만 / --a 계속)
 const DEEP_NAME = { deep: "DeepSeek V4 Pro(생각 끔)", deep_r: "DeepSeek V4 Pro(생각 켬)" };
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료" };
@@ -797,7 +798,8 @@ async function send(text) {
   setBusy(ctrl);
   mention(say("me", text));
   const mode = deepNext || deepAll || "auto";
-  deepNext = null;
+  const gemini = geminiNext || geminiAll;
+  deepNext = null; geminiNext = false;
   const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace);
   const bubble = el("div");
@@ -834,7 +836,7 @@ async function send(text) {
   };
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: headers(), signal: ctrl.signal,
-                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, trace: !!trace }) });
+                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, trace: !!trace, gemini }) });
     if (!res.ok) throw await failure(res);
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let rest = "";
@@ -896,6 +898,7 @@ function rateRow(id) {
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [
   ["/deep", "다음 질문 하나를 DeepSeek V4 Pro(생각 끔)가 답함\n--r 생각 켬 · --a 새로고침 전까지 계속 (함께 쓸 수 있음)"],
+  ["/gemini", "다음 질문에서 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델로\n--a 새로고침 전까지 계속"],
   ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"],
   ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
@@ -1044,11 +1047,17 @@ function command(text) {
     deepNext = mode;
     return note(`${text} 적용: 다음 질문 하나만 ${DEEP_NAME[mode]}가 답합니다. 최대 5분 걸릴 수 있어요.`);
   }
+  if (cmd === "/gemini" && only(["--a"])) {
+    if (flags.includes("--a")) { geminiAll = true; geminiNext = false; return note(`${text} 적용: 새로고침하기 전까지 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)이 답합니다.`); }
+    geminiNext = true;
+    return note(`${text} 적용: 다음 질문 하나만, 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)이 답합니다.`);
+  }
   if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
     const off = [deepNext && `/deep(${DEEP_NAME[deepNext]})`, deepAll && `/deep --a(${DEEP_NAME[deepAll]})`, traceOn && "/trace(생각 표시)",
+                 geminiNext && "/gemini", geminiAll && "/gemini --a",
                  team && `@${team.nickname}(팀)`,
                  $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
-    deepNext = deepAll = null; traceOn = false; dropTeam();
+    deepNext = deepAll = null; traceOn = geminiNext = geminiAll = false; dropTeam();
     if ($("chat").classList.contains("comparing")) closeCompare();
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
@@ -1058,6 +1067,8 @@ function command(text) {
       "/deep — 다음 질문 하나를 DeepSeek V4 Pro(생각 끔)가 답합니다. 최대 5분",
       "/deep --r — 같은데 생각을 켭니다 (더 깊게, 더 느리게)",
       "/deep --a — 다음 질문만이 아니라 새로고침하기 전까지 계속 (--r과 함께 쓸 수 있음)",
+      "/gemini — 다음 질문 하나만, 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)이 답합니다",
+      "/gemini --a — 같은데 새로고침하기 전까지 계속",
       "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
       "/trace — 모델이 고른 경로·생각·도구 결과를 답 위에 함께 보여 줍니다",
       "/cancel — 켜 둔 명령어를 모두 끄고 기본 모델로 돌아갑니다",

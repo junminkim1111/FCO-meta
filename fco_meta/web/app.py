@@ -55,6 +55,12 @@ HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베�
 DEEP_LABEL = {"deep": "DeepSeek V4 Pro 생각 끔", "deep_r": "DeepSeek V4 Pro 생각 켬"}
 
 
+def gemini_fallbacks(models: Iterable[str]) -> list[str]:
+    """/gemini: when 3.5 Flash fails, the other Flash models first, then the Lite ones."""
+    others = [m for m in models if m != FLASH_MODEL]
+    return [m for m in others if "lite" not in m] + [m for m in others if "lite" in m]
+
+
 def heavy_word(question: str) -> str | None:
     """The first heavy-question word in `question` (spaces ignored), or None."""
     m = HEAVY_WORDS.search("".join(question.split()))
@@ -332,6 +338,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=64)
     mode: Literal["auto", "deep", "deep_r"] = "auto"  # deep = /deep (DeepSeek 생각 끔), deep_r = /deep --r (생각 켬)
     trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
+    gemini: bool = False  # /gemini: 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini Flash 모델로
 
 
 def _open_readonly(db_path: Path) -> sqlite3.Connection:
@@ -536,7 +543,9 @@ def create_app(
                         heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
                     options: dict[str, Any] = {"model": FLASH_MODEL} if heavy else {"escalate_to": FLASH_MODEL}
                     why += f" → {FLASH_MODEL}" if heavy else f" → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
-                    if _flash_blocked() and _deepseek_ready():  # 3.5 Flash 한도 소진·혼잡: 그 몫은 DeepSeek 생각 끔이
+                    if req.gemini:  # /gemini: DeepSeek으로 넘기지 않고 Gemini 안에서 (다른 Flash 먼저, 그다음 Lite)
+                        why += " · /gemini: 3.5 Flash가 안 되면 다른 Gemini 모델로"
+                    elif _flash_blocked() and _deepseek_ready():  # 3.5 Flash 한도 소진·혼잡: 그 몫은 DeepSeek 생각 끔이
                         if heavy:
                             key, options = "deep", {"deadline": LONG_DEADLINE}
                             why += f" (한도 소진 → {DEEP_LABEL['deep']})"
@@ -557,11 +566,14 @@ def create_app(
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
                 # 3.5 Flash로 가는 질문은 Gemini 대체 모델을 쓰지 않고, 실패하면 DeepSeek 생각 끔이 처음부터 답한다
-                handover = key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready()
+                handover = key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready() and not req.gemini
                 if handover:
                     options["fallback"] = False
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key))
+                if req.gemini and key == "gemini":
+                    entry["mode"] = "gemini"
+                    options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
                 stream = bot.ask_stream(ask, **options)
                 try:
                     try:
