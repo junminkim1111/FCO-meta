@@ -39,3 +39,4 @@ tests/
 eval/
 .env.example
 docs/BACKLOG.md
+docs/TROUBLESHOOTING.md

@@ -349,6 +349,7 @@ class GeminiChat:
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치 (다시 쓰기 뒤에도 남은 것)
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
         self._fallbacks: list[str] | None = None  # 이 질문만의 대체 모델 순서 (ask_stream)
+        self._think = False  # 이 질문만 생각 깊이 HIGH (/model … --r). 아니면 모델이 정한다
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
         self._escalate: str | None = None  # 두 번째 도구부터 이 모델이 이어받는다 (ask_stream이 정한다)
         self._fallback = True  # 실패하면 대체 모델로 (ask_stream이 정한다: 끄면 실패를 그대로 올려 호출한 쪽이 다른 회사 모델로)
@@ -387,8 +388,10 @@ class GeminiChat:
         config = config or self._config()
         if left != float("inf"):  # 응답이 늦어도 남은 시간 안에서 끊는다 (밀리초)
             config = config.model_copy(update={"http_options": _types().HttpOptions(timeout=int(left * 1000))})
-        if self.thoughts:  # 생각 요약을 함께 받는다 (생각하지 않는 모델은 빈 채로 온다)
-            config = config.model_copy(update={"thinking_config": _types().ThinkingConfig(include_thoughts=True)})
+        if self.thoughts or self._think:  # 생각 요약을 함께 받는다 (생각하지 않는 모델은 빈 채로 온다), --r이면 가장 깊게
+            types = _types()
+            level = {"thinking_level": types.ThinkingLevel.HIGH} if self._think else {}
+            config = config.model_copy(update={"thinking_config": types.ThinkingConfig(include_thoughts=self.thoughts, **level)})
         import httpx
 
         try:
@@ -481,7 +484,7 @@ class GeminiChat:
 
     def ask_stream(
         self, question: str, *, model: str | None = None, escalate_to: str | None = None, thoughts: bool = False,
-        deadline: float | None = None, fallback: bool = True, fallbacks: list[str] | None = None,
+        deadline: float | None = None, fallback: bool = True, fallbacks: list[str] | None = None, think: bool = False,
     ) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         """One user turn: yields answer text as it arrives (RESET = drop what was yielded so far,
         ToolCall = a tool is about to run, Recheck = figures are being rewritten) and
@@ -491,20 +494,21 @@ class GeminiChat:
         For this question only: `model` answers instead of the usual one, `escalate_to` takes over from the second
         tool call on (Escalate event), `thoughts` adds Thought events, `deadline` replaces the time cap, `fallback=False`
         raises when the model fails instead of trying the other Gemini models (the caller hands over elsewhere),
-        `fallbacks` replaces the fallback models and their order."""
+        `fallbacks` replaces the fallback models and their order, `think` asks for the deepest thinking (HIGH;
+        otherwise the model decides how much to think)."""
         self._drop_tool_history()
         self.unverified = []
         self._ends_at = self.now() + (deadline or self.deadline)
         checkpoint, usual = len(self.contents), self.model
         self.model, self._escalate, self.thoughts, self._fallback = model or usual, escalate_to, thoughts, fallback
-        self._fallbacks = fallbacks
+        self._fallbacks, self._think = fallbacks, think
         try:
             return (yield from self._ask(question))
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
         finally:
-            self.model, self._escalate, self.thoughts, self._fallback, self._fallbacks = usual, None, False, True, None
+            self.model, self._escalate, self.thoughts, self._fallback, self._fallbacks, self._think = usual, None, False, True, None, False
 
     def remember(self, question: str, answer: str) -> None:
         """Add a question answered without the model (answer cache), so follow-ups keep the context."""

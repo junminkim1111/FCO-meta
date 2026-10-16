@@ -339,6 +339,7 @@ class ChatRequest(BaseModel):
     # /model: auto(기본, Jev가 고름) · gemini(auto와 같되 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini) · flash · lite
     # · deep(DeepSeek 생각 끔) · deep_r(/model deep --r, 생각 켬)
     mode: Literal["auto", "gemini", "flash", "lite", "deep", "deep_r"] = "auto"
+    think: bool = False  # /model auto·gemini·flash·lite --r: Gemini가 답할 때 생각 깊이 HIGH (기본은 모델이 정함)
     trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
 
 
@@ -568,6 +569,9 @@ def create_app(
                     key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {'deep --r' if req.mode == 'deep_r' else 'deep'} → {DEEP_LABEL[req.mode]}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
+                if req.think and key == "gemini":
+                    why += " · --r 생각 깊게 (HIGH)"
+                    entry["route"] = why
                 keep.add("route", text=why)
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
@@ -579,6 +583,8 @@ def create_app(
                 bot = session.bot(key, make_bot(key))
                 if key == "gemini" and req.mode in ("gemini", "flash"):  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
                     options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
+                if key == "gemini" and req.think:  # --r: Gemini가 가장 깊게 생각 (DeepSeek으로 넘어가면 그쪽 설정대로)
+                    options["think"] = entry["think"] = True
                 stream = bot.ask_stream(ask, **options)
                 try:
                     try:
