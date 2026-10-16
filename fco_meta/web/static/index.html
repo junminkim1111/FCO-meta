@@ -58,8 +58,8 @@
   button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
            cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s, transform .1s ease-out; }
   @media (hover: hover) { button:hover { opacity: .9; } } /* 터치 화면에서 흐린 상태가 남지 않게 */
-  /* 누르는 순간 살짝 눌린다 (막대 줄·고무 세그먼트는 제외) */
-  @media (prefers-reduced-motion: no-preference) { button:not(.row, .rubber-segment__item, :disabled):active { transform: scale(.96); } }
+  /* 누르는 순간 살짝 눌린다 (막대 줄은 제외) */
+  @media (prefers-reduced-motion: no-preference) { button:not(.row, :disabled):active { transform: scale(.96); } }
   button:disabled { opacity: .5; cursor: wait; }
   button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   textarea { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 16px;
@@ -100,31 +100,7 @@
   .tile .val { font-size: clamp(14px, 3cqi, 20px); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; } /* 타일 폭에 맞춰 한 줄로 */
   .tile .sub { font-size: 11px; color: var(--faint); }
   h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; margin: 22px 0 10px; }
-  /* 분포 전환 (static/segment.js — React Bits Rubber Segment, MIT + Commons Clause © David Haz) */
-  .dist-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-  .rubber-segment { --rs-track: var(--track); --rs-thumb: var(--text); --rs-ink: var(--text); --rs-ink-active: var(--on-text);
-    --rs-radius: 10px; --rs-inset: 3px; --rs-thumb-radius: 7px; --rs-h: 34px; --rs-font: 13px; --rs-pad: 14px; --rs-min: 44px;
-    --rs-idle: .7; --rs-hover: .9; --rs-ease-out: cubic-bezier(.23, 1, .32, 1);
-    position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); vertical-align: middle;
-    padding: var(--rs-inset); border-radius: var(--rs-radius); background: var(--rs-track); border: 1px solid var(--line);
-    touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-  .rubber-segment__item { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    height: calc(var(--rs-h) - var(--rs-inset) * 2); min-width: var(--rs-min); margin: 0; padding: 0 var(--rs-pad); border: 0;
-    border-radius: var(--rs-thumb-radius); background: none; color: var(--rs-ink); opacity: var(--rs-idle); font: inherit;
-    font-size: var(--rs-font); font-weight: 600; line-height: 1; white-space: nowrap; cursor: pointer; outline: none;
-    transition: opacity 160ms ease, transform 160ms var(--rs-ease-out); }
-  .rubber-segment__item:hover { opacity: var(--rs-idle); }
-  .rubber-segment__item[aria-checked='true'] { cursor: default; }
-  .rubber-segment[data-draggable] .rubber-segment__item[aria-checked='true'] { cursor: grab; }
-  .rubber-segment[data-held], .rubber-segment[data-held] .rubber-segment__item { cursor: grabbing; }
-  .rubber-segment__item[data-pressed] { transform: scale(.96); }
-  .rubber-segment__item:focus-visible { outline: 2px solid var(--rs-thumb); outline-offset: 3px; }
-  @media (hover: hover) and (pointer: fine) { .rubber-segment__item[aria-checked='false']:hover { opacity: var(--rs-hover); } }
-  .rubber-segment__thumb { position: absolute; inset: var(--rs-inset); display: grid; grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr); background: var(--rs-thumb); color: var(--rs-ink-active); pointer-events: none;
-    border-radius: var(--rs-thumb-radius); }
-  .rubber-segment__copy { color: inherit; opacity: 1; cursor: default; }
-  @media (prefers-reduced-motion: reduce) { .rubber-segment__item { transition: opacity 160ms ease; } }
+  /* 보기 전환 (분포·스쿼드): 둥근 알약 안에서 고른 쪽만 밝게 */
   .seg { display: inline-flex; background: var(--field); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
   .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 5px 14px; }
   .seg button.on { background: var(--panel-strong); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -418,7 +394,6 @@
 import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
-import { mountSegment } from "/static/segment.js"; // 포메이션 분포 / 팀컬러 분포 전환
 const $ = (id) => document.getElementById(id);
 const beam = mountBeam($("msg-beam"));
 
@@ -545,6 +520,20 @@ async function loadChart() {
   }
 }
 
+// 보기 전환 토글 (분포·스쿼드 같은 모양): 누르면 그 쪽이 밝아지고 onChange
+function mountPills(container, items, { value = items[0].value, onChange, ariaLabel = "보기 전환" } = {}) {
+  const seg = el("div", { class: "seg", role: "radiogroup", ariaLabel });
+  const set = (v) => buttons.forEach((b, i) => { b.classList.toggle("on", items[i].value === v); b.setAttribute("aria-checked", String(items[i].value === v)); });
+  const buttons = items.map((item) => {
+    const b = el("button", { type: "button", text: item.label, role: "radio" });
+    b.addEventListener("click", () => { if (b.classList.contains("on")) return; set(item.value); onChange?.(item.value); });
+    return b;
+  });
+  seg.append(...buttons);
+  container.replaceChildren(seg);
+  set(value);
+}
+
 // --- formation detail ---
 // 선수 사진: 카드 사진 → 선수 기본 사진 → 이름 첫 글자 (넥슨 이미지 CDN을 못 쓰면 글자로 표시)
 const IMG = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common";
@@ -621,20 +610,13 @@ function renderPitchArea(d) {
       return [el("p", { class: "caption", text: "\u00a0" }), pitch(best.players, "", () => "")];
     },
   };
-  const body = el("div");
-  const seg = el("div", { class: "seg", role: "tablist" });
-  const show = (key) => {
-    for (const b of seg.children) b.classList.toggle("on", b.dataset.v === key);
-    body.replaceChildren(...views[key]());
-  };
-  for (const [key, label] of [["top", "최상위 랭커 스쿼드"], ["best", "랭커 베스트 11"]]) {
-    const b = el("button", { type: "button", text: label });
-    b.dataset.v = key;
-    b.addEventListener("click", () => show(key));
-    seg.append(b);
-  }
+  const body = el("div"), seg = el("div");
+  const show = (key) => body.replaceChildren(...views[key]());
+  const first = top ? "top" : "best";
+  mountPills(seg, [{ value: "top", label: "최상위 랭커 스쿼드" }, { value: "best", label: "랭커 베스트 11" }],
+             { value: first, onChange: show, ariaLabel: "스쿼드 보기" }); // 분포 전환과 같은 알약 토글
   area.append(seg, body);
-  show(top ? "top" : "best");
+  show(first);
   return area;
 }
 
@@ -1233,7 +1215,7 @@ say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이�
 
 mountOrb($("brand-orb"), "solving", 32);
 loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
-mountSegment($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
+mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
   ariaLabel: "분포 보기 전환",
   onChange: (v) => { mode = v; selected = null; loadChart(); },
 });
