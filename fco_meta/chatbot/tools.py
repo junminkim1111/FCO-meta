@@ -81,7 +81,7 @@ TREND_MIN_RANKERS = 3  # 사용률 변화 목록에 넣을 최소 사용 랭커 
 QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 기본 최소 사용 랭커 수 (1명짜리 1위 방지)
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
-SALARY_CAP = 310  # 게임의 팀 급여 상한: 선발 11명은 사용자가 급여 합을 말하지 않으면 이 안에서 고른다 (더 크게 말하면 따르고 경고)
+SALARY_CAP = 315  # 게임의 팀 급여 상한: 선발 11명은 사용자가 급여 합을 말하지 않으면 이 안에서 고른다 (더 크게 말하면 따르고 경고)
 # 신규특성(금특·신특): 8강(금카) 이상이면 어떤 카드든 하나를 더 달 수 있다. 줄임말 → 카드 상세의 특성 이름
 NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
@@ -233,7 +233,7 @@ def _choose(
 
 
 def _fill(chosen: list[dict[str, Any] | None], slot_options, overrun: Callable[[Any], float]) -> list[dict[str, Any] | None]:
-    """Spend what the limits leave, as rankers do (급여 310이면 308~310): keep swapping while every limit and
+    """Spend what the limits leave, as rankers do (급여 315면 313~315): keep swapping while every limit and
     requirement still holds and the summed usage goes up — or stays the same and the salary goes up, i.e. the same
     player's higher-salary (better) card. Usage first, so this never trades a popular player for a pricier one."""
 

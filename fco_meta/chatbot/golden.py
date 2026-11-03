@@ -13,7 +13,7 @@ Each case's `expect` (all optional):
     detail             get_player_detail로 조회해야 할 선수 이름들
     players            마지막 recommend_players 결과: team_color, roles(하나 이상 겹침), max_price, max_salary, traits
     squad              마지막 recommend_squad·check_squad 결과: team_color(전원 소속, 카드 상세로 따로 확인), players(기본 11),
-                       max_salary(기본 310), max_price, formation, include(도구가 못 넣으면 답이 그렇다고 말해야), exclude, infeasible(예산이 안 되면 답이 그렇다고 말해야)
+                       max_salary(기본 315), max_price, formation, include(도구가 못 넣으면 답이 그렇다고 말해야), exclude, infeasible(예산이 안 되면 답이 그렇다고 말해야)
     answer_has / answer_any   답에 모두 / 하나 이상 들어 있어야 할 말
     data_date          답에 데이터 수집 날짜
 모든 답(거절 제외)은 정상 답(혼잡 안내 아님)이어야 하고, 다시 쓰기 뒤에도 확인 안 된 수치가 없어야 한다.
@@ -143,7 +143,7 @@ def _squad(want: dict[str, Any], result: dict[str, Any] | None, answer: str | No
             elif _key(team) not in {_key(c["club"]) for c in json.loads(row[0] or "[]")} | {_key(row[1])}:
                 outside.append(p["player"])
         out.append(("전원 팀컬러 소속 (카드 상세)", not outside, ", ".join(outside) + (f" · 상세 없음 {unknown}명" if unknown else "")))
-    cap = want.get("max_salary", 310)
+    cap = want.get("max_salary", 315)
     out.append((f"급여 ≤ {cap}", (result.get("total_salary") or 0) <= cap, str(result.get("total_salary"))))
     if (budget := want.get("max_price")) is not None:
         within = (result.get("total_price_bp") or 0) <= budget
