@@ -82,7 +82,7 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 | Backend | Python 3.12, FastAPI + Uvicorn (NDJSON streaming) |
 | Data | SQLite, stored in a private Hugging Face dataset |
 | Collection | NEXON Open API, FC Online Data Center scraping (httpx + selectolax) |
-| AI | Gemini 3.5 Flash-Lite / Flash (google-genai), DeepSeek V4 Pro (OpenRouter), DB queries via tool calling |
+| AI | Gemini 3.5 Flash-Lite / Flash (google-genai), DeepSeek V4.1 Flash (OpenRouter), DB queries via tool calling |
 | Question routing | Jev (OpenRouter Decisions API) |
 | Frontend | Vanilla HTML / CSS / JS, marked + DOMPurify, border-beam, thinking-orbs |
 | Automation / Deploy | GitHub Actions (daily collection), Render |

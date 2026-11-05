@@ -731,8 +731,8 @@ const MODELS = {
   gemini: ["gemini", "Gemini만", "자동, 실패해도 Gemini 안에서", "자동과 같지만 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)"],
   flash: ["flash", "Gemini 3.5 Flash", "늘 3.5 Flash", "늘 3.5 Flash (안 되면 다른 Gemini Flash)"],
   lite: ["lite", "Gemini 3.5 Flash-Lite", "늘 Flash-Lite (빠르고 가볍게)", "늘 Flash-Lite (3.5 Flash로 넘기지 않음, 빠르고 가볍게)"],
-  deep: ["deep", "DeepSeek V4 Pro(생각 끔)", "DeepSeek 생각 끔 (최대 5분)", "DeepSeek V4 Pro 생각 끔. 최대 5분"],
-  "deep --r": ["deep_r", "DeepSeek V4 Pro(생각 켬)", "DeepSeek 생각 켬 (더 깊게)", "DeepSeek V4 Pro 생각 켬 (더 깊게, 더 느리게). 최대 5분"],
+  deep: ["deep", "DeepSeek V4.1 Flash(생각 끔)", "DeepSeek 생각 끔 (최대 5분)", "DeepSeek V4.1 Flash 생각 끔. 최대 5분"],
+  "deep --r": ["deep_r", "DeepSeek V4.1 Flash(생각 켬)", "DeepSeek 생각 켬 (더 깊게)", "DeepSeek V4.1 Flash 생각 켬 (더 깊게, 더 느리게). 최대 5분"],
 };
 // "/model flash --r"의 값 → 서버에 보낼 mode·think와 이름. --r은 deep이면 DeepSeek 생각 켬, 그 밖은 Gemini 생각 깊게(HIGH)
 function modelOf(arg) {

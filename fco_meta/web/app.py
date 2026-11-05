@@ -40,19 +40,19 @@ MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
-DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"  # /model deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # /model deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
 LONG_DEADLINE = 300.0  # /model deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
 # 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
 # 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
-PRICES = {"flash-lite": (0.30, 2.50), "flash": (1.50, 9.00), "deepseek": (0.21, 0.42)}
+PRICES = {"deepseek": (0.30, 1.20), "flash-lite": (0.30, 2.50), "flash": (1.50, 9.00)}  # 앞에서부터: deepseek-v4.1-flash가 "flash"로 잡히지 않게
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
 # 스쿼드 구성·복잡한 질문에 자주 나오는 말 (띄어쓰기 무시) → 처음부터 3.5 Flash
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
-DEEP_LABEL = {"deep": "DeepSeek V4 Pro 생각 끔", "deep_r": "DeepSeek V4 Pro 생각 켬"}
+DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
 
 
 def gemini_fallbacks(models: Iterable[str]) -> list[str]:
