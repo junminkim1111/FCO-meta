@@ -23,7 +23,7 @@ cloud = ["huggingface_hub>=0.30"]  # Render 배포: DB를 비공개 HF 데이터
 include = ["fco_meta*"]
 
 [tool.setuptools.package-data]
-"fco_meta.web" = ["static/*", "static/vendor/*/*"]
+"fco_meta.web" = ["static/*", "static/vendor/*/*", "feed_slots.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

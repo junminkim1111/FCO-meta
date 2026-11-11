@@ -1,11 +1,13 @@
 """@닉네임 in the chat: a user's team — the starting XI of their latest official or friendly 1vs1 match (NEXON Open
-API), or of the latest squad we collected if they are a ranker and that is newer. Names, seasons, roles, salaries and
-prices come from our DB. The team is sent to the model ahead of each question until the visitor removes it.
+API), or of the latest squad we collected if they are a ranker and that is newer. #피드ID: the starting XI of a squad
+shared on the squad maker's feed (스쿼드 피드). Names, seasons, roles, salaries and prices come from our DB. The team is
+sent to the model ahead of each question until the visitor removes it.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from collections.abc import Iterable
@@ -13,10 +15,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
+
 from ..market.money import format_bp
 from ..market.roles import ROLES
 from ..openapi.errors import NotFoundError
-from ..pipeline.formation import SUB, FormationTable
+from ..pipeline.formation import POSITION_NAMES, SUB, FormationTable
 from ..pipeline.squads import match_id_time
 from ..pipeline.store import parse_match_date
 
@@ -25,6 +29,9 @@ MATCH_TYPES = {50: "공식경기", 60: "공식 친선", 30: "리그 친선"}  # 
 OLD_AFTER = timedelta(days=30)  # 이보다 오래된 경기면 모델에게 그렇다고 알린다
 TEAM_COLOR_MIN = 5  # 클럽·국적 팀컬러: 이 인원 이상 겹쳐야 그 팀의 팀컬러로 본다 (발동 인원은 데이터에 없음)
 ROLE_OF = {code: role for role, codes in ROLES.items() for code in codes}
+POSITION_CODE = {name.lower(): code for code, name in POSITION_NAMES.items()}  # 피드의 "rcb" → 4
+FEED_URL = "https://fconline.nexon.com/squadmakerapi/SquadMakerFeedProc"
+FEED_ID = re.compile(r"[0-9A-Z]{15}")  # 스쿼드메이커 피드 ID (예: KQ221UD8K7R53LN)
 ROLE_ORDER = {role: i for i, role in enumerate(("GK", "RB", "RWB", "CB", "LB", "LWB", "DM", "RM", "CM", "LM", "RAM",
                                                  "CAM", "LAM", "RW", "CF", "ST", "LW"))}  # fmt: skip
 
@@ -36,22 +43,23 @@ class TeamNotFound(Exception):
 @dataclass
 class Team:
     nickname: str
-    source: str  # "공식경기"·"공식 친선"·"리그 친선" 또는 "랭커 수집"
-    played_at: datetime
+    source: str  # "공식경기"·"공식 친선"·"리그 친선"·"랭커 수집" 또는 "스쿼드 피드 …"
+    played_at: datetime | None  # 피드는 날짜가 없다
     formation: str | None
     lineup: list[dict[str, Any]]
     old: bool = False
     totals: dict[str, Any] = field(default_factory=dict)
     colors: list[str] = field(default_factory=list)  # 이 팀의 팀컬러 하나 + 발동한 케미 ("FC 바르셀로나 11명", "… 케미 5명")
+    mark: str = "@"  # "@" 구단주명 · "#" 피드 ID
 
     def label(self) -> str:
         """For the chip tooltip: '10-09 공식경기 · 4-2-3-1 · 선발 11명'."""
-        when = self.played_at.astimezone(KST).strftime("%m-%d")
-        return " · ".join(filter(None, [f"{when} {self.source}", self.formation, f"선발 {len(self.lineup)}명"]))
+        when = self.played_at.astimezone(KST).strftime("%m-%d ") if self.played_at else ""
+        return " · ".join(filter(None, [f"{when}{self.source}", self.formation, f"선발 {len(self.lineup)}명"]))
 
     def for_model(self) -> str:
         """The block sent ahead of the question (no match type or date: the model needs the team, not the match)."""
-        head = [f"@{self.nickname}", self.formation, f"총 급여 {self.totals['salary']}", f"총액 {self.totals['price']}",
+        head = [self.mark + self.nickname, self.formation, f"총 급여 {self.totals['salary']}", f"총액 {self.totals['price']}",
                 "30일 넘은 경기" if self.old else None]  # fmt: skip
         colors = "팀컬러: " + (", ".join(self.colors) if self.colors else "알 수 없음")
         rows = [
@@ -62,8 +70,9 @@ class Team:
         return "[사용자 팀: " + " · ".join(filter(None, head)) + "]\n" + colors + "\n" + "\n".join(rows) + "\n[/사용자 팀]"
 
     def to_json(self) -> dict[str, Any]:
-        return {"nickname": self.nickname, "label": self.label(), "source": self.source, "formation": self.formation,
-                "played_at": self.played_at.astimezone(KST).isoformat(timespec="minutes"), "old": self.old,
+        return {"nickname": self.nickname, "mention": self.mark + self.nickname, "label": self.label(), "source": self.source,
+                "formation": self.formation, "old": self.old,
+                "played_at": self.played_at.astimezone(KST).isoformat(timespec="minutes") if self.played_at else None,
                 "lineup": self.lineup, "colors": self.colors, **self.totals}  # fmt: skip
 
 
@@ -97,16 +106,50 @@ def fetch_team(
         raise TeamNotFound("최근 공식·친선경기 기록이 없어 팀을 가져올 수 없어요.")
     played_at, source, _, players = max(found, key=lambda f: f[0])
     starters = [(sp_id, pos, grade) for sp_id, pos, grade in players if pos != SUB]
-    lineup = sorted((_card(conn, sp_id, pos, grade) for sp_id, pos, grade in starters), key=lambda p: ROLE_ORDER.get(p["role"], 99))
-    salaries = [p["salary"] for p in lineup if p["salary"] is not None]
-    prices = [p["price_bp"] for p in lineup if p["price_bp"] is not None]
+    lineup = _lineup(conn, starters)
     return Team(
         nickname=nickname, source=source, played_at=played_at, formation=FormationTable.load().infer(pos for _, pos, _ in starters),
-        lineup=lineup, old=now - played_at > OLD_AFTER,
-        totals={"salary": sum(salaries), "price": format_bp(sum(prices)), "price_bp": sum(prices),
-                "unpriced": len(lineup) - len(prices)},
-        colors=_team_colors(conn, catalog, team_color_info, lineup),
+        lineup=lineup, old=now - played_at > OLD_AFTER, totals=_totals(lineup), colors=_team_colors(conn, catalog, team_color_info, lineup),
     )  # fmt: skip
+
+
+def feed_info(feed_id: str) -> dict[str, Any] | None:
+    """The squad maker's own call behind a feed card (public, no login). None when there is no such feed."""
+    r = httpx.post(FEED_URL, json={"strMethod": "feedinfo", "strFeedId": feed_id}, timeout=10)
+    r.raise_for_status()
+    body = r.json()
+    return (body.get("ResultData") or {}).get("SquadInfo") if body.get("ResultCode") == 1 else None
+
+
+def fetch_feed(
+    conn: sqlite3.Connection, feed_id: str, catalog: Any = None, team_color_info: Iterable[dict[str, Any]] = (), get: Any = feed_info,
+) -> Team:
+    """Starting XI of a squad maker feed (players 0–10 are the XI, the rest the bench). Cards come from our DB."""
+    feed_id = feed_id.strip().upper()
+    if not FEED_ID.fullmatch(feed_id):
+        raise TeamNotFound("스쿼드 피드 ID는 영문·숫자 15자예요.")
+    squad = get(feed_id)
+    starters = [(int(p["spid"]), POSITION_CODE[p["role"].lower()], max(1, int(p.get("buildUp") or 1)))
+                for p in (squad or {}).get("players", [])[:11] if p.get("spid") and (p.get("role") or "").lower() in POSITION_CODE]  # fmt: skip
+    if not starters:
+        raise TeamNotFound("이 ID의 스쿼드 피드를 찾지 못했어요.")
+    lineup = _lineup(conn, starters)
+    name = (squad.get("squadName") or "").strip()
+    return Team(
+        nickname=feed_id, mark="#", source=f"스쿼드 피드 「{name}」" if name else "스쿼드 피드", played_at=None,
+        formation=squad.get("formation") or FormationTable.load().infer(pos for _, pos, _ in starters),
+        lineup=lineup, totals=_totals(lineup), colors=_team_colors(conn, catalog, team_color_info, lineup),
+    )  # fmt: skip
+
+
+def _lineup(conn: sqlite3.Connection, starters: list[tuple[int, int, int]]) -> list[dict[str, Any]]:
+    return sorted((_card(conn, sp_id, pos, grade) for sp_id, pos, grade in starters), key=lambda p: ROLE_ORDER.get(p["role"], 99))
+
+
+def _totals(lineup: list[dict[str, Any]]) -> dict[str, Any]:
+    salaries = [p["salary"] for p in lineup if p["salary"] is not None]
+    prices = [p["price_bp"] for p in lineup if p["price_bp"] is not None]
+    return {"salary": sum(salaries), "price": format_bp(sum(prices)), "price_bp": sum(prices), "unpriced": len(lineup) - len(prices)}
 
 
 def _key(text: str | None) -> str:

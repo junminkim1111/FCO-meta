@@ -22,3 +22,5 @@ services:
         sync: false
       - key: NEXON_API_KEY  # 채팅의 @닉네임 팀 불러오기 (없으면 그 기능만 꺼짐)
         sync: false
+      - key: FCO_FEED_COOKIE  # 스쿼드 피드 ID 받기: 사이트 FC온라인 계정의 로그인 쿠키 (없으면 그 버튼만 꺼짐)
+        sync: false

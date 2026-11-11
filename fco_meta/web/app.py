@@ -30,7 +30,8 @@ from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 from .chatlog import ChatLog
-from .team import Team, TeamNotFound, fetch_team
+from .squadfeed import FeedError, feed_squad, lineup_of, save_feed
+from .team import Team, TeamNotFound, fetch_feed, fetch_team
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,10 @@ FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
+FEED_PER_HOUR = 5  # 스쿼드 피드 ID 받기: 한 사람이 1시간에 (사이트 계정에 공개 피드로 쌓인다)
+SQUAD_TOOLS = ("recommend_squad", "check_squad")
+# 피드 소개 글: 넥슨 금칙어 필터가 "FCLM 랭커 데이터로 짠 스쿼드"·"랭커 데이터 기반 추천 스쿼드"를 막아 스쿼드메이커 기본 문구를 쓴다
+ABOUT = "스쿼드메이커 소개 입니다."
 # 스쿼드 구성·복잡한 질문에 자주 나오는 말 (띄어쓰기 무시) → 처음부터 3.5 Flash
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
 DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
@@ -250,6 +255,17 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
                 yield _event(type="trace", **line, **extra)
 
 
+def _squad_call(lines: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
+    """The answer's squad: its last squad tool call that ran without error (each tool line is followed by its result)."""
+    found = pending = None
+    for line in lines:
+        if line["kind"] == "tool":
+            pending = (line["name"], line["args"]) if line["name"] in SQUAD_TOOLS else None
+        elif line["kind"] == "result" and pending:
+            found, pending = (pending if line["ok"] else found), None
+    return found
+
+
 def _visitor(request: Request) -> str:
     """The visitor's IP as the tunnel (CF-Connecting-IP) or proxy (first X-Forwarded-For) passes it."""
     forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -328,6 +344,10 @@ class Feedback(BaseModel):
     vote: Literal["up", "down"]
 
 
+class FeedRequest(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{12}$")  # 스쿼드를 답한 질문의 기록 id
+
+
 class TeamRequest(BaseModel):
     nickname: str = Field(min_length=1, max_length=30)
     session_id: str | None = Field(default=None, max_length=64)
@@ -380,6 +400,9 @@ def create_app(
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
     team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
     compares: OrderedDict[str, dict[str, Any]] = OrderedDict()  # compare_id → 질문·칸별 답 (답 고르기용, 최근 것만)
+    squads: OrderedDict[str, dict[str, Any]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출·받은 피드 ID (최근 것만)
+    feed_limit = HourlyLimit(FEED_PER_HOUR)
+    feed_lock = threading.Lock()  # 사이트 계정 저장은 한 번에 하나씩
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
     app.state.conn = conn
@@ -500,7 +523,7 @@ def create_app(
             entry: dict[str, Any] = {"id": uuid.uuid4().hex[:12], "q": req.message, "session": session_id[:8], "outcome": "cancelled"}
             ask, team = session.take(req.message)
             if team:
-                entry["team"] = team.nickname
+                entry["team"] = team.mark + team.nickname
             keep = _TraceLog()  # 관리자 페이지의 답변 기록에서 줄을 누르면 보이는 trace·답변
             try:
                 yield from answer_events(entry, keep, ask, team)
@@ -625,7 +648,13 @@ def create_app(
                 entry["unverified"] = unverified
             keep.add("done", text=f"모델 {bot.last_model}")
             keep.answer = turn.text
-            yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"])
+            squad = _squad_call(keep.lines) if os.environ.get("FCO_FEED_COOKIE") else None
+            if squad:  # 답 아래 "스쿼드 피드 ID 받기" 버튼: 누르면 같은 호출을 다시 돌려 그 스쿼드를 저장한다
+                with lock:
+                    squads[entry["id"]] = {"call": squad, "feed_id": None}
+                    while len(squads) > MAX_SESSIONS:
+                        squads.popitem(last=False)
+            yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"], squad=bool(squad))
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
 
@@ -723,10 +752,12 @@ def create_app(
 
     @app.post("/api/team")
     def attach_team(req: TeamRequest, request: Request) -> dict[str, Any]:
-        """@닉네임: that user's latest starting XI, attached to the conversation (sent ahead of each question)."""
-        if not os.environ.get("NEXON_API_KEY"):
-            raise HTTPException(status_code=503, detail="지금은 팀을 불러올 수 없어요 (서버에 넥슨 API 키가 없습니다).")
+        """@닉네임: that user's latest starting XI, attached to the conversation (sent ahead of each question).
+        "#피드ID" instead: the starting XI of that squad maker feed."""
         nickname = req.nickname.strip()
+        feed = nickname.startswith("#")
+        if not feed and not os.environ.get("NEXON_API_KEY"):
+            raise HTTPException(status_code=503, detail="지금은 팀을 불러올 수 없어요 (서버에 넥슨 API 키가 없습니다).")
         cached = teams.get(nickname)
         if cached and time.time() - cached[0] < TEAM_CACHE_SECONDS:
             team = cached[1]
@@ -735,7 +766,8 @@ def create_app(
                 raise HTTPException(status_code=429, detail=f"팀 불러오기는 1시간에 {TEAM_PER_HOUR}번까지 할 수 있어요.")
             try:
                 with team_lock, closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as team_db:
-                    team = fetch_team(_nexon(), team_db, nickname, catalog=toolbox.catalog, team_color_info=toolbox.team_color_info)
+                    args = {"catalog": toolbox.catalog, "team_color_info": toolbox.team_color_info}
+                    team = fetch_feed(team_db, nickname[1:], **args) if feed else fetch_team(_nexon(), team_db, nickname, **args)
             except TeamNotFound as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from None
             except Exception as exc:  # 넥슨 API 혼잡·점검·하루 호출 예산
@@ -750,6 +782,33 @@ def create_app(
     def detach_team(session_id: str = Query(max_length=64)) -> dict[str, bool]:
         session_for(session_id).team = None
         return {"ok": True}
+
+    @app.post("/api/squad-feed")
+    def squad_feed(req: FeedRequest, request: Request) -> dict[str, str]:
+        """스쿼드 피드 ID 받기: the answer's squad saved as a public feed on the site's account (once per answer)."""
+        cookie = os.environ.get("FCO_FEED_COOKIE")
+        with lock:
+            found = squads.get(req.id)
+        if not cookie or not found:
+            raise HTTPException(status_code=404, detail="이 답의 스쿼드는 피드로 만들 수 없어요.")
+        with feed_lock:
+            if found["feed_id"]:
+                return {"feed_id": found["feed_id"]}
+            if not feed_limit.check(_visitor(request)):
+                raise HTTPException(status_code=429, detail=f"피드 ID는 1시간에 {FEED_PER_HOUR}번까지 받을 수 있어요.")
+            name, args = found["call"]
+            try:
+                result = tool(name, args)
+                title = f"{result.get('team_color') or '랭커'} {result.get('formation') or ''}".strip()
+                found["feed_id"] = save_feed(feed_squad(lineup_of(result), result.get("formation"), title, ABOUT), cookie)
+            except FeedError as exc:
+                log.warning("squad feed refused: %s", exc)
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            except Exception as exc:  # 넥슨 혼잡·점검, 로그인 쿠키 만료
+                log.warning("squad feed failed: %s", exc)
+                raise HTTPException(status_code=503, detail="스쿼드메이커에 저장하지 못했어요. 잠시 후 다시 해 주세요.") from None
+        log.info("squad feed %s for answer %s", found["feed_id"], req.id)
+        return {"feed_id": found["feed_id"]}
 
     @app.post("/api/feedback")
     def feedback(req: Feedback, request: Request) -> dict[str, bool]:

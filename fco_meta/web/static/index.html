@@ -214,6 +214,7 @@
   .rate button { padding: 2px 8px; font-size: 14px; line-height: 1.4; background: none; border: 1px solid var(--line); color: var(--text); }
   @media (hover: hover) { .rate button:hover { background: var(--panel-strong); opacity: 1; } }
   .rate.gone { opacity: 0; }
+  .rate.feed { flex-wrap: wrap; } .rate.feed button { font-size: 12px; white-space: nowrap; } .rate.feed .err { color: var(--loss); }
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model·/compare) */
   /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
   .pane.selectable { cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .25s; }
@@ -801,7 +802,7 @@ async function send(text) {
   const bubble = el("div");
   $("log").append(bubble);
   $("log").scrollTop = $("log").scrollHeight;
-  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0, answerId = null;
+  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0, answerId = null, squad = false;
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
@@ -847,7 +848,7 @@ async function send(text) {
         if (trace && ev.type === "delta" && !answer) addTrace(trace, { kind: "first", text: "답이 나오기 시작" });
         if (trace && ev.type === "done") addTrace(trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
-        else if (ev.type === "done") answerId = ev.id || null; // 끝까지 받은 답에만 온다 (👍/👎가 이 id로 간다)
+        else if (ev.type === "done") { answerId = ev.id || null; squad = !!ev.squad; } // 끝까지 받은 답에만 온다 (👍/👎가 이 id로 간다)
         else if (ev.type === "delta") grow(ev.text);
         else if (ev.type === "tool" && stopOrb) status(TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING); // 기다리는 중이면 문구를 그 도구에 맞게
         else if (ev.type === "reset" && !stopOrb) { // 도구를 부르기 전에 쓴 글 → 지우고 다시 기다린다
@@ -875,6 +876,28 @@ async function send(text) {
   else if (!answer) grow("답을 받지 못했습니다.");
   if (arg !== "auto") bubble.after(el("div", { class: "applied", text: `/model ${arg} 적용: ${modelOf(arg).name}` }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
+  if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId));
+}
+// 스쿼드 답 아래 "스쿼드 피드 ID 받기": 누르면 사이트 계정으로 스쿼드메이커에 저장하고 그 피드 ID를 보여 준다
+function feedRow(id) {
+  const b = el("button", { type: "button", text: "스쿼드 피드 ID 받기" });
+  const row = el("div", { class: "rate feed" }, b);
+  b.addEventListener("click", async () => {
+    b.disabled = true; b.textContent = "스쿼드메이커에 저장하는 중…";
+    try {
+      const res = await fetch("/api/squad-feed", { method: "POST", headers: headers(), body: JSON.stringify({ id }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "피드 ID를 받지 못했어요.");
+      const copy = el("button", { type: "button", text: "복사" });
+      copy.addEventListener("click", () => navigator.clipboard?.writeText(data.feed_id).then(() => { copy.textContent = "복사됨"; }));
+      row.replaceChildren(el("span", { text: `스쿼드 피드 ID ${data.feed_id} · 스쿼드메이커의 '피드 ID 불러오기'에 넣으세요` }), copy);
+    } catch (e) {
+      b.disabled = false; b.textContent = "스쿼드 피드 ID 받기";
+      row.querySelector(".err")?.remove();
+      row.append(el("span", { class: "err", text: e.message }));
+    }
+  });
+  return row;
 }
 // 답 아래 👍/👎: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
 const RATE_CHANCE = 0.3;
@@ -945,16 +968,21 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
   }
 });
 // @닉네임: 빈 입력창에 @를 치면 위에 작은 칸이 뜨고, 그 유저의 최근 경기 선발 11명을 불러와 다음 질문에 붙인다 (멘션처럼 그 질문 한 번)
-let team = null; // 붙인 팀 { nickname, label }
-function openTeamBox() {
+// #피드ID: 같은 칸으로 스쿼드메이커 피드의 선발 11명을 붙인다
+let team = null; // 붙인 팀 { nickname, mention, label }
+let teamMark = "@";
+function openTeamBox(mark = "@") {
+  teamMark = mark;
   $("team-box").hidden = false; $("team-hint").textContent = ""; $("team-hint").className = "hint";
   $("team-name").value = ""; $("team-name").focus();
-  showTeam("@"); // 닉네임을 넣는 동안 입력창에는 같은 모양의 @만
+  $("team-name").placeholder = mark === "#" ? "스쿼드 피드 ID" : "구단주명";
+  $("team-name").setAttribute("aria-label", mark === "#" ? "팀을 불러올 스쿼드 피드 ID" : "팀을 불러올 구단주명");
+  showTeam(mark); // 닉네임을 넣는 동안 입력창에는 같은 모양의 @(#)만
 }
 function closeTeamBox() { if (!$("team-box").hidden) { $("team-box").hidden = true; showTeam(); $("msg").focus(); } }
 // 입력창 첫 줄을 표시만큼 들여 써서 "@닉네임 질문…"처럼 보이게. pending = 닉네임을 넣는 중의 "@" (✕ 없음)
 function showTeam(pending = null) {
-  const text = pending || (team ? "@" + team.nickname : "");
+  const text = pending || (team ? team.mention : "");
   $("team-chip").hidden = !text;
   $("team-chip-name").textContent = text;
   $("team-off").hidden = !!pending;
@@ -962,15 +990,16 @@ function showTeam(pending = null) {
   $("msg").style.textIndent = text ? `${$("team-chip").offsetWidth + 6}px` : "";
 }
 async function loadTeam() {
-  const nickname = $("team-name").value.trim();
-  if (!nickname) return;
+  const value = $("team-name").value.trim().replace(/^[@#]/, "");
+  if (!value) return;
+  const nickname = teamMark === "#" ? "#" + value : value;
   $("team-ok").disabled = true; $("team-hint").className = "hint"; $("team-hint").textContent = "팀을 불러오는 중…";
   try {
     const res = await fetch("/api/team", { method: "POST", headers: headers(), body: JSON.stringify({ nickname, session_id: sessionId }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { $("team-hint").className = "hint err"; $("team-hint").textContent = data.detail || "팀을 불러오지 못했어요."; return; }
     sessionId = data.session_id;
-    team = { nickname: data.nickname, label: data.label + (data.old ? " (30일 넘은 경기)" : "") };
+    team = { nickname: data.nickname, mention: data.mention, label: data.label + (data.old ? " (30일 넘은 경기)" : "") };
     closeTeamBox();
   } catch {
     $("team-hint").className = "hint err"; $("team-hint").textContent = "연결하지 못했어요.";
@@ -979,7 +1008,7 @@ async function loadTeam() {
 // 질문 말풍선 앞에 파란 @닉네임. 팀은 그 질문이 가져가므로 입력창에서는 뗀다 (keep: 비교 세 칸 중 앞의 둘은 아직 떼지 않음)
 function mention(bubble, keep = false) {
   if (team) {
-    bubble.prepend(el("span", { class: "mention", text: `@${team.nickname} ` }));
+    bubble.prepend(el("span", { class: "mention", text: `${team.mention} ` }));
     if (!keep) { team = null; showTeam(); }
   }
   return bubble;
@@ -989,7 +1018,7 @@ function dropTeam() {
   if (sessionId) fetch("/api/team?session_id=" + encodeURIComponent(sessionId), { method: "DELETE" }).catch(() => {});
   team = null; showTeam(); $("msg").focus();
 }
-$("msg").addEventListener("input", () => { if ($("msg").value === "@") { $("msg").value = ""; openTeamBox(); } });
+$("msg").addEventListener("input", () => { const v = $("msg").value; if (v === "@" || v === "#") { $("msg").value = ""; openTeamBox(v); } });
 $("msg").addEventListener("keydown", (ev) => { // 빈 입력창에서 지우기 = 팀 떼기
   if (ev.key === "Backspace" && team && !$("msg").value) dropTeam();
 });
@@ -1055,7 +1084,7 @@ function command(text) {
   }
   if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
     const off = [modelNext && `/model ${modelNext}`, modelAll && `/model ${modelAll} --a`, traceOn && "/trace(생각 표시)",
-                 team && `@${team.nickname}(팀)`,
+                 team && `${team.mention}(팀)`,
                  $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
     modelNext = modelAll = null; traceOn = false; dropTeam();
     if ($("chat").classList.contains("comparing")) closeCompare();
