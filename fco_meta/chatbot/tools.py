@@ -1405,7 +1405,8 @@ class Toolbox:
     def _spend(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]):
         """Leftover budget → better cards, a step at a time round the lineup (most valuable slot first, the invest slots
         only when given, never the save slots or owned cards): the next grade of the same card, or the player's pricier
-        card if the salary still fits — whichever step is cheaper. Stops when no step fits the budget."""
+        card if the salary still fits and is not lower (급여가 낮으면 더 비싸도 더 좋은 카드가 아니다) — whichever step is
+        cheaper. Stops when no step fits the budget."""
         # ponytail: 한 단계씩 돌아가며 올리는 탐욕 규칙 — 강화별 능력치 가치를 알면 가치/비용 순으로
         chosen, start = list(chosen), list(chosen)
         cap, salary_cap = sq.limits["price"], sq.limits.get("salary")
@@ -1434,6 +1435,7 @@ class Toolbox:
                     o for o in sq.slot_options[i][1]
                     if o["entry"]["pid"] == c["entry"]["pid"] and o["card"]["sp_id"] != c["card"]["sp_id"]
                     and o["price"] is not None and o["price"] > c["price"] and c["tags"] <= o["tags"]
+                    and (o["salary"] or 0) >= (c["salary"] or 0)
                     and (left_salary is None or (o["salary"] or 0) - (c["salary"] or 0) <= left_salary)
                 ]  # fmt: skip
                 steps = [o for o in steps if o["price"] - c["price"] <= left]
