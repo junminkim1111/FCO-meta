@@ -82,6 +82,7 @@ QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
 SALARY_CAP = 315  # 게임의 팀 급여 상한: 선발 11명은 사용자가 급여 합을 말하지 않으면 이 안에서 고른다 (더 크게 말하면 따르고 경고)
+GRADE_OVR = (0, 0, 1, 2, 4, 6, 8, 11, 15, 17, 19, 21, 24, 27)  # 강화 등급(1~13) → 누적 OVR 상승 (게임의 강화 안내표)
 # 신규특성(금특·신특): 8강(금카) 이상이면 어떤 카드든 하나를 더 달 수 있다. 줄임말 → 카드 상세의 특성 이름
 NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
@@ -1278,6 +1279,12 @@ class Toolbox:
         row = self.conn.execute("SELECT salary FROM card WHERE spid = ?", (sp_id,)).fetchone()
         return row[0] if row else None
 
+    def _ovr(self, card: dict[str, Any]) -> int | None:
+        """A squad card's OVR at its grade: 기본 OVR(1강) + 강화 누적 상승. None = 기본 OVR 미수집."""
+        # ponytail: 카드의 대표 포지션 OVR — 자리별 OVR이 필요하면 card_detail.positions
+        row = self.conn.execute("SELECT ovr FROM card WHERE spid = ?", (card["sp_id"],)).fetchone()
+        return row[0] + GRADE_OVR[card["most_used_grade"] or 1] if row and row[0] is not None else None
+
     def _has_prices(self, res) -> bool:
         ids = [s.sp_id for p in res.players for s in p.seasons]
         if not ids:
@@ -1405,8 +1412,8 @@ class Toolbox:
     def _spend(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]):
         """Leftover budget → better cards, a step at a time round the lineup (most valuable slot first, the invest slots
         only when given, never the save slots or owned cards): the next grade of the same card, or the player's pricier
-        card if the salary still fits and is not lower (급여가 낮으면 더 비싸도 더 좋은 카드가 아니다) — whichever step is
-        cheaper. Stops when no step fits the budget."""
+        card if the salary still fits and its OVR at that grade is higher (급여 28·11강이 급여 31·8강보다 좋을 수 있다;
+        OVR을 모르는 카드로는 옮기지 않는다) — whichever step is cheaper. Stops when no step fits the budget."""
         # ponytail: 한 단계씩 돌아가며 올리는 탐욕 규칙 — 강화별 능력치 가치를 알면 가치/비용 순으로
         chosen, start = list(chosen), list(chosen)
         cap, salary_cap = sq.limits["price"], sq.limits.get("salary")
@@ -1435,7 +1442,7 @@ class Toolbox:
                     o for o in sq.slot_options[i][1]
                     if o["entry"]["pid"] == c["entry"]["pid"] and o["card"]["sp_id"] != c["card"]["sp_id"]
                     and o["price"] is not None and o["price"] > c["price"] and c["tags"] <= o["tags"]
-                    and (o["salary"] or 0) >= (c["salary"] or 0)
+                    and (self._ovr(o["card"]) or 0) > (self._ovr(c["card"]) or 0)
                     and (left_salary is None or (o["salary"] or 0) - (c["salary"] or 0) <= left_salary)
                 ]  # fmt: skip
                 steps = [o for o in steps if o["price"] - c["price"] <= left]
