@@ -214,7 +214,8 @@
   .rate button { padding: 2px 8px; font-size: 14px; line-height: 1.4; background: none; border: 1px solid var(--line); color: var(--text); }
   @media (hover: hover) { .rate button:hover { background: var(--panel-strong); opacity: 1; } }
   .rate.gone { opacity: 0; }
-  .rate.feed { flex-wrap: wrap; } .rate.feed button { font-size: 12px; white-space: nowrap; } .rate.feed .err { color: var(--loss); }
+  .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); text-decoration: none; }
+  @media (hover: hover) { .rate.feed a:hover { background: var(--panel-strong); } }
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model·/compare) */
   /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
   .pane.selectable { cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .25s; }
@@ -294,7 +295,9 @@
   #send[data-busy] .i-stop { opacity: 1; transform: none; }
   @media (prefers-reduced-motion: reduce) { #send svg { transform: none !important; } }
   /* @닉네임: 빈 입력창에 @ → 입력창 위 작은 닉네임 칸(안쪽 → 버튼, 밖을 누르면 닫힘). 불러오면 입력창 첫 줄 앞에 하늘색 @닉네임 (✕는 올렸을 때만) */
-  #team-box { width: 50%; min-width: 200px; margin-bottom: 8px; }
+  /* 입력칸 포커스 테두리(3px)가 칸 안에 들도록 3px 여백을 두고 그만큼 바깥으로 당긴다 — 테두리가 칸 밖으로 나가 있으면
+     닫힐 때(흐려지며 줄어드는 전환) Chrome이 그 부분을 다시 그리지 않아 왼쪽 끝 자국이 남았다 */
+  #team-box { width: calc(50% + 6px); min-width: 206px; padding: 3px; margin: -3px 0 5px -3px; }
   #team-box[hidden] { display: none; }
   #team-box .field { position: relative; }
   #team-box input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; color: var(--text); background: var(--field);
@@ -878,26 +881,10 @@ async function send(text) {
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
   if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId));
 }
-// 스쿼드 답 아래 "스쿼드 피드 ID 받기": 누르면 사이트 계정으로 스쿼드메이커에 저장하고 그 피드 ID를 보여 준다
+// 스쿼드 답 아래 "스쿼드메이커로 보내기": 새 탭의 안내 페이지(/send)에서 넥슨 스쿼드메이커 내 보관함에 저장하는 법을 보여 준다
 function feedRow(id) {
-  const b = el("button", { type: "button", text: "스쿼드 피드 ID 받기" });
-  const row = el("div", { class: "rate feed" }, b);
-  b.addEventListener("click", async () => {
-    b.disabled = true; b.textContent = "스쿼드메이커에 저장하는 중…";
-    try {
-      const res = await fetch("/api/squad-feed", { method: "POST", headers: headers(), body: JSON.stringify({ id }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "피드 ID를 받지 못했어요.");
-      const copy = el("button", { type: "button", text: "복사" });
-      copy.addEventListener("click", () => navigator.clipboard?.writeText(data.feed_id).then(() => { copy.textContent = "복사됨"; }));
-      row.replaceChildren(el("span", { text: `스쿼드 피드 ID ${data.feed_id} · 스쿼드메이커의 '피드 ID 불러오기'에 넣으세요` }), copy);
-    } catch (e) {
-      b.disabled = false; b.textContent = "스쿼드 피드 ID 받기";
-      row.querySelector(".err")?.remove();
-      row.append(el("span", { class: "err", text: e.message }));
-    }
-  });
-  return row;
+  return el("div", { class: "rate feed" },
+            el("a", { href: "/send?id=" + encodeURIComponent(id), target: "_blank", rel: "noopener", text: "스쿼드메이커로 보내기 ↗" }));
 }
 // 답 아래 👍/👎: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
 const RATE_CHANCE = 0.3;

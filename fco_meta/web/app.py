@@ -30,7 +30,7 @@ from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 from .chatlog import ChatLog
-from .squadfeed import FeedError, feed_squad, lineup_of, save_feed
+from .squadfeed import FeedError, lineup_of, place, squad_link
 from .team import Team, TeamNotFound, fetch_feed, fetch_team
 
 log = logging.getLogger(__name__)
@@ -51,10 +51,7 @@ FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
-FEED_PER_HOUR = 5  # 스쿼드 피드 ID 받기: 한 사람이 1시간에 (사이트 계정에 공개 피드로 쌓인다)
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
-# 피드 소개 글: 넥슨 금칙어 필터가 "FCLM 랭커 데이터로 짠 스쿼드"·"랭커 데이터 기반 추천 스쿼드"를 막아 스쿼드메이커 기본 문구를 쓴다
-ABOUT = "스쿼드메이커 소개 입니다."
 # 스쿼드 구성·복잡한 질문에 자주 나오는 말 (띄어쓰기 무시) → 처음부터 3.5 Flash
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
 DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
@@ -400,9 +397,7 @@ def create_app(
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
     team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
     compares: OrderedDict[str, dict[str, Any]] = OrderedDict()  # compare_id → 질문·칸별 답 (답 고르기용, 최근 것만)
-    squads: OrderedDict[str, dict[str, Any]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출·받은 피드 ID (최근 것만)
-    feed_limit = HourlyLimit(FEED_PER_HOUR)
-    feed_lock = threading.Lock()  # 사이트 계정 저장은 한 번에 하나씩
+    squads: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출 (최근 것만)
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
     app.state.conn = conn
@@ -648,10 +643,10 @@ def create_app(
                 entry["unverified"] = unverified
             keep.add("done", text=f"모델 {bot.last_model}")
             keep.answer = turn.text
-            squad = _squad_call(keep.lines) if os.environ.get("FCO_FEED_COOKIE") else None
-            if squad:  # 답 아래 "스쿼드 피드 ID 받기" 버튼: 누르면 같은 호출을 다시 돌려 그 스쿼드를 저장한다
+            squad = _squad_call(keep.lines)
+            if squad:  # 답 아래 "스쿼드메이커로 보내기": 누르면 같은 호출을 다시 돌려(결과는 pages에 캐시) 링크를 만든다
                 with lock:
-                    squads[entry["id"]] = {"call": squad, "feed_id": None}
+                    squads[entry["id"]] = squad
                     while len(squads) > MAX_SESSIONS:
                         squads.popitem(last=False)
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"], squad=bool(squad))
@@ -783,32 +778,23 @@ def create_app(
         session_for(session_id).team = None
         return {"ok": True}
 
-    @app.post("/api/squad-feed")
-    def squad_feed(req: FeedRequest, request: Request) -> dict[str, str]:
-        """스쿼드 피드 ID 받기: the answer's squad saved as a public feed on the site's account (once per answer)."""
-        cookie = os.environ.get("FCO_FEED_COOKIE")
+    @app.post("/api/squad-link")
+    def squad_maker_link(req: FeedRequest) -> dict[str, Any]:
+        """스쿼드메이커로 보내기 (/send 페이지): the answer's squad as a squad maker link for the FCLM bookmarklet,
+        with the players on their slots for the preview."""
         with lock:
             found = squads.get(req.id)
-        if not cookie or not found:
-            raise HTTPException(status_code=404, detail="이 답의 스쿼드는 피드로 만들 수 없어요.")
-        with feed_lock:
-            if found["feed_id"]:
-                return {"feed_id": found["feed_id"]}
-            if not feed_limit.check(_visitor(request)):
-                raise HTTPException(status_code=429, detail=f"피드 ID는 1시간에 {FEED_PER_HOUR}번까지 받을 수 있어요.")
-            name, args = found["call"]
-            try:
-                result = tool(name, args)
-                title = f"{result.get('team_color') or '랭커'} {result.get('formation') or ''}".strip()
-                found["feed_id"] = save_feed(feed_squad(lineup_of(result), result.get("formation"), title, ABOUT), cookie)
-            except FeedError as exc:
-                log.warning("squad feed refused: %s", exc)
-                raise HTTPException(status_code=409, detail=str(exc)) from None
-            except Exception as exc:  # 넥슨 혼잡·점검, 로그인 쿠키 만료
-                log.warning("squad feed failed: %s", exc)
-                raise HTTPException(status_code=503, detail="스쿼드메이커에 저장하지 못했어요. 잠시 후 다시 해 주세요.") from None
-        log.info("squad feed %s for answer %s", found["feed_id"], req.id)
-        return {"feed_id": found["feed_id"]}
+        if not found:
+            raise HTTPException(status_code=404, detail="이 답의 스쿼드는 스쿼드메이커로 보낼 수 없어요.")
+        result = tool(*found)
+        title = f"{result.get('team_color') or '랭커'} {result.get('formation') or ''}".strip()
+        try:
+            formation = result.get("formation")
+            placed = place(lineup_of(result), formation)
+            return {"url": squad_link(placed, formation, title), "title": title, "formation": formation,
+                    "players": placed, "salary": result.get("total_salary"), "price": result.get("total_price")}  # fmt: skip
+        except FeedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
 
     @app.post("/api/feedback")
     def feedback(req: Feedback, request: Request) -> dict[str, bool]:
@@ -831,6 +817,10 @@ def create_app(
         return {"ok": True, "pane": choice.pane, "label": COMPARE_PANES[choice.pane]}
 
     # --- 관리자: 답변 기록 (ADMIN_KEY가 없으면 없는 페이지, 5회 틀린 IP는 막힘) ---
+    @app.get("/send", include_in_schema=False)
+    def send_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "send.html")  # 스쿼드메이커로 보내기 안내 (?id=답 기록 id)
+
     @app.get("/admin", include_in_schema=False)
     def admin_page(request: Request) -> FileResponse:
         admin.open_to(_visitor(request))
