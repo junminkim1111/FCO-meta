@@ -33,7 +33,7 @@ from typing import Any
 
 from ..config import load_env
 from .evaluate import DEFAULT_DB, DEFAULT_OUT_DIR, select
-from .tools import Toolbox
+from .tools import BUDGET_STRETCH, Toolbox
 
 DEFAULT_CASES = Path("eval/golden.json")
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
@@ -146,6 +146,8 @@ def _squad(want: dict[str, Any], result: dict[str, Any] | None, answer: str | No
     cap = want.get("max_salary", 315)
     out.append((f"급여 ≤ {cap}", (result.get("total_salary") or 0) <= cap, str(result.get("total_salary"))))
     if (budget := want.get("max_price")) is not None:
+        if (result.get("budget") or {}).get("over_by"):  # 도구가 일부러 조금 넘긴 스쿼드 (BUDGET_STRETCH)
+            budget = int(budget * (1 + BUDGET_STRETCH))
         within = (result.get("total_price_bp") or 0) <= budget
         if want.get("infeasible") and not within:  # 안 되는 예산: 넘긴 걸 답이 말해야
             if answer is not None:
