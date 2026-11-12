@@ -55,6 +55,17 @@
   .notice { background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(242, 204, 96, .2); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
   .error { color: var(--error); font-size: 14px; margin-top: 12px; }
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
+  footer.foot p { margin: 0 0 4px; line-height: 1.5; }
+  header .guide-link { margin-left: auto; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+                       color: var(--muted); font-size: 13px; text-decoration: none; }
+  @media (hover: hover) { header .guide-link:hover { color: var(--text); border-color: var(--line-strong); } }
+  /* 넓은 화면: 로고 줄 높이에 맞춰 페이지 맨 오른쪽 (챗봇 칸 위). 좁은 화면은 로고 줄 오른쪽 끝 그대로 */
+  @media (min-width: 861px) { main { position: relative; }
+                              header .guide-link { position: absolute; z-index: 2; right: 16px; top: calc(16px + var(--head-h) / 2); transform: translateY(-50%); } }
+  header .guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  footer.foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  footer.foot .contact a { display: inline-flex; border-radius: 4px; }
+  footer.foot .contact a:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
   button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
            cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s, transform .1s ease-out; }
   @media (hover: hover) { button:hover { opacity: .9; } } /* 터치 화면에서 흐린 상태가 남지 않게 */
@@ -360,6 +371,7 @@
         <circle cx="31" cy="12" r="2.6" style="fill: var(--accent)"/>
       </svg></h1>
     </div>
+    <a class="guide-link" href="/guide">가이드</a>
   </header>
   <section aria-label="랭커 분포">
     <div class="dist-head"><div id="dist-mode"></div><span id="form-scope" class="stat"></span></div>
@@ -370,7 +382,20 @@
     <p class="stat">항목을 누르면 여기에 그 포메이션·팀컬러 정보가 나옵니다.</p>
   </section>
   <!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
-  <footer class="foot">Data based on NEXON Open API · 시세·선수 정보: FC온라인 데이터센터 · 질문은 Google Gemini로 처리되며 서비스 개선을 위해 기록됩니다</footer>
+  <footer class="foot">
+    <p>© 2026 FCLM. All rights reserved.</p>
+    <p>FCLM은 FC Online 유저를 위한 비공식 랭커 데이터 통계 서비스입니다. FC Online 관련 데이터는 NEXON Open API(Data based on NEXON Open API)와
+      FC온라인 데이터센터의 공개 정보를 기반으로 제공됩니다. FCLM은 NEXON 및 EA SPORTS와 공식적으로 관련이 없습니다.
+      게임 관련 상표, 이미지, 선수 정보 및 저작권은 EA SPORTS 및 NEXON에 있습니다.</p>
+    <p>질문은 AI 모델(Google Gemini·DeepSeek)로 처리되며 서비스 개선을 위해 기록됩니다.</p>
+    <p><a href="/guide" style="color: inherit">사용 가이드</a></p>
+    <p class="contact">버그 / 문의사항
+      <a href="https://open.kakao.com/o/s3axuDWi" target="_blank" rel="noopener noreferrer" aria-label="카카오톡 오픈채팅으로 문의하기" title="카카오톡 오픈채팅">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FEE500"/>
+          <path fill="#191919" d="M12 5.5c-3.9 0-7 2.4-7 5.4 0 1.9 1.3 3.6 3.2 4.6l-.7 2.5c-.1.3.2.5.4.3l3-2c.4 0 .7.1 1.1.1 3.9 0 7-2.4 7-5.5S15.9 5.5 12 5.5z"/></svg>
+      </a>
+    </p>
+  </footer>
   </div>
 
   <div class="side">
@@ -634,7 +659,7 @@ function renderMatchups(m) {
       if (n) stack.append(el("span", { style: `flex:${n};background:${color}` }));
     rows.push(el("span", { class: "f", text: "vs " + o.opponent }),
               hover(stack, `vs ${o.opponent}\n${o.games}경기 ${o.wins}승 ${o.draws}무 ${o.losses}패 · 승률 ${pct(o.win_rate)}`),
-              el("span", { class: "v", text: `${o.games}경기 ${o.wins}-${o.draws}-${o.losses} · ${pct(o.win_rate)}` }));
+              el("span", { class: "v", text: pct(o.win_rate) }));
   }
   return [
     el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:var(--win)" }), "승"),

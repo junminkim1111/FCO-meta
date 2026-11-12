@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@구단주명 | FCLM</title>
+<meta name="description" content="FCLM에서 @구단주명으로 내 팀을 불러와 묻는 법">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#101116">
+<link rel="stylesheet" href="/static/guide.css">
+</head>
+<body>
+<div class="g-layout">
+  <aside class="g-side"><nav aria-label="가이드 목차">
+      <a href="/guide">가이드 홈</a>
+      <a href="/guide/screen">화면 둘러보기</a>
+      <a href="/guide/ask">질문하기</a>
+      <a href="/guide/team" aria-current="page">@구단주명</a>
+      <a href="/guide/feed">#스쿼드 피드 ID</a>
+      <a href="/guide/commands">/명령어</a>
+      <a href="/guide/send">스쿼드메이커로 보내기</a>
+  </nav></aside>
+<main>
+  <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / @구단주명</nav>
+
+  <h1>@구단주명으로 내 팀 묻기</h1>
+  <p class="lead">빈 입력창에 <code>@</code>를 치고 구단주명을 넣으면, 그 유저의 최근 경기 선발 11명을 불러와 질문과 함께 보냅니다.</p>
+  <div class="m-window hero" data-scene="team" role="img" aria-label="@를 치자 구단주명 칸이 열리고, 이름을 넣어 팀을 붙인 뒤 '내 팀 약점이 뭐야?'를 묻는 모습"><div class="m-bar"><i></i><i></i><i></i><span>fclm.onrender.com</span></div><div class="m-stage"></div></div>
+  <div class="g-sec">
+    <div class="g-copy">
+      <h2>순서</h2>
+      <ol>
+        <li>빈 입력창에 <code>@</code>를 칩니다. 위에 작은 칸이 열립니다.</li>
+        <li>구단주명을 넣고 → 버튼(또는 <kbd>Enter</kbd>). 칸 밖을 누르면 취소됩니다.</li>
+        <li>입력창 앞에 <code>@구단주명</code>이 붙으면 이어서 질문을 쓰세요.</li>
+      </ol>
+      <p class="tip">그림의 이름은 예시입니다. 실제로는 불러온 유저의 구단주명이 붙습니다.</p>
+    </div>
+    <div>
+      <figure class="shot"><img src="/static/guide-at-box.jpg" width="900" height="243" alt="@를 쳤을 때 열리는 구단주명 칸" loading="lazy"></figure>
+      <br>
+      <figure class="shot"><img src="/static/guide-at-chip.jpg" width="900" height="171" alt="입력창 앞에 @구단주명이 붙은 모습" loading="lazy"></figure>
+    </div>
+  </div>
+  <div class="g-sec flip">
+    <div class="g-copy">
+      <h2>무엇을 물을 수 있나요</h2>
+      <ul>
+        <li>약점 진단, 자리별 업그레이드, 급여 줄이기, 같은 팀컬러에서 바꿀 선수</li>
+        <li>팀(선수·강화·급여·시세·팀컬러)이 함께 전달되어 그 팀 기준으로 답합니다.</li>
+        <li>이어지는 질문도 그 팀을 기억합니다. 떼려면 이름 옆 ✕ 또는 빈 입력창에서 <kbd>Backspace</kbd>.</li>
+        <li>보유 선수 전체가 아니라 최근 공식·친선경기에 선발로 낸 카드 기준이며, 최근 경기가 없으면 불러올 수 없습니다.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="g-home"><a href="/guide">가이드 홈으로</a><a href="/">FCLM 메인으로</a></p>
+</main>
+</div>
+<script type="module" src="/static/guide.js"></script>
+</body>
+</html>

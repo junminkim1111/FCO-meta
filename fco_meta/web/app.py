@@ -36,6 +36,7 @@ from .team import Team, TeamNotFound, fetch_feed, fetch_team
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send")  # /guide/<주제> → static/guide-<주제>.html
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
@@ -817,6 +818,16 @@ def create_app(
         return {"ok": True, "pane": choice.pane, "label": COMPARE_PANES[choice.pane]}
 
     # --- 관리자: 답변 기록 (ADMIN_KEY가 없으면 없는 페이지, 5회 틀린 IP는 막힘) ---
+    @app.get("/guide", include_in_schema=False)
+    def guide_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "guide.html")  # 사용법 목록 (주제마다 움직이는 화면이 있는 개별 페이지로)
+
+    @app.get("/guide/{topic}", include_in_schema=False)
+    def guide_topic(topic: str) -> FileResponse:
+        if topic not in GUIDE_TOPICS:
+            raise HTTPException(status_code=404, detail="없는 가이드입니다.")
+        return FileResponse(STATIC_DIR / f"guide-{topic}.html")
+
     @app.get("/send", include_in_schema=False)
     def send_page() -> FileResponse:
         return FileResponse(STATIC_DIR / "send.html")  # 스쿼드메이커로 보내기 안내 (?id=답 기록 id)

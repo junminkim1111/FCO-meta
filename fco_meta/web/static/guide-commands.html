@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>/명령어 | FCLM</title>
+<meta name="description" content="FCLM 명령어: /model, /compare, /trace, /cancel, /help">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#101116">
+<link rel="stylesheet" href="/static/guide.css">
+</head>
+<body>
+<div class="g-layout">
+  <aside class="g-side"><nav aria-label="가이드 목차">
+      <a href="/guide">가이드 홈</a>
+      <a href="/guide/screen">화면 둘러보기</a>
+      <a href="/guide/ask">질문하기</a>
+      <a href="/guide/team">@구단주명</a>
+      <a href="/guide/feed">#스쿼드 피드 ID</a>
+      <a href="/guide/commands" aria-current="page">/명령어</a>
+      <a href="/guide/send">스쿼드메이커로 보내기</a>
+  </nav></aside>
+<main>
+  <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / /명령어</nav>
+
+  <h1>/명령어</h1>
+  <p class="lead">입력창에 <code>/</code>를 치면 목록이 뜹니다. <kbd>↑</kbd> <kbd>↓</kbd>로 고르면 설명이 나오고, <kbd>Enter</kbd>로 실행합니다. 새로고침하면 모두 처음 상태로 돌아갑니다.</p>
+  <div class="m-window hero" data-scene="commands" role="img" aria-label="/를 치자 명령어 목록이 뜨고, /model에서 deep을 골라 적용하는 모습"><div class="m-bar"><i></i><i></i><i></i><span>fclm.onrender.com</span></div><div class="m-stage"></div></div>
+  <div class="g-sec">
+    <div class="g-copy">
+      <h2>명령어</h2>
+      <table class="g-table">
+        <tr><td><code>/model</code></td><td>다음 질문을 답할 모델: <code>auto</code>(기본) · <code>gemini</code> · <code>flash</code> · <code>lite</code> · <code>deep</code>.
+          <code>--r</code> 더 깊게 생각, <code>--a</code> 새로고침 전까지 계속</td></tr>
+        <tr><td><code>/compare</code></td><td>세 모델이 이름을 가린 채 답하고, 고른 답으로 대화를 이어 감 (1시간에 2번)</td></tr>
+        <tr><td><code>/trace</code></td><td>모델 선택·생각·도구 조회 결과를 답 위에 보여 줌</td></tr>
+        <tr><td><code>/cancel</code></td><td>켜 둔 명령어와 붙인 팀을 모두 끔</td></tr>
+        <tr><td><code>/help</code></td><td>명령어와 사용법을 챗봇 창에</td></tr>
+      </table>
+    </div>
+    <figure class="shot"><img src="/static/guide-commands.jpg" width="900" height="456" alt="/를 쳤을 때 뜨는 명령어 목록과 /model 설명" loading="lazy"></figure>
+  </div>
+  </div>
+  <p class="g-home"><a href="/guide">가이드 홈으로</a><a href="/">FCLM 메인으로</a></p>
+</main>
+</div>
+<script type="module" src="/static/guide.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>화면 둘러보기 | FCLM</title>
+<meta name="description" content="FCLM 첫 화면: 랭커 포메이션·팀컬러 통계와 챗봇">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#101116">
+<link rel="stylesheet" href="/static/guide.css">
+</head>
+<body>
+<div class="g-layout">
+  <aside class="g-side"><nav aria-label="가이드 목차">
+      <a href="/guide">가이드 홈</a>
+      <a href="/guide/screen" aria-current="page">화면 둘러보기</a>
+      <a href="/guide/ask">질문하기</a>
+      <a href="/guide/team">@구단주명</a>
+      <a href="/guide/feed">#스쿼드 피드 ID</a>
+      <a href="/guide/commands">/명령어</a>
+      <a href="/guide/send">스쿼드메이커로 보내기</a>
+  </nav></aside>
+<main>
+  <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / 화면 둘러보기</nav>
+
+  <h1>화면 둘러보기</h1>
+  <p class="lead">왼쪽은 랭커들이 쓰는 포메이션·팀컬러 통계, 오른쪽은 챗봇입니다. 아래 움직이는 화면의 숫자는 지금 사이트의 실제 데이터입니다.</p>
+  <div class="m-window hero" data-scene="screen" role="img" aria-label="포메이션 분포 막대가 자라고, 두 번째 포메이션과 팀컬러 분포를 눌러 상세가 바뀌는 모습"><div class="m-bar"><i></i><i></i><i></i><span>fclm.onrender.com</span></div><div class="m-stage"></div></div>
+  <div class="g-sec">
+    <div class="g-copy">
+      <h2>분포 막대</h2>
+      <p>위쪽 버튼으로 <b>포메이션 분포</b>와 <b>팀컬러 분포</b>를 오갑니다. 처음엔 5위까지, <b>더보기</b>를 누르면 더 보입니다.</p>
+      <p>줄을 누르면 아래에 그 포메이션(팀컬러)의 상세가 열립니다. 휴대폰에서는 챗봇이 위, 통계가 아래로 쌓입니다.</p>
+    </div>
+    <div class="m-window" data-scene="bars" role="img" aria-label="분포 막대가 자라고, 위 버튼으로 포메이션 분포와 팀컬러 분포를 오가는 모습"><div class="m-bar"><i></i><i></i><i></i><span>fclm.onrender.com</span></div><div class="m-stage"></div></div>
+  </div>
+  <div class="g-sec flip">
+    <div class="g-copy">
+      <h2>상세</h2>
+      <ul>
+        <li><b>요약 칸</b>: 시즌 승률(전체 평균 대비), 평균 ELO, 평균 구단가치, 최고 순위</li>
+        <li><b>스쿼드</b>: 최상위 랭커의 실제 선발 11명, 또는 자리별로 가장 많이 쓴 <b>랭커 베스트 11</b></li>
+        <li><b>상대 포메이션별 전적</b>: 파랑 승, 회색 무, 빨강 패. 막대에 마우스를 올리면 경기 수가 나옵니다.</li>
+        <li><b>많이 쓰는 팀컬러 / 포메이션</b>과 <b>순위 구간별 사용 비율</b></li>
+      </ul>
+    </div>
+    <div class="m-window" data-scene="detail" role="img" aria-label="포메이션 상세를 아래로 내려 상대 포메이션별 전적 막대에 커서를 올리면 경기 수와 승·무·패가 뜨는 모습"><div class="m-bar"><i></i><i></i><i></i><span>fclm.onrender.com</span></div><div class="m-stage"></div></div>
+  </div>
+  <p class="g-home"><a href="/guide">가이드 홈으로</a><a href="/">FCLM 메인으로</a></p>
+</main>
+</div>
+<script type="module" src="/static/guide.js"></script>
+</body>
+</html>
