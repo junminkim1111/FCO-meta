@@ -226,7 +226,7 @@ const SCENES = {
     const body = t.put(bot, `<table class="m-table"><thead><tr><th>자리</th><th>선수</th><th>시즌</th><th>강화</th><th>급여</th><th>시세</th><th>사용률</th></tr></thead><tbody></tbody></table>`).querySelector("tbody");
     for (const r of ARSENAL) { t.put(body, `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`); await t.wait(170); }
     await t.wait(300);
-    t.put(bot, `<p><span class="m-pill">스쿼드메이커로 보내기 ↗</span></p>`);
+    t.put(bot, `<p><span class="m-pill">스쿼드메이커로 내보내기 ↗</span></p>`);
     await t.wait(1400);
   },
 
@@ -288,7 +288,7 @@ const SCENES = {
     const log = t.q(".m-log");
     const bot = t.put(log, `<div class="m-bot"><p><b>총 급여 315 / 315 · 총액 49억 4,420만</b></p>
       <table class="m-table"><tbody>${ARSENAL.slice(0, 4).map((r) => `<tr>${r.slice(0, 3).map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`, null);
-    const btn = t.put(bot, `<p><span class="m-pill">스쿼드메이커로 보내기 ↗</span></p>`);
+    const btn = t.put(bot, `<p><span class="m-pill">스쿼드메이커로 내보내기 ↗</span></p>`);
     await t.wait(700);
     await t.point(btn.querySelector(".m-pill")); await t.click();
     t.hideCursor();
@@ -306,7 +306,7 @@ const SCENES = {
 
 // 좁은 화면의 가로 목차: 지금 페이지 칸이 보이게
 const here = document.querySelector('.g-side [aria-current="page"]');
-if (here && matchMedia("(max-width: 860px)").matches) here.parentElement.scrollLeft = here.offsetLeft - 16;
+if (here && matchMedia("(max-width: 860px)").matches) here.parentElement.scrollLeft = here.offsetLeft - here.parentElement.offsetLeft - 16;
 // ---------- 꼬리말 ----------
 document.body.append(html(`<footer class="foot">
   <p>© 2026 FCLM. All rights reserved.</p>

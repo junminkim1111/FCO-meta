@@ -36,7 +36,7 @@ from .team import Team, TeamNotFound, fetch_feed, fetch_team
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
-GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send")  # /guide/<주제> → static/guide-<주제>.html
+GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send", "data")  # /guide/<주제> → static/guide-<주제>.html
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
@@ -645,7 +645,7 @@ def create_app(
             keep.add("done", text=f"모델 {bot.last_model}")
             keep.answer = turn.text
             squad = _squad_call(keep.lines)
-            if squad:  # 답 아래 "스쿼드메이커로 보내기": 누르면 같은 호출을 다시 돌려(결과는 pages에 캐시) 링크를 만든다
+            if squad:  # 답 아래 "스쿼드메이커로 내보내기": 누르면 같은 호출을 다시 돌려(결과는 pages에 캐시) 링크를 만든다
                 with lock:
                     squads[entry["id"]] = squad
                     while len(squads) > MAX_SESSIONS:
@@ -781,7 +781,7 @@ def create_app(
 
     @app.post("/api/squad-link")
     def squad_maker_link(req: FeedRequest) -> dict[str, Any]:
-        """스쿼드메이커로 보내기 (/send 페이지): the answer's squad as a squad maker link for the FCLM bookmarklet,
+        """스쿼드메이커로 내보내기 (/send 페이지): the answer's squad as a squad maker link for the FCLM bookmarklet,
         with the players on their slots for the preview."""
         with lock:
             found = squads.get(req.id)
@@ -830,7 +830,7 @@ def create_app(
 
     @app.get("/send", include_in_schema=False)
     def send_page() -> FileResponse:
-        return FileResponse(STATIC_DIR / "send.html")  # 스쿼드메이커로 보내기 안내 (?id=답 기록 id)
+        return FileResponse(STATIC_DIR / "send.html")  # 스쿼드메이커로 내보내기 안내 (?id=답 기록 id)
 
     @app.get("/admin", include_in_schema=False)
     def admin_page(request: Request) -> FileResponse:

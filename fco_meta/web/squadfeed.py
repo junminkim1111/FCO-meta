@@ -1,4 +1,4 @@
-"""스쿼드메이커로 보내기: a squad answer as a squad maker link (https://fconline.nexon.com/squadmaker#fclm=…).
+"""스쿼드메이커로 내보내기: a squad answer as a squad maker link (https://fconline.nexon.com/squadmaker#fclm=…).
 The visitor opens it logged in to NEXON and presses the FCLM bookmarklet (static/index.html), which saves the squad
 to their own squad storage — this server never touches a NEXON account.
 """

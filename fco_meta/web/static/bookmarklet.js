@@ -33,7 +33,7 @@
   let raw = m ? m[1] : null;
   if (!raw) { try { raw = localStorage.getItem(KEY); } catch (e) { raw = null; } }
   if (location.hostname !== "fconline.nexon.com" || !raw) {
-    show(`<p class="msg">FCLM 답에서 <b>스쿼드메이커로 보내기</b> → <b>스쿼드메이커 열기</b>로 연 넥슨 페이지에서 눌러 주세요.</p>
+    show(`<p class="msg">FCLM 답에서 <b>스쿼드메이커로 내보내기</b> → <b>스쿼드메이커 열기</b>로 연 넥슨 페이지에서 눌러 주세요.</p>
           <a class="btn main" href="https://fconline.nexon.com/squadmaker">스쿼드메이커로 이동</a>`);
     return;
   }
