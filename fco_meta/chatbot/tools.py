@@ -87,6 +87,7 @@ BUDGET_STRETCH = 0.10  # 예산을 이만큼까지는 넘겨도 된다 — 넘�
 STRETCH_GAIN = 0.03  # 예산을 넘길 만한 점수(사용률 합) 차이  # ponytail: 고정 기준 — 사용자 평가가 쌓이면 조정
 SALARY_GAP = 2  # 자리 평균 급여가 랭커 평균과 이만큼 다르면 결과에 알린다
 BUDGET_MIN_GRADE = 8  # 예산에 맞추느라 강화를 낮춰도 이 아래로는 안 내린다 (8강 미만은 요즘 쓰지 않음)
+SQUAD_MAX_GRADE = 11  # 스쿼드 추천은 11강까지: 12·13강은 돈이 있어도 사기 어려운 카드라 넣지 않는다 (가진 카드는 그대로)
 # 신규특성(금특·신특): 8강(금카) 이상이면 어떤 카드든 하나를 더 달 수 있다. 줄임말 → 카드 상세의 특성 이름
 NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
@@ -1513,7 +1514,7 @@ class Toolbox:
             best = None
             for i in slots:
                 c, grade = chosen[i], chosen[i]["card"]["most_used_grade"] or 0
-                price = self._price(c["card"]["sp_id"], grade + 1) if grade < 13 else None
+                price = self._price(c["card"]["sp_id"], grade + 1) if grade < SQUAD_MAX_GRADE else None
                 if price is None or price["price_bp"] - c["price"] > left:
                     continue
                 value = (GRADE_OVR[grade + 1] - GRADE_OVR[grade]) / max(price["price_bp"] - c["price"], 1)
@@ -1641,7 +1642,7 @@ class Toolbox:
                 continue
             card, base = c["card"], c["price"]
             grades = []
-            for g in range((card["most_used_grade"] or 0) + 1, 14):
+            for g in range((card["most_used_grade"] or 0) + 1, SQUAD_MAX_GRADE + 1):
                 price = self._price(card["sp_id"], g)
                 if price is None or price["price_bp"] - base > left_bp or len(grades) == MAX_UPGRADES:
                     break
@@ -1936,6 +1937,9 @@ class Toolbox:
                     if not cards:
                         continue
                 cards = _common_cards(cards, entry["rankers"], keep=lambda c: season_rule and fits(c["sp_id"]))
+                cards = [c if (c["most_used_grade"] or 0) <= SQUAD_MAX_GRADE else
+                         {**c, "most_used_grade": SQUAD_MAX_GRADE, "price_at_most_used_grade": self._price(c["sp_id"], SQUAD_MAX_GRADE)}
+                         for c in cards]  # fmt: skip
                 if knobs.get("min_grade"):  # 이 강화 이상: 덜 강화해 쓴 카드는 그 강화 시세로
                     g = knobs["min_grade"]
                     cards = [c if (c["most_used_grade"] or 0) >= g else
