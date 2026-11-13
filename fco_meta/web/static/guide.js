@@ -317,7 +317,9 @@ document.body.append(html(`<footer class="foot">
   <p class="contact">버그 / 문의사항
     <a href="https://open.kakao.com/o/s3axuDWi" target="_blank" rel="noopener noreferrer" aria-label="카카오톡 오픈채팅으로 문의하기" title="카카오톡 오픈채팅">
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FEE500"/>
-        <path fill="#191919" d="M12 5.5c-3.9 0-7 2.4-7 5.4 0 1.9 1.3 3.6 3.2 4.6l-.7 2.5c-.1.3.2.5.4.3l3-2c.4 0 .7.1 1.1.1 3.9 0 7-2.4 7-5.5S15.9 5.5 12 5.5z"/></svg></a></p>
+        <path fill="#191919" d="M12 5.5c-3.9 0-7 2.4-7 5.4 0 1.9 1.3 3.6 3.2 4.6l-.7 2.5c-.1.3.2.5.4.3l3-2c.4 0 .7.1 1.1.1 3.9 0 7-2.4 7-5.5S15.9 5.5 12 5.5z"/></svg></a>
+    <a href="mailto:fclmdev@gmail.com" style="color: inherit" title="이메일로 문의하기"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+      stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>fclmdev@gmail.com</a></p>
 </footer>`));
 
 document.querySelectorAll(".m-window[data-scene]").forEach((w) => SCENES[w.dataset.scene] && play(w, SCENES[w.dataset.scene]));

@@ -101,7 +101,7 @@ table.g-table { width: 100%; border-collapse: collapse; font-size: 14px; margin:
 .foot { color: var(--faint); font-size: 12px; max-width: 1288px; margin: 0 auto; padding: 0 16px 32px; }
 .foot p { margin: 0 0 4px; line-height: 1.5; }
 .foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
-.foot .contact a { display: inline-flex; border-radius: 4px; }
+.foot .contact a { display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
 .foot .contact a:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
 
 /* ---------- 움직이는 모형 ---------- */

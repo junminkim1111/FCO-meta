@@ -97,9 +97,9 @@ def top_ranker_squad(
 def best_eleven(
     conn: sqlite3.Connection, formation: str | None = None, mode: str = "1vs1", *, team_color_id: int | None = None
 ) -> dict[str, Any] | None:
-    """Most used player at each position of the most common layout, over the latest snapshot's squads
-    that actually played `formation` (or of rankers with `team_color_id`, any formation).
-    Counted per player and card regardless of grade (no grade shown)."""
+    """Most used season card at each position of the most common layout (one card per player), over the latest
+    snapshot's squads that actually played `formation` (or of rankers with `team_color_id`, any formation).
+    Counted per card regardless of grade (no grade shown)."""
     as_of = squad_snapshot(conn, mode=mode)
     if as_of is None:
         return None
@@ -114,12 +114,10 @@ def best_eleven(
         (as_of, mode, *args),
     ).fetchall()
     squads: dict[int, list[int]] = defaultdict(list)
-    at: dict[int, Counter[int]] = defaultdict(Counter)  # 포지션 → 선수(pid)별 사용 수
-    cards: dict[tuple[int, int], Counter[int]] = defaultdict(Counter)
+    at: dict[int, Counter[int]] = defaultdict(Counter)  # 포지션 → 시즌 카드(sp_id)별 사용 수
     for r in rows:
         squads[r["rank"]].append(r["sp_position"])
-        at[r["sp_position"]][r["pid"]] += 1
-        cards[(r["sp_position"], r["pid"])][r["sp_id"]] += 1
+        at[r["sp_position"]][r["sp_id"]] += 1  # 시즌 카드 단위 (같은 선수라도 시즌이 다르면 다른 카드)
     layouts = Counter(tuple(sorted(p)) for p in squads.values() if len(p) == 11)
     if not layouts:
         return None
@@ -127,11 +125,11 @@ def best_eleven(
     used: set[int] = set()
     players = []
     for pos in layout:
-        pid = next((pid for pid, _ in at[pos].most_common() if pid not in used), None)
-        if pid is None:
+        sp_id = next((sp for sp, _ in at[pos].most_common() if sp % 1_000_000 not in used), None)  # 같은 선수는 한 자리만
+        if sp_id is None:
             continue
+        pid = sp_id % 1_000_000
         used.add(pid)
-        sp_id = cards[(pos, pid)].most_common(1)[0][0]
         p = cur.execute(
             "SELECT sp.name, ss.class_name, ss.season_img FROM meta_spid sp"
             " LEFT JOIN meta_season ss ON ss.season_id = ? WHERE sp.sp_id = ?",
@@ -140,7 +138,7 @@ def best_eleven(
         players.append({
             "sp_id": sp_id, "pid": pid, "position": pos, "name": p["name"] if p else None,
             "season": p["class_name"] if p else None, "season_img": (p["season_img"] or None) if p else None,
-            "rankers": at[pos][pid],
+            "rankers": at[pos][sp_id],
         })  # fmt: skip
     return {"squads": len(squads), "layout": list(layout), "layout_squads": layouts[layout], "data_as_of": as_of, "players": players}
 

@@ -144,25 +144,21 @@ class RuleBot:
         if r["strict"]:
             lines.append("※ 실제 경기 배치가 포메이션과 일치한 스쿼드만 집계했습니다.")
         if r.get("budget"):
-            lines.append(f"※ 예산 {r['budget']['max_price']} 이하 (랭커들이 가장 많이 쓴 강화 단계의 시세 기준)")
+            lines.append(f"※ 예산 {r['budget']['max_price']} 이하 (랭커들이 주로 쓰는 강화가 넘으면 8강까지 낮춘 시세 기준)")
         if r["sample_size"] < 30:
             lines.append(f"※ 표본이 {r['sample_size']}명으로 적어 참고용입니다.")
         lines.append("")
         shown, rest = r["players"][:wanted], r["players"][wanted:]
         for i, p in enumerate(shown, 1):
-            head = f"{i}. {p['name']} — {p['rankers']}명 사용 ({p['usage_rate']:.1%})"
-            if r.get("budget"):
-                head += f" · 예산 내 카드 사용 {sum(c['rankers'] for c in p['cards'])}명"
-            lines.append(head)
-            cards = [_card_text(c) for c in p["cards"][:3]]
-            lines.append(f"   주로 쓰는 카드: {', '.join(cards)}")
+            lines.append(f"{i}. {p['name']} {_season(p['season'])} — {p['rankers']}명 사용 ({p['usage_rate']:.1%})")  # 시즌 카드 단위
+            lines.append(f"   카드: {_card_text(p['cards'][0])}")
             detail = [f"평균 강화 {p['avg_grade']:.1f}"] if p["avg_grade"] is not None else []
             if p["avg_elo_of_users"] is not None:
                 detail.append(f"사용 랭커 평균 ELO {p['avg_elo_of_users']:.0f}")
             lines.append("   " + " · ".join(detail))
         if rest:
             lines.append("")
-            lines.append("다음 후보: " + ", ".join(f"{p['name']} ({p['usage_rate']:.1%})" for p in rest))
+            lines.append("다음 후보: " + ", ".join(f"{p['name']} {_season(p['season'])} ({p['usage_rate']:.1%})" for p in rest))
         if any(c.get("price_at_most_used_grade") for p in r["players"] for c in p["cards"]):
             lines.append("")
             lines.append("시세는 수집 시각 기준이며 변동될 수 있습니다.")
@@ -219,7 +215,9 @@ def _season(class_name: str | None) -> str:
 def _card_text(c: dict[str, Any]) -> str:
     text = f"{_season(c['season'])} {c['rankers']}명"
     extra = []
-    if c.get("most_used_grade"):
+    if c.get("ranker_grade"):  # 예산에 맞춰 낮춘 강화
+        extra.append(f"{c['most_used_grade']}강 (랭커들은 주로 {c['ranker_grade']}강)")
+    elif c.get("most_used_grade"):
         extra.append(f"주로 {c['most_used_grade']}강")
     price = c.get("price_at_most_used_grade")
     if price:

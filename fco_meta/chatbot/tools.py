@@ -167,9 +167,15 @@ def _cost(card: dict[str, Any], kind: str) -> int | None:
     return _price_bp(card) if kind == "price" else card.get("salary")
 
 
+def _card_usage(option: dict[str, Any]) -> float:
+    """표본 랭커 중 이 시즌 카드를 이 자리에 쓴 비율 (선수 사용률 × 그 선수 사용자 중 이 카드 비중)."""
+    e = option["entry"]
+    return round(e["usage_rate"] * (option["card"]["rankers"] or 0) / max(e["rankers"], 1), 4)
+
+
 def _score(option: dict[str, Any]) -> float:
-    """What a squad option is worth: the player's usage rate weighed by how many of those rankers use this card
-    (_squad_setup), unless a squad knob (save, prefer) set a score."""
+    """What a squad option is worth: how many rankers use this season card there (_card_usage, set in _squad_setup),
+    unless a squad knob (save, prefer, invest) set a score."""
     return option.get("score", option["entry"]["usage_rate"])
 
 
@@ -682,7 +688,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_meta_trends",
         "description": (
-            "랭커 메타 동향: 많이 쓰는 팀컬러(전체 랭커일 때)·포메이션 비율, 가장 많이 쓰인 선수, "
+            "랭커 메타 동향: 많이 쓰는 팀컬러(전체 랭커일 때)·포메이션 비율, 가장 많이 쓰인 선수 카드(시즌별), "
             "이전 스냅샷(약 days일 전) 대비 비율·사용률 변화(오른 선수·내린 선수)."
         ),
         "input_schema": _schema(
@@ -1117,8 +1123,8 @@ class Toolbox:
         # 예산·급여 필터와 가격순 정렬은 후보를 넉넉히 받아 거른다
         res = top_players(
             self.conn, tc_id, formation or ALL_FORMATIONS, roles,
-            top=100 if (need_price or need_salary or wanted) else top_n, by="pid", strict=bool(strict), min_sample=self.min_sample,
-        )  # fmt: skip
+            top=200 if (need_price or need_salary or wanted) else top_n, by="sp_id", strict=bool(strict), min_sample=self.min_sample,
+        )  # fmt: skip  # 시즌 카드 단위: 같은 선수라도 시즌이 다르면 다른 추천 (랭커들이 그 카드를 쓴 수로 순위)
         if not res.players:
             out_empty: dict[str, Any] = {
                 "team_color": tc_name, "formation": formation, "role": role_label, "players": [],
@@ -1133,11 +1139,20 @@ class Toolbox:
                 out_empty["note"] = "이 조합은 스쿼드가 수집·집계되지 않음. 다른 조합을 찾기보다 사용자에게 그대로 알린다"
             return out_empty
 
-        def affordable(c: dict[str, Any]) -> bool:
-            price, salary = _price_bp(c), c["salary"]
+        def affordable(c: dict[str, Any]) -> dict[str, Any] | None:
+            """The card at a grade the limits allow: 랭커들이 주로 쓰는 강화가 예산을 넘으면 강화를 낮춰 (BUDGET_MIN_GRADE까지)."""
+            salary = c["salary"]
+            if need_salary and (salary is None or (max_salary is not None and salary > max_salary)):
+                return None
+            if max_price_bp is not None and c["most_used_grade"] and (_price_bp(c) is None or _price_bp(c) > max_price_bp):
+                for g in range(c["most_used_grade"] - 1, BUDGET_MIN_GRADE - 1, -1):
+                    if (price := self._price(c["sp_id"], g)) and price["price_bp"] <= max_price_bp:
+                        c = {**c, "ranker_grade": c["most_used_grade"], "most_used_grade": g, "price_at_most_used_grade": price}
+                        break
+            price = _price_bp(c)
             if need_price and (price is None or (max_price_bp is not None and price > max_price_bp)):
-                return False
-            return not need_salary or (salary is not None and (max_salary is None or salary <= max_salary))
+                return None
+            return c
 
         players = []
         for p in res.players:
@@ -1147,11 +1162,12 @@ class Toolbox:
                 if not entry["cards"]:
                     continue
             if need_price or need_salary:
-                entry["cards"] = [c for c in entry["cards"] if affordable(c)]
+                entry["cards"] = [x for c in entry["cards"] if (x := affordable(c))]
                 if not entry["cards"]:
                     continue
             if sort != "usage" and entry["usage_rate"] < min_usage:
                 continue
+            entry["season"] = entry["cards"][0]["season"]
             players.append(entry)
         if sort == "price":
             players.sort(key=lambda e: (min(_price_bp(c) for c in e["cards"]), -e["rankers"]))
@@ -1173,10 +1189,13 @@ class Toolbox:
             "combo_rankers": res.combo_rankers,
             "players": players,
             "definitions": {
-                "usage_rate": "표본 랭커 중 이 선수를 이 역할(들)로 선발 기용한 비율",
-                "win_rate_of_those_matches": "사용 랭커의 기준 경기 1경기씩의 승률 (표본 작음, 참고용)",
-                "avg_season_win_rate_of_users": "사용 랭커들의 이번 시즌 승률(랭킹 페이지 승/무/패) 평균",
-                "price_at_most_used_grade": "랭커들이 가장 많이 쓴 강화 단계의 최근 수집 시세 (없으면 미수집)",
+                "players": "추천 단위는 시즌 카드 (같은 선수라도 시즌이 다르면 다른 줄). season = 그 카드의 시즌",
+                "usage_rate": "표본 랭커 중 이 시즌 카드를 이 역할(들)로 선발 기용한 비율 (rankers = 그 랭커 수)",
+                "win_rate_of_those_matches": "그 카드를 쓴 랭커의 기준 경기 1경기씩의 승률 (표본 작음, 참고용)",
+                "avg_season_win_rate_of_users": "그 카드를 쓴 랭커들의 이번 시즌 승률(랭킹 페이지 승/무/패) 평균",
+                "most_used_grade": "랭커들이 가장 많이 쓴 강화 (11강 넘게 쓰면 11강으로 셈). 예산을 주면 그 안에 들도록 낮춘 강화이고 "
+                                   "그때 ranker_grade가 랭커들이 주로 쓰는 강화",
+                "price_at_most_used_grade": "그 강화의 최근 수집 시세 (없으면 미수집)",
                 "salary": "카드 급여 (데이터센터, 없으면 미수집)",
             },
         }
@@ -1228,7 +1247,7 @@ class Toolbox:
         cards = []
         for s in seasons:
             grades = Counter(self._grade_dist(key, roles, s.sp_id))
-            typical_grade = grades.most_common(1)[0][0] if grades else None
+            typical_grade = min(grades.most_common(1)[0][0], SQUAD_MAX_GRADE) if grades else None  # 12·13강은 돈으로 사기 어려워 11강으로
             cards.append({
                 "sp_id": s.sp_id,
                 "season": s.season,
@@ -1567,8 +1586,8 @@ class Toolbox:
             if wanted and role not in wanted:
                 continue
             options = next(o for r, o in sq.slot_options if r == role)
-            by_pid: dict[int, list[dict[str, Any]]] = {}  # 사용률 순
-            for o in options:
+            by_pid: dict[int, list[dict[str, Any]]] = {}  # 선수마다 그 카드들, 가장 많이 쓰인 시즌 카드 순
+            for o in sorted(options, key=_card_usage, reverse=True):
                 by_pid.setdefault(o["entry"]["pid"], []).append(o)
             keep = [c["entry"]["pid"] for (r, _), c in zip(sq.slot_options, feasible) if r == role and c]
             keep += [pid for pid, opts in by_pid.items() if any(t.startswith("include:") for o in opts for t in o["tags"])]
@@ -1585,13 +1604,13 @@ class Toolbox:
                        "max_total_price": format_bp(sq.limits["price"]) if "price" in sq.limits else None},
             "candidates": candidates,
             "definitions": {
-                "candidates": "자리마다 랭커들이 그 자리에 쓴 선수, 사용률 순 (조건에 맞는 카드만)",
-                "usage_rate": "표본 랭커 중 이 선수를 이 역할로 선발 기용한 비율",
+                "candidates": "자리마다 랭커들이 그 자리에 쓴 선수, 가장 많이 쓰인 시즌 카드 순 (조건에 맞는 카드만)",
+                "usage_rate": "cards마다: 표본 랭커 중 이 시즌 카드를 이 역할로 선발 기용한 비율 (rankers = 그 랭커 수)",
                 "avg_season_win_rate_of_users": "이 선수를 쓴 랭커들의 이번 시즌 승률 평균",
                 "avg_rating_in_match": "이 역할 선발 출전의 경기 평점 평균",
                 "top10000_stats": "이 선수 카드를 이 자리로 쓴 TOP 10,000 랭커 최근 20경기의 경기당 평균 (matches = 경기 수)",
                 "profile": "가장 많이 쓰인 카드의 1강 기준 요약 능력치·키·개인기·주발·신규특성",
-                "cards": "고를 수 있는 카드: 시즌, 랭커들이 가장 많이 쓴 강화(grade), 그 강화 시세, 급여",
+                "cards": "고를 수 있는 시즌 카드: 시즌, 그 카드를 쓴 랭커 수·비율, 랭커들이 가장 많이 쓴 강화(grade), 그 강화 시세, 급여",
             },
             "note": "고른 선수는 check_squad에 같은 조건과 picks로 넘겨 검사하고, ok인 라인업만 답한다",
         }
@@ -1613,8 +1632,7 @@ class Toolbox:
         """One player of squad_candidates: usage, win rate, rating, match stats, card profile — in that order."""
         e = options[0]["entry"]
         out: dict[str, Any] = {
-            "player": e["name"], "rankers": e["rankers"], "usage_rate": e["usage_rate"],
-            "avg_season_win_rate_of_users": e["avg_season_win_rate_of_users"], "avg_rating_in_match": e["avg_rating_in_match"],
+            "player": e["name"], "avg_season_win_rate_of_users": e["avg_season_win_rate_of_users"], "avg_rating_in_match": e["avg_rating_in_match"],
         }  # fmt: skip
         if ROLE_MATCH_STATS.get(role) and (stats := ranker_stats_summary(self.conn, {o["card"]["sp_id"] for o in options}, set(ROLES[role]))):
             out["top10000_stats"] = {"matches": stats["matches"], **{k: stats[k] for k in ROLE_MATCH_STATS[role]}}
@@ -1626,7 +1644,7 @@ class Toolbox:
         if any("chem" in o["tags"] for o in options):
             out["chemistry_member"] = True
         out["cards"] = [
-            {"season": o["card"]["season"], "grade": o["card"]["most_used_grade"],
+            {"season": o["card"]["season"], "rankers": o["card"]["rankers"], "usage_rate": _card_usage(o), "grade": o["card"]["most_used_grade"],
              "price": (o["card"]["price_at_most_used_grade"] or {}).get("price"), "salary": o["salary"],
              **({"season_team_color": True} if "season" in o["tags"] else {})}
             for o in options[:3]
@@ -1766,30 +1784,38 @@ class Toolbox:
             c = o["card"]
             return {"season": c["season"], "grade": c["most_used_grade"], "price": (c["price_at_most_used_grade"] or {}).get("price"), "salary": o["salary"]}
 
+        def same(o: dict[str, Any], name: str, season: str) -> bool:  # 사용자의 그 카드인가 (시즌을 모르면 선수만)
+            if not name or name not in "".join((o["entry"]["name"] or "").split()):
+                return False
+            return not season or season in "".join((o["card"]["season"] or "").split()).casefold()
+
         slots = []
         for pick, name, role in zip(picks, names, roles):
-            used: list[dict[str, Any]] = []  # 그 자리에 쓰인 선수, 사용률 순 (선수당 한 번)
-            for o in by_role.get(role, []):
-                if all(u["entry"]["pid"] != o["entry"]["pid"] for u in used):
+            used: list[dict[str, Any]] = []  # 그 자리에 쓰인 시즌 카드, 많이 쓰인 순 (카드당 한 번)
+            for o in sorted(by_role.get(role, []), key=_card_usage, reverse=True):
+                if all(u["card"]["sp_id"] != o["card"]["sp_id"] for u in used):
                     used.append(o)
-            at = next((i for i, o in enumerate(used) if name and name in "".join((o["entry"]["name"] or "").split())), None)
+            season = "".join(str(pick.get("season") or "").split()).casefold()
+            at = next((i for i, o in enumerate(used) if same(o, name, season)), None)
+            if at is None and season:  # 그 시즌 카드는 랭커가 안 썼으면 같은 선수의 다른 카드로
+                at = next((i for i, o in enumerate(used) if same(o, name, "")), None)
             row: dict[str, Any] = {"role": role, "player": pick.get("player"), "season": pick.get("season"), "grade": pick.get("grade")}
             if at is None:
                 row["note"] = "이 범위 랭커들이 이 자리에 쓴 기록이 없음 (또는 이 팀컬러 소속 카드가 아님)"
             else:
-                e = used[at]["entry"]
-                row.update(usage_rank=at + 1, usage_rate=e["usage_rate"], rankers=e["rankers"], rankers_card=card(used[at]))
+                o = used[at]
+                row.update(usage_rank=at + 1, usage_rate=_card_usage(o), rankers=o["card"]["rankers"], rankers_card=card(o))
             others = [o for o in used[:at] if not any(n in "".join((o["entry"]["name"] or "").split()) for n in mine)]
-            row["used_more"] = [{"player": o["entry"]["name"], "usage_rate": o["entry"]["usage_rate"], **card(o)} for o in others[:3]]
+            row["used_more"] = [{"player": o["entry"]["name"], "usage_rate": _card_usage(o), **card(o)} for o in others[:3]]
             slots.append(row)
         return {
             "team_color": sq.tc_name, "formation": sq.formation or "전체", "data_as_of": sq.first.data_as_of,
             "sample_size": sq.first.sample_size, "fallback_to_all_formations": sq.first.fallback, "slots": slots,
             "definitions": {
-                "usage_rank": "이 범위 랭커들이 그 자리에 쓴 선수 중 사용률 순위 (1 = 가장 많이 씀)",
-                "usage_rate": "표본 랭커 중 이 선수를 이 자리에 선발로 쓴 비율",
-                "rankers_card": "랭커들이 이 선수를 쓸 때 가장 많이 쓴 카드·강화와 그 시세·급여",
-                "used_more": "이 자리에 이 선수보다 많이 쓰이는 선수 (사용자 팀에 이미 있는 선수 제외, 최대 3명)",
+                "usage_rank": "이 범위 랭커들이 그 자리에 쓴 시즌 카드 중 사용 순위 (1 = 가장 많이 씀, 같은 선수도 시즌이 다르면 다른 카드)",
+                "usage_rate": "표본 랭커 중 이 시즌 카드를 이 자리에 선발로 쓴 비율 (그 시즌 카드를 랭커가 안 썼으면 같은 선수의 가장 많이 쓰인 카드)",
+                "rankers_card": "순위를 매긴 카드: 시즌·랭커들이 가장 많이 쓴 강화와 그 시세·급여",
+                "used_more": "이 자리에 이 카드보다 많이 쓰이는 시즌 카드 (사용자 팀에 이미 있는 선수 제외, 최대 3장)",
             },
             "note": "사용률 순위가 낮은 자리가 랭커 기준 약점 후보 (능력치가 아니라 사용 기록 기준). 대안은 used_more, 더 찾을 때만 그 자리로 recommend_players",
         }  # fmt: skip
@@ -1820,7 +1846,7 @@ class Toolbox:
         invest = usage counts double (cut last when over budget), save = cheapest first."""
         if not options:
             return
-        top_usage = max(o["entry"]["usage_rate"] for o in options) or 1
+        top_usage = max(_card_usage(o) for o in options) or 1
         if stat := knobs.get("prefer", {}).get(role):
             details = _card_details(self.conn, {o["card"]["sp_id"] for o in options})
             values = {o["card"]["sp_id"]: stat_value(details.get(o["card"]["sp_id"]), stat) for o in options}
@@ -1829,7 +1855,7 @@ class Toolbox:
             for o in options:
                 v = values[o["card"]["sp_id"]]
                 level = (v - low) / (high - low) if v is not None and high > low else 0.0
-                o["score"] = 0.7 * level + 0.3 * o["entry"]["usage_rate"] / top_usage  # ponytail: 고정 가중치 0.7/0.3
+                o["score"] = 0.7 * level + 0.3 * _card_usage(o) / top_usage  # ponytail: 고정 가중치 0.7/0.3
         if role in knobs.get("invest", ()):
             for o in options:
                 o["score"] = 2 * _score(o)
@@ -1946,14 +1972,11 @@ class Toolbox:
                              {**c, "most_used_grade": g, "price_at_most_used_grade": self._price(c["sp_id"], g)} for c in cards]  # fmt: skip
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
-                most = max((c["rankers"] for c in cards), default=0) or 1
                 for card in cards if limits else cards[:1]:
                     tags = {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(card["sp_id"]))) if ok} | wanted
-                    # 같은 선수라도 랭커가 많이 쓰는 시즌 카드가 낫다 (신특·체감 같은 메타가 사용 수에 담긴다): 가장 많이 쓰인
-                    # 카드는 선수 사용률 그대로, 아무도 안 쓴 카드는 절반  # ponytail: 고정 가중치 — 선수가 시즌보다 중요하다는 정도만
-                    score = entry["usage_rate"] * (1 + card["rankers"] / most) / 2
-                    options.append({"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags,
-                                    "score": score})  # fmt: skip
+                    # 추천 단위는 시즌 카드: 랭커들이 이 자리에 그 카드를 쓴 비율 (신특·체감 같은 메타가 사용 수에 담긴다)
+                    o = {"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags}
+                    options.append({**o, "score": _card_usage(o)})
             self._score_options(role, options, knobs)
             slot_options += [(role, options)] * n
         if first is None or not first.sample_size:
@@ -1988,7 +2011,7 @@ class Toolbox:
                 no_salary.append(e["name"])
             lineup.append({
                 **({"owned": True} if c.get("owned") else {}),
-                "role": role, "player": e["name"], "pid": e["pid"], "rankers": e["rankers"], "usage_rate": e["usage_rate"],
+                "role": role, "player": e["name"], "pid": e["pid"], "season": card["season"], "rankers": card["rankers"], "usage_rate": _card_usage(c),
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
                                               "price_at_most_used_grade", "salary", "new_traits", "added_trait") if k in card},
             })  # fmt: skip
@@ -1999,13 +2022,13 @@ class Toolbox:
                 continue
             seen: set[int] = set()
             alts = []
-            for o in options:
+            for o in sorted(options, key=_card_usage, reverse=True):  # 많이 쓰인 시즌 카드 순
                 e = o["entry"]
-                if e["pid"] in picked or e["pid"] in seen:
+                if e["pid"] in picked or o["card"]["sp_id"] in seen:
                     continue
-                seen.add(e["pid"])
+                seen.add(o["card"]["sp_id"])
                 price = o["card"]["price_at_most_used_grade"]
-                alts.append({"player": e["name"], "usage_rate": e["usage_rate"], "season": o["card"]["season"],
+                alts.append({"player": e["name"], "season": o["card"]["season"], "usage_rate": _card_usage(o), "grade": o["card"]["most_used_grade"],
                              "price": price["price"] if price else None, "salary": o["salary"]})  # fmt: skip
             alternatives[role] = alts[:3]
 
@@ -2025,7 +2048,7 @@ class Toolbox:
             "total_price": format_bp(total("price")),
             "total_salary": total("salary"),
             "definitions": {
-                "usage_rate": "표본 랭커 중 이 선수를 이 역할로 선발 기용한 비율",
+                "usage_rate": "표본 랭커 중 이 시즌 카드를 이 역할로 선발 기용한 비율 (rankers = 그 랭커 수)",
                 "price_at_most_used_grade": "랭커들이 그 카드를 가장 많이 쓴 강화 단계의 최근 수집 시세",
                 "layout": "slots로 준 자리, 아니면 그 포메이션으로 실제 경기한 랭커 스쿼드에서 가장 흔한 역할 구성",
                 "total_price·total_salary": "시세·급여가 수집된 선수만 더한 값",
@@ -2246,7 +2269,7 @@ class Toolbox:
         ).fetchall()))  # fmt: skip
 
     def _player_usage(self, tc_id: int, as_of: str) -> tuple[int, dict[int, dict[str, Any]]]:
-        """(표본, pid → 이름·사용 랭커 수·주 역할) from the all-formation stats of one snapshot."""
+        """(표본, 시즌 카드 sp_id → 이름·시즌·사용 랭커 수·주 역할) from the all-formation stats of one snapshot."""
         sample = self.conn.execute(
             "SELECT squads FROM usage_sample WHERE data_as_of = ? AND mode = '1vs1' AND team_color_id = ?"
             " AND formation = '*' AND strict = 0",
@@ -2256,13 +2279,14 @@ class Toolbox:
             return 0, {}
         players: dict[int, dict[str, Any]] = {}
         by_role: dict[int, Counter[str]] = defaultdict(Counter)
-        for pid, role, n, name in self.conn.execute(
-            "SELECT u.pid, u.role, SUM(u.ranker_count), MIN(sp.name) FROM usage_stats u"
-            " LEFT JOIN meta_spid sp ON sp.sp_id = u.sp_id WHERE u.data_as_of = ? AND u.mode = '1vs1'"
-            " AND u.team_color_id = ? AND u.formation = '*' AND u.strict = 0 GROUP BY u.pid, u.role",
+        for pid, role, n, name, season in self.conn.execute(  # pid 자리에 시즌 카드(sp_id): 같은 선수라도 시즌이 다르면 따로
+            "SELECT u.sp_id, u.role, SUM(u.ranker_count), MIN(sp.name), MIN(ss.class_name) FROM usage_stats u"
+            " LEFT JOIN meta_spid sp ON sp.sp_id = u.sp_id LEFT JOIN meta_season ss ON ss.season_id = u.season_id"
+            " WHERE u.data_as_of = ? AND u.mode = '1vs1'"
+            " AND u.team_color_id = ? AND u.formation = '*' AND u.strict = 0 GROUP BY u.sp_id, u.role",
             (as_of, tc_id),
         ):
-            p = players.setdefault(pid, {"name": name, "rankers": 0})
+            p = players.setdefault(pid, {"name": name, "season": (season or "").split(" (")[0], "rankers": 0})
             p["rankers"] += n
             by_role[pid][role] += n
         for pid, p in players.items():
@@ -2310,7 +2334,7 @@ class Toolbox:
         sample, now_p = self._player_usage(tc_id, as_of)
         out["player_sample_size"] = sample
         out["top_players"] = [
-            {"player": p["name"], "main_role": p["main_role"], "rankers": p["rankers"], "usage_rate": p["usage_rate"]}
+            {"player": p["name"], "season": p["season"], "main_role": p["main_role"], "rankers": p["rankers"], "usage_rate": p["usage_rate"]}
             for p in sorted(now_p.values(), key=lambda p: -p["rankers"])[:10]
         ]
         prev_sample, before_p = self._player_usage(tc_id, prev[0]) if prev else (0, {})
@@ -2326,7 +2350,7 @@ class Toolbox:
                 cur = a["usage_rate"] if a else 0.0
                 old = b["usage_rate"] if b else 0.0
                 changes.append({
-                    "player": (a or b)["name"], "main_role": (a or b)["main_role"],
+                    "player": (a or b)["name"], "season": (a or b)["season"], "main_role": (a or b)["main_role"],
                     "usage_rate": cur, "previous_usage_rate": old, "change": round(cur - old, 4),
                 })  # fmt: skip
             out["rising"] = sorted((c for c in changes if c["change"] > 0), key=lambda c: -c["change"])[:5]
@@ -2597,7 +2621,7 @@ class Toolbox:
         out["definitions"] = {
             "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
             "top_ranker_squad": "스쿼드 수집 랭커 중 이 포메이션을 쓰는 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외, squad_value = 선발 최신 시세 합, unpriced = 시세 몰라 뺀 선수 수)",
-            "best_eleven": "이 포메이션으로 실제 경기한 스쿼드들의 가장 흔한 배치에서 자리마다 가장 많이 쓰인 선수 (rankers = 그 자리 사용 수)",
+            "best_eleven": "이 포메이션으로 실제 경기한 스쿼드들의 가장 흔한 배치에서 자리마다 가장 많이 쓰인 시즌 카드 (rankers = 그 카드를 그 자리에 쓴 수)",
             "matchups": "수집된 공식경기 중 양쪽 선발을 아는 경기의 상대 포메이션별 결과 (포메이션은 배치로 추론, 표본 작으면 참고용)",
         }
         return out
@@ -2640,7 +2664,7 @@ class Toolbox:
             "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 팀컬러 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
             "formations": "그 팀컬러 랭커들이 랭킹 화면에서 쓰는 포메이션",
             "top_ranker_squad": "스쿼드 수집 랭커 중 이 팀컬러의 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외, squad_value = 선발 최신 시세 합, unpriced = 시세 몰라 뺀 선수 수)",
-            "best_eleven": "이 팀컬러 랭커들의 스쿼드(포메이션 무관)에서 가장 흔한 배치의 자리마다 가장 많이 쓰인 선수",
+            "best_eleven": "이 팀컬러 랭커들의 스쿼드(포메이션 무관)에서 가장 흔한 배치의 자리마다 가장 많이 쓰인 시즌 카드",
         }
         return out
 

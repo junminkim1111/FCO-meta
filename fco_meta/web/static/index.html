@@ -64,7 +64,7 @@
                               header .guide-link { position: absolute; z-index: 2; right: 16px; top: calc(16px + var(--head-h) / 2); transform: translateY(-50%); } }
   header .guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   footer.foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
-  footer.foot .contact a { display: inline-flex; border-radius: 4px; }
+  footer.foot .contact a { display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
   footer.foot .contact a:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
   button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
            cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s, transform .1s ease-out; }
@@ -392,6 +392,9 @@
       <a href="https://open.kakao.com/o/s3axuDWi" target="_blank" rel="noopener noreferrer" aria-label="카카오톡 오픈채팅으로 문의하기" title="카카오톡 오픈채팅">
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FEE500"/>
           <path fill="#191919" d="M12 5.5c-3.9 0-7 2.4-7 5.4 0 1.9 1.3 3.6 3.2 4.6l-.7 2.5c-.1.3.2.5.4.3l3-2c.4 0 .7.1 1.1.1 3.9 0 7-2.4 7-5.5S15.9 5.5 12 5.5z"/></svg>
+      </a>
+      <a href="mailto:fclmdev@gmail.com" style="color: inherit" title="이메일로 문의하기">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>fclmdev@gmail.com
       </a>
     </p>
   </footer>
