@@ -821,8 +821,8 @@ const TOOL_STATUS = {
 let modelNext = null, modelAll = null, traceOn = false, compareArmed = false; // /model 값 그대로 ("flash --r")
 // /model 값 → [서버 mode, 이름, 짧은 설명(목록), 설명(/model·/help)]. deep --r은 생각 켬
 const MODELS = {
-  auto: ["auto", "자동", "기본: 질문에 맞춰 고름", "기본: 질문을 보고 Flash-Lite·3.5 Flash를 고르고, 3.5 Flash가 안 되면 DeepSeek"],
-  gemini: ["gemini", "Gemini만", "자동, 실패해도 Gemini 안에서", "자동과 같지만 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)"],
+  auto: ["auto", "자동", "기본: DeepSeek 생각 끔", "기본: DeepSeek V4.1 Flash 생각 끔. 안 되면 질문에 맞춰 Gemini Flash-Lite·3.5 Flash가 처음부터"],
+  gemini: ["gemini", "Gemini만", "질문에 맞춰 Gemini", "질문을 보고 Flash-Lite·3.5 Flash를 고름. 3.5 Flash가 안 되면 다른 Gemini 모델(다른 Flash 먼저, 그다음 Flash-Lite)"],
   flash: ["flash", "Gemini 3.5 Flash", "늘 3.5 Flash", "늘 3.5 Flash (안 되면 다른 Gemini Flash)"],
   lite: ["lite", "Gemini 3.5 Flash-Lite", "늘 Flash-Lite (빠르고 가볍게)", "늘 Flash-Lite (3.5 Flash로 넘기지 않음, 빠르고 가볍게)"],
   deep: ["deep", "DeepSeek V4.1 Flash(생각 끔)", "DeepSeek 생각 끔 (최대 5분)", "DeepSeek V4.1 Flash 생각 끔. 최대 5분"],

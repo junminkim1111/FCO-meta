@@ -272,7 +272,7 @@ const SCENES = {
     await t.wait(500);
     for (const i of [0, 1, 2, 1, 0]) { select(i); await t.wait(650); }
     menu.remove(); txt.textContent = "/model ";
-    const models = [["auto", "기본: 질문에 맞춰 고름"], ["gemini", "자동, 실패해도 Gemini 안에서"], ["flash", "늘 3.5 Flash"], ["lite", "늘 Flash-Lite (빠르고 가볍게)"],
+    const models = [["auto", "기본: DeepSeek 생각 끔"], ["gemini", "질문에 맞춰 Gemini"], ["flash", "늘 3.5 Flash"], ["lite", "늘 Flash-Lite (빠르고 가볍게)"],
                     ["deep", "DeepSeek 생각 끔 (최대 5분)"], ["deep --r", "DeepSeek 생각 켬 (더 깊게)"]];
     menu = t.put(form, `<ul class="m-menu">${models.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
     for (const i of [0, 1, 2, 3, 4]) { select(i); await t.wait(i === 4 ? 900 : 380); }

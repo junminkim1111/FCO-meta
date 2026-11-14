@@ -42,7 +42,7 @@ MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
-DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # /model deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(auto), /model deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
 LONG_DEADLINE = 300.0  # /model deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
 # 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
@@ -359,7 +359,7 @@ class TeamRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    # /model: auto(기본, Jev가 고름) · gemini(auto와 같되 3.5 Flash가 안 되면 DeepSeek 대신 다른 Gemini) · flash · lite
+    # /model: auto(기본 DeepSeek 생각 끔, 안 되면 Jev가 고른 Gemini) · gemini(Jev가 고른 Gemini, 3.5 Flash가 안 되면 다른 Gemini) · flash · lite
     # · deep(DeepSeek 생각 끔) · deep_r(/model deep --r, 생각 켬)
     mode: Literal["auto", "gemini", "flash", "lite", "deep", "deep_r"] = "auto"
     think: bool = False  # /model auto·gemini·flash·lite --r: Gemini가 답할 때 생각 깊이 HIGH (기본은 모델이 정함)
@@ -550,7 +550,7 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode in ("auto", "gemini"):  # Jev가 질문을 보고 Flash-Lite·3.5 Flash를 고른다
+                if req.mode in ("auto", "gemini"):  # Jev가 질문을 보고 Flash-Lite·3.5 Flash를 고른다 (auto는 DeepSeek이 안 될 때 그 모델)
                     cached = answers.get(req.message) if req.mode == "auto" and first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
@@ -572,13 +572,10 @@ def create_app(
                     if req.mode == "gemini":  # DeepSeek으로 넘기지 않고 Gemini 안에서 (다른 Flash 먼저, 그다음 Lite)
                         entry["mode"] = req.mode
                         why += " · /model gemini: 3.5 Flash가 안 되면 다른 Gemini 모델로"
-                    elif _flash_blocked() and _deepseek_ready():  # 3.5 Flash 한도 소진·혼잡: 그 몫은 DeepSeek 생각 끔이
-                        if heavy:
-                            key, options = "deep", {"deadline": LONG_DEADLINE}
-                            why += f" (한도 소진 → {DEEP_LABEL['deep']})"
-                        else:  # 넘겨받을 모델이 없으니 Flash-Lite가 끝까지 답한다
-                            options = {}
-                            why += " (3.5 Flash 한도 소진 → Flash-Lite가 끝까지)"
+                    elif _deepseek_ready():  # 기본은 DeepSeek 생각 끔. 실패하면 위에서 고른 Gemini가 처음부터 답한다
+                        backup = options
+                        key, options = "deep", {"deadline": LONG_DEADLINE}
+                        why = f"{why.split(' → ')[0]} → {DEEP_LABEL[key]} (안 되면 {FLASH_MODEL if heavy else 'Flash-Lite'})"
                     entry["route"] = why
                 elif req.mode in ("flash", "lite"):  # 사용자가 고른 Gemini 모델 (Jev 판단 없이)
                     key, options = "gemini", {"model": FLASH_MODEL} if req.mode == "flash" else {}
@@ -599,10 +596,7 @@ def create_app(
                 keep.add("route", text=why)
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
-                # 3.5 Flash로 가는 질문은 Gemini 대체 모델을 쓰지 않고, 실패하면 DeepSeek 생각 끔이 처음부터 답한다
-                handover = req.mode == "auto" and key == "gemini" and options.get("model") == FLASH_MODEL and _deepseek_ready()
-                if handover:
-                    options["fallback"] = False
+                handover = req.mode == "auto" and key == "deep"  # 기본 DeepSeek이 실패하면 Gemini가 처음부터
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key))
                 if key == "gemini" and req.mode in ("gemini", "flash"):  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
@@ -613,19 +607,20 @@ def create_app(
                 try:
                     try:
                         turn = yield from _relay(stream, req.trace, keep)
-                    except gemini.GeminiUnavailable as exc:
+                    except Exception as exc:
                         if not handover:
                             raise
                         stream.close()
-                        line = {"kind": "fallback", "text": f"{FLASH_MODEL} 실패 ({describe_error(exc)}) → {DEEP_LABEL['deep']}이 처음부터"}
+                        target = backup.get("model", "Flash-Lite")
+                        line = {"kind": "fallback", "text": f"{DEEP_LABEL[key]} 실패 ({describe_error(exc)}) → {target}이 처음부터"}
                         keep.add(**line)
-                        entry["route"] = f"{entry.get('route', '')} (3.5 Flash 실패 → {DEEP_LABEL['deep']})"
+                        entry["route"] = f"{entry.get('route', '')} (DeepSeek 실패 → {target})"
                         if req.trace:
                             yield _event(type="trace", **line)
                         yield _event(type="reset")
-                        key = "deep"
+                        key = "gemini"
                         bot = session.bot(key, make_bot(key))
-                        stream = bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=True)
+                        stream = bot.ask_stream(ask, **backup, thoughts=True)
                         turn = yield from _relay(stream, req.trace, keep)
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
@@ -941,11 +936,6 @@ def _nexon() -> Any:
 
         _NEXON = NexonOpenApiClient(budget=CallBudget(daily_limit=int(os.environ.get("NEXON_DAILY_LIMIT", "2000"))))
     return _NEXON
-
-
-def _flash_blocked() -> bool:
-    """3.5 Flash is being skipped now: it ran out of its daily quota (until midnight Pacific) or was overloaded."""
-    return gemini._COOLDOWN.get(FLASH_MODEL, 0.0) > time.time()
 
 
 def _deepseek_ready() -> bool:
