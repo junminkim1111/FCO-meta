@@ -66,6 +66,9 @@
   .error { color: var(--error); font-size: 14px; margin-top: 12px; }
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
   footer.foot p { margin: 0 0 4px; line-height: 1.5; }
+  /* 저작권·안내: 두 칸 아래에 구분선을 긋고 그 밑에, 칸들과 같은 폭으로 */
+  footer.foot { width: min(1608px, 100% - 32px); margin: 8px auto 0; padding: 16px 4px 32px; border-top: 1px solid var(--line);
+                word-break: keep-all; overflow-wrap: break-word; } /* 한국어는 낱말 중간에서 줄을 바꾸지 않는다 */
   header .guide-link { margin-left: auto; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
                        color: var(--muted); font-size: 13px; text-decoration: none; }
   @media (hover: hover) { header .guide-link:hover { color: var(--text); border-color: var(--line-strong); } }
@@ -419,23 +422,6 @@
   </section>
   <!-- 챗봇이 짠 스쿼드: 떠 있는 동안 위 상세 칸을 가린다 -->
   <section id="squad-panel" aria-live="polite" hidden></section>
-  <!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
-  <footer class="foot">
-    <p>© 2026 FCLM. All rights reserved.</p>
-    <p>FCLM은 FC Online 유저를 위한 비공식 랭커 데이터 통계 서비스입니다. FC Online 관련 데이터는 NEXON Open API(Data based on NEXON Open API)와
-      FC온라인 데이터센터의 공개 정보를 기반으로 제공됩니다. FCLM은 NEXON 및 EA SPORTS와 공식적으로 관련이 없습니다.
-      게임 관련 상표, 이미지, 선수 정보 및 저작권은 EA SPORTS 및 NEXON에 있습니다.</p>
-    <p>질문은 AI 모델(Google Gemini·DeepSeek)로 처리되며 서비스 개선을 위해 기록됩니다.</p>
-    <p class="contact"><a href="/guide" style="color: inherit">사용 가이드</a><span aria-hidden="true">·</span>버그 / 문의사항
-      <a href="https://open.kakao.com/o/s3axuDWi" target="_blank" rel="noopener noreferrer" aria-label="카카오톡 오픈채팅으로 문의하기" title="카카오톡 오픈채팅">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FEE500"/>
-          <path fill="#191919" d="M12 5.5c-3.9 0-7 2.4-7 5.4 0 1.9 1.3 3.6 3.2 4.6l-.7 2.5c-.1.3.2.5.4.3l3-2c.4 0 .7.1 1.1.1 3.9 0 7-2.4 7-5.5S15.9 5.5 12 5.5z"/></svg>
-      </a>
-      <a href="mailto:fclmdev@gmail.com" style="color: inherit" title="이메일로 문의하기">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>fclmdev@gmail.com
-      </a>
-    </p>
-  </footer>
   </div>
 
   <div class="side">
@@ -457,6 +443,24 @@
   </section>
   </div>
 </main>
+<!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
+<footer class="foot">
+  <p>© 2026 FCLM. All rights reserved.</p>
+  <p>FCLM은 FC Online 유저를 위한 비공식 랭커 데이터 통계 서비스입니다.<br>
+    FC Online 관련 데이터는 NEXON Open API(Data based on NEXON Open API)와 FC온라인 데이터센터의 공개 정보를 기반으로 제공됩니다.<br>
+    FCLM은 NEXON 및 EA SPORTS와 공식적으로 관련이 없습니다.<br>
+    게임 관련 상표, 이미지, 선수 정보 및 저작권은 EA SPORTS 및 NEXON에 있습니다.</p>
+  <p>질문은 AI 모델(Google Gemini·DeepSeek)로 처리되며 서비스 개선을 위해 기록됩니다.</p>
+  <p class="contact"><a href="/guide" style="color: inherit">사용 가이드</a><span aria-hidden="true">·</span>버그 / 문의사항
+    <a href="https://open.kakao.com/o/s3axuDWi" target="_blank" rel="noopener noreferrer" aria-label="카카오톡 오픈채팅으로 문의하기" title="카카오톡 오픈채팅">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FEE500"/>
+        <path fill="#191919" d="M12 5.5c-3.9 0-7 2.4-7 5.4 0 1.9 1.3 3.6 3.2 4.6l-.7 2.5c-.1.3.2.5.4.3l3-2c.4 0 .7.1 1.1.1 3.9 0 7-2.4 7-5.5S15.9 5.5 12 5.5z"/></svg>
+    </a>
+    <a href="mailto:fclmdev@gmail.com" style="color: inherit" title="이메일로 문의하기">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>fclmdev@gmail.com
+    </a>
+  </p>
+</footer>
 <div id="tip" hidden></div>
 
 <script type="module">
