@@ -18,7 +18,7 @@
     --warn-bg: rgba(242, 204, 96, .10); --warn: #f2cc60;
     --win: #3987e5; --draw: #5a5955; --loss: #e66767;  /* 승·무·패: 파랑↔빨강 + 중립 회색 (dataviz 기준 팔레트, 다크) */
     --on-text: #0b0b0d; --strong: #fff; --error: #ff8a8a; --field: rgba(0, 0, 0, .35); --tip-bg: #16161a; --code-bg: #0f0f12;
-    --pitch-1: #11151c; --pitch-2: #0e1218; --pitch-glow: rgba(99, 102, 241, .18); --pitch-line: rgba(255, 255, 255, .16);
+    --pitch-1: #11151c; --pitch-2: #0e1218; --pitch-line: rgba(255, 255, 255, .16);
     --pitch-name: var(--text); --ph-bg: #1a1d24; --name-shadow: 0 1px 3px rgba(0, 0, 0, .9); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
     --radius: 16px; --pick: #4ade80; /* /compare에서 고를 답 테두리 */
   }
@@ -48,15 +48,15 @@
   /* 좁은 화면(모바일): 한 줄로 쌓고 로고 → 챗봇 → 포메이션 순서 (왼쪽 칸을 풀어 순서를 다시 정한다. .col 규칙 뒤에 와야 함) */
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } .col { display: contents; }
                               header { order: -2; } .side { order: -1; } }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0;
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; min-width: 0;
             backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04); }
-  section h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  section h2 { margin: 0 0 16px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .stat { color: var(--muted); font-size: 13px; font-weight: 400; }
   .notice { background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(242, 204, 96, .2); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
   .error { color: var(--error); font-size: 14px; margin-top: 12px; }
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
   footer.foot p { margin: 0 0 4px; line-height: 1.5; }
-  header .guide-link { margin-left: auto; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+  header .guide-link { margin-left: auto; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
                        color: var(--muted); font-size: 13px; text-decoration: none; }
   @media (hover: hover) { header .guide-link:hover { color: var(--text); border-color: var(--line-strong); } }
   /* 넓은 화면: 로고 줄 높이에 맞춰 페이지 맨 오른쪽 (챗봇 칸 위). 좁은 화면은 로고 줄 오른쪽 끝 그대로 */
@@ -66,7 +66,7 @@
   footer.foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
   footer.foot .contact a { display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
   footer.foot .contact a:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
-  button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 999px; padding: 8px 16px;
+  button { font: inherit; background: var(--text); color: var(--on-text); border: none; border-radius: 10px; padding: 8px 16px;
            cursor: pointer; font-weight: 600; transition: opacity .15s, background .15s, transform .1s ease-out; }
   @media (hover: hover) { button:hover { opacity: .9; } } /* 터치 화면에서 흐린 상태가 남지 않게 */
   /* 누르는 순간 살짝 눌린다 (막대 줄은 제외) */
@@ -102,24 +102,23 @@
   @media (hover: hover) { .fchart .more:hover { color: var(--text); } }
 
   /* formation detail */
-  .fd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-  .fd-head h2 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+  .fd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .fd-head h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; container-type: inline-size; }
   @media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  .tile { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+  .tile { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
   .tile .k { font-size: 12px; color: var(--muted); }
-  .tile .val { font-size: clamp(14px, 3cqi, 20px); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; } /* 타일 폭에 맞춰 한 줄로 */
+  .tile .val { font-size: clamp(14px, 3cqi, 20px); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; } /* 타일 폭에 맞춰 한 줄로 */
   .tile .sub { font-size: 11px; color: var(--faint); }
-  h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; margin: 22px 0 10px; }
-  /* 보기 전환 (분포·스쿼드): 둥근 알약 안에서 고른 쪽만 밝게 */
-  .seg { display: inline-flex; background: var(--field); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
-  .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 5px 14px; }
+  h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; margin: 24px 0 8px; }
+  /* 보기 전환 (분포·스쿼드): 고른 쪽만 밝게 (안쪽 모서리 = 바깥 10 − 여백 3) */
+  .seg { display: inline-flex; background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button { background: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 5px 14px; border-radius: 7px; }
   .seg button.on { background: var(--panel-strong); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
-  .caption { font-size: 13px; color: var(--muted); margin: 10px 0; }
+  .caption { font-size: 13px; color: var(--muted); margin: 12px 0; }
   .pitch { position: relative; width: 100%; max-width: 494px; aspect-ratio: 68 / 88; margin: 0 auto; border-radius: 14px; overflow: hidden;
            border: 1px solid var(--line);
-           background: radial-gradient(120% 80% at 50% 0%, var(--pitch-glow), transparent 70%),
-                       repeating-linear-gradient(180deg, var(--pitch-1) 0 11.1%, var(--pitch-2) 11.1% 22.2%); }
+           background: repeating-linear-gradient(180deg, var(--pitch-1) 0 11.1%, var(--pitch-2) 11.1% 22.2%); }
   .pitch::before { content: ""; position: absolute; inset: 4%; border: 1px solid var(--pitch-line); border-radius: 4px; }
   .pitch .mid { position: absolute; left: 4%; right: 4%; top: 50%; border-top: 1px solid var(--pitch-line); }
   .pitch .circle { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%, -50%);
@@ -129,7 +128,7 @@
   .pp { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; width: 22%; }
   .pp .pw { position: relative; } /* 사진 틀: 강화 표시는 둥근 사진 밖으로 나와도 보이도록 사진 옆에 둔다 */
   .pp .ph { width: 57px; height: 57px; border-radius: 50%; background: var(--ph-bg); overflow: hidden;
-            display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700;
+            display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600;
             border: 1px solid var(--line-strong); box-shadow: 0 0 18px rgba(99, 102, 241, .25); }
   .pp .ph img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
   /* 강화 표시: 데이터센터와 같은 색 (1강 회색 · 2~4 동 · 5~7 은 · 8~10 금 · 11~ 백금 무늬) */
@@ -172,14 +171,10 @@
           color: var(--muted); font-size: 13px; }
   @media (max-width: 860px) { #asof { height: auto; justify-content: flex-start; padding: 0 2px 8px; } }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
-  /* 챗봇 칸 강조: 로고 색(보라→하늘) 그라데이션 테두리와 바깥 빛, 큰 제목 */
-  #chat { position: relative; border-color: transparent;
-          box-shadow: 0 0 36px -6px rgba(99, 102, 241, .22), 0 0 80px -20px rgba(56, 189, 248, .17); }
-  #chat::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
-                  background: linear-gradient(135deg, var(--logo-a), var(--logo-b));
-                  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
-  #chat h2 { font-size: 18px; font-weight: 700; }
-  #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 10px; max-height: 60vh; }
+  /* 챗봇 칸 강조: 한 단계 밝은 테두리, 큰 제목 */
+  #chat { border-color: var(--line-strong); }
+  #chat h2 { font-size: 18px; font-weight: 600; }
+  #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px 12px; max-height: 60vh; }
   /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
   @media (min-width: 861px) { .side { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); }
                               #chat { flex: 1; min-height: 0; } #log { max-height: none; } }
@@ -195,7 +190,7 @@
   .md h1, .md h2, .md h3, .md h4 { font-size: 14px; font-weight: 600; color: var(--text); margin: 12px 0 6px; }
   .md strong { color: var(--strong); font-weight: 600; }
   .md a { color: var(--accent); }
-  .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--panel-strong);
+  .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: var(--panel-strong);
              border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
   .md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
   .md pre code { background: none; border: 0; padding: 0; }
@@ -219,13 +214,14 @@
   /* 명령어 안내 (/model, /compare …) */
   .msg.note { color: var(--muted); font-size: 13px; }
   .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
-  /* 답 아래 👍/👎 (가끔만): 고르면 고마움 인사로 바뀌고 잠시 뒤 사라진다 */
+  /* 답 아래 좋아요·아쉬워요 (가끔만): 고르면 고마움 인사로 바뀌고 잠시 뒤 사라진다 */
   .rate { align-self: flex-start; display: flex; align-items: center; gap: 4px; margin-top: -4px; font-size: 12px; color: var(--faint);
           animation: fade-in .3s ease-out; transition: opacity .4s ease-out; }
-  .rate button { padding: 2px 8px; font-size: 14px; line-height: 1.4; background: none; border: 1px solid var(--line); color: var(--text); }
-  @media (hover: hover) { .rate button:hover { background: var(--panel-strong); opacity: 1; } }
+  .rate button { display: inline-flex; padding: 5px 8px; border-radius: 8px; background: none; border: 1px solid var(--line); color: var(--muted); }
+  .rate button svg { width: 14px; height: 14px; } .rate button.down svg { rotate: 180deg; } /* 아쉬워요 = 같은 손을 뒤집은 것 */
+  @media (hover: hover) { .rate button:hover { background: var(--panel-strong); color: var(--text); opacity: 1; } }
   .rate.gone { opacity: 0; }
-  .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); text-decoration: none; }
+  .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); text-decoration: none; }
   @media (hover: hover) { .rate.feed a:hover { background: var(--panel-strong); } }
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model·/compare) */
   /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
@@ -291,7 +287,7 @@
   /* 다시 불러오는 동안 기존 내용을 흐리게 두어 높이가 출렁이지 않게 (빨리 오면 흐려지지도 않게 잠깐 기다린다) */
   #fchart, #fdetail { transition: opacity .2s ease-out; }
   #fchart[aria-busy="true"], #fdetail[aria-busy="true"] { opacity: .45; transition-delay: .15s; }
-  #chat form { margin-top: 10px; position: relative; } /* 명령어 목록이 입력창 위에 뜨는 기준 (#msg-beam은 빛 때문에 넘침을 자른다) */
+  #chat form { margin-top: 12px; position: relative; } /* 명령어 목록이 입력창 위에 뜨는 기준 (#msg-beam은 빛 때문에 넘침을 자른다) */
   /* 입력창은 칸 끝까지, 보내기 버튼은 입력창 안 오른쪽 아래 (테두리 빛 위에 오도록 z-index) */
   #msg-beam { display: flex; position: relative; }
   #chat form textarea { flex: 1; padding-right: 60px; }
@@ -336,7 +332,7 @@
   #cmd-menu li { position: relative; padding: 6px 10px; border-radius: 9px; cursor: pointer; font-size: 13px; }
   #cmd-menu li b { color: var(--text); font-weight: 600; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
   #cmd-menu li span { display: none; position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%); white-space: nowrap;
-                      font-size: 11.5px; color: var(--text); background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 8px;
+                      font-size: 12px; color: var(--text); background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 8px;
                       padding: 3px 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; white-space: pre-wrap; line-height: 1.5;
                       width: max-content; max-width: 240px; } /* 긴 설명은 줄을 바꿔 챗봇 칸 밖으로 나가지 않게 */
   #cmd-menu li:hover span, #cmd-menu.kb li[aria-selected="true"] span { display: block; }
@@ -348,7 +344,7 @@
   @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #pick-dialog { transform: none !important; } }
   /* 위로 올려 읽는 동안 새 답이 오면 입력창 위 가운데에 '↓ 새 답' */
   #jump { position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 5; translate: -50% 0; transform-origin: bottom center;
-          padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: var(--text); background: var(--tip-bg);
+          padding: 5px 12px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--tip-bg);
           border: 1px solid var(--line-strong); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
   #jump[hidden] { display: none; }
 </style>
@@ -878,7 +874,7 @@ async function send(text) {
         if (trace && ev.type === "delta" && !answer) addTrace(trace, { kind: "first", text: "답이 나오기 시작" });
         if (trace && ev.type === "done") addTrace(trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
-        else if (ev.type === "done") { answerId = ev.id || null; squad = !!ev.squad; } // 끝까지 받은 답에만 온다 (👍/👎가 이 id로 간다)
+        else if (ev.type === "done") { answerId = ev.id || null; squad = !!ev.squad; } // 끝까지 받은 답에만 온다 (좋아요·아쉬워요가 이 id로 간다)
         else if (ev.type === "delta") grow(ev.text);
         else if (ev.type === "tool" && stopOrb) status(TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING); // 기다리는 중이면 문구를 그 도구에 맞게
         else if (ev.type === "reset" && !stopOrb) { // 도구를 부르기 전에 쓴 글 → 지우고 다시 기다린다
@@ -913,15 +909,16 @@ function feedRow(id) {
   return el("div", { class: "rate feed" },
             el("a", { href: "/send?id=" + encodeURIComponent(id), target: "_blank", rel: "noopener", text: "스쿼드메이커로 내보내기 ↗" }));
 }
-// 답 아래 👍/👎: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
+// 답 아래 좋아요·아쉬워요: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
 const RATE_CHANCE = 0.3;
+const THUMB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>';
 function rateRow(id) {
   const row = el("div", { class: "rate" }, el("span", { text: "이 답이 도움이 됐나요?" }));
-  for (const [vote, icon, label] of [["up", "👍", "도움이 됐어요"], ["down", "👎", "아쉬워요"]]) {
-    const b = el("button", { type: "button", text: icon, ariaLabel: label, title: label });
+  for (const [vote, label] of [["up", "도움이 됐어요"], ["down", "아쉬워요"]]) {
+    const b = el("button", { type: "button", class: vote, innerHTML: THUMB, ariaLabel: label, title: label });
     b.addEventListener("click", () => {
       fetch("/api/feedback", { method: "POST", headers: headers(), body: JSON.stringify({ id, vote }) }).catch(() => {});
-      row.replaceChildren(el("span", { text: vote === "up" ? "고마워요!" : "알려 주셔서 고마워요. 더 나아질게요." }));
+      row.replaceChildren(el("span", { text: vote === "up" ? "고마워요" : "알려 주셔서 고마워요. 더 나아질게요." }));
       setTimeout(() => { row.classList.add("gone"); row.addEventListener("transitionend", () => row.remove(), { once: true }); }, 2000);
     });
     row.append(b);
