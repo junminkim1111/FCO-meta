@@ -53,7 +53,7 @@
   header h1 a { display: inline-block; border-radius: 8px; } header h1 a:hover { opacity: .85; }
   header h1 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   main { --head-h: 60px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
-         max-width: 1640px; margin: 0 auto; padding: 16px; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
+         max-width: 1640px; margin: 0 auto; padding: 16px; position: relative; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   /* 좁은 화면(모바일): 한 줄로 쌓고 로고 → 챗봇 → 포메이션 순서 (왼쪽 칸을 풀어 순서를 다시 정한다. .col 규칙 뒤에 와야 함) */
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } .col { display: contents; }
@@ -69,14 +69,15 @@
   /* 저작권·안내: 두 칸 아래에 구분선을 긋고 그 밑에, 칸들과 같은 폭으로 */
   footer.foot { width: min(1608px, 100% - 32px); margin: 8px auto 0; padding: 16px 4px 32px; border-top: 1px solid var(--line);
                 word-break: keep-all; overflow-wrap: break-word; } /* 한국어는 낱말 중간에서 줄을 바꾸지 않는다 */
-  header .guide-link { margin-left: auto; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
-                       color: var(--muted); font-size: 13px; text-decoration: none; }
-  @media (hover: hover) { header .guide-link:hover { color: var(--text); border-color: var(--line-strong); } }
-  /* 넓은 화면: 챗봇 칸 오른쪽 위에 고정 (챗봇 칸이 sticky라 스크롤해도 같이 머문다). 오른쪽 = main(최대 1640px, 가운데)의 오른쪽 여백.
-     좁은 화면은 로고 줄 오른쪽 끝 그대로 */
-  @media (min-width: 861px) { header .guide-link { position: fixed; z-index: 2; right: max(16px, calc((100% - 1640px) / 2 + 16px));
-                                                   top: calc(16px + var(--head-h) / 2); transform: translateY(-50%); } }
-  header .guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 가이드 링크는 오른쪽 칸(.side) 안에 있다. 좁은 화면: main 기준으로 로고 줄 오른쪽 끝 */
+  .guide-link { position: absolute; z-index: 2; right: 16px; top: calc(16px + var(--head-h) / 2); transform: translateY(-50%);
+                padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+                color: var(--muted); font-size: 13px; text-decoration: none; }
+  @media (hover: hover) { .guide-link:hover { color: var(--text); border-color: var(--line-strong); } }
+  /* 넓은 화면: 챗봇 칸 위 빈 줄의 오른쪽 끝. sticky인 .side 기준이라 스크롤해도 같이 머물고,
+     페이지 끝에서 칸이 밀려 올라갈 때도 같이 올라가 챗봇 칸과 겹치지 않는다 */
+  @media (min-width: 861px) { .guide-link { right: 0; top: calc(var(--head-h) / 2); } }
+  .guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   footer.foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
   footer.foot .contact a { display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
   footer.foot .contact a:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
@@ -419,7 +420,6 @@
     <div>
       <h1><a href="/"><img src="/static/fclm-logo.png" alt="FCLM" width="151" height="32"></a></h1>
     </div>
-    <a class="guide-link" href="/guide">가이드</a>
   </header>
   <section aria-label="랭커 분포">
     <div class="dist-head"><div id="dist-mode"></div><span id="form-scope" class="stat"></span></div>
@@ -434,6 +434,7 @@
   </div>
 
   <div class="side">
+  <a class="guide-link" href="/guide">가이드</a>
   <section id="chat" aria-labelledby="chat-title">
     <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span><span id="compare-note">해당 질문, 답변과 선택은 모델 개선을 위해 쓰일 수 있습니다.</span><button type="button" id="compare-close">비교 닫기</button></h2>
     <div id="log" aria-live="polite"></div>
