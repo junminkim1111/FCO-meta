@@ -63,6 +63,7 @@ SYSTEM_PROMPT = """\
   단 budget.over_by가 있으면 도구가 일부러 예산을 조금(10% 이내) 넘긴 것입니다: 훨씬 많이 쓰이는 선수·카드라 넘겼다고 하고
   넘긴 금액(over_by)과, 예산 안에 맞추려면 누구를 누구로 바꾸면 되는지(within_budget_instead의 pick → instead)를 알립니다.
   alternatives(자리별 대안)도 짧게 알려 줍니다. 시세 미수집 선수(unpriced_players)는 총액에서 빠졌다고 알립니다.
+  rarely_used가 있으면 그 카드는 랭커가 몇 명만 쓴 카드라고(표본이 적어 조건을 맞추려고 넣었다고) 한 줄로 밝힙니다.
 - 팀컬러 조건은 recommend_squad가 지킵니다. 결과의 team_color_rule·season_rule·chemistry로 지켰는지 확인해 알려 줍니다.
   · 클럽·국가 팀컬러("롬바르디아 스쿼드", "한국 스쿼드"): team_color. 11명 모두 그 클럽 경력(임대 포함)·국적 카드로 고릅니다.
   · 시즌 단일 팀컬러("WS 단일"): team_color에 시즌 약칭 그대로("WS"). 11명을 노리고, 안 되면 발동 인원 이상 + 나머지는 급여에 맞춥니다.

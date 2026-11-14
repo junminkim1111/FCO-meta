@@ -245,6 +245,42 @@ def _choose(
     return _fill(chosen, slot_options, overrun) if current == 0 else chosen
 
 
+CARD_MIN_RANKERS = 4  # 스쿼드 후보 카드: 그 자리에 이만큼 이상 랭커가 쓴 카드만 (안 되면 하한을 푼다)
+CARD_MIN_SHARE_OF_TOP = 0.10  # 그리고 그 자리 1위 카드 사용 수의 이 비율 이상  # ponytail: 실측(팀컬러 34개)으로 고른 값
+
+
+def _card_floor(slot_options: list[tuple[str, list[dict[str, Any]]]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Each slot's options without the cards hardly any ranker uses there — cheap ones the salary cap would otherwise pick
+    because dropping a 1-ranker card costs almost no score. Cards the user asked for (tags: include, chemistry, season,
+    owned) stay; a slot where no card passes keeps all (팀컬러 랭커가 적은 경우)."""
+    out, done = [], {}
+    for role, options in slot_options:
+        if id(options) not in done:  # 같은 역할의 자리들은 후보 목록을 함께 쓴다
+            top = max((o["card"]["rankers"] or 0 for o in options), default=0)
+            need = max(CARD_MIN_RANKERS, CARD_MIN_SHARE_OF_TOP * top)
+            keep = [o for o in options if (o["card"]["rankers"] or 0) >= need or o["tags"] or o.get("owned")]
+            done[id(options)] = keep if any((o["card"]["rankers"] or 0) >= need for o in keep) else options
+        out.append((role, done[id(options)]))
+    return out
+
+
+def _fits(combo: list[dict[str, Any] | None], limits: dict[str, int], reqs: dict[str, int]) -> bool:
+    """Every slot filled, every limit and requirement (include, chemistry, season) met."""
+    return (all(combo) and all(sum(c[k] or 0 for c in combo) <= v for k, v in limits.items())
+            and all(sum(1 for c in combo if tag in c["tags"]) >= n for tag, n in reqs.items()))  # fmt: skip
+
+
+def _choose_floored(slot_options, limits: dict[str, int], reqs: dict[str, int]) -> tuple[list[dict[str, Any] | None], bool]:
+    """_choose among the cards rankers actually use there (_card_floor); when that cannot meet the limits or requirements,
+    _choose among all of them. Returns (lineup, whether the floor had to be dropped)."""
+    floored = _card_floor(slot_options)
+    chosen = _choose(floored, limits, reqs)
+    if _fits(chosen, limits, reqs):
+        return chosen, False
+    loose = _choose(slot_options, limits, reqs)
+    return (loose, True) if _fits(loose, limits, reqs) else (chosen, False)
+
+
 def _fill(chosen: list[dict[str, Any] | None], slot_options, overrun: Callable[[Any], float]) -> list[dict[str, Any] | None]:
     """Spend what the limits leave, as rankers do (급여 315면 313~315): keep swapping while every limit and
     requirement still holds and the summed usage goes up — or stays the same and the salary goes up, i.e. the same
@@ -1371,7 +1407,10 @@ class Toolbox:
         budget = "price" in sq.limits
         if budget:  # 누구를·어느 시즌 카드를 쓸지는 랭커 사용률이, 강화는 예산이 정한다
             sq.slot_options = self._budget_grades(sq.slot_options, knobs)
-        chosen = within = _choose(sq.slot_options, sq.limits, sq.reqs)
+        chosen, loose = _choose_floored(sq.slot_options, sq.limits, sq.reqs)
+        if not loose:  # 하한 안에서 맞췄으면 예산 넘기기·강화 올리기도 그 카드들 안에서
+            sq.slot_options = _card_floor(sq.slot_options)
+        within = chosen
         wider = self._stretch(sq, chosen) if budget else None
         if wider:  # 살짝 넘겨서 훨씬 나은 스쿼드면 그쪽을 (넘긴 만큼 알린다)
             chosen = wider
@@ -1385,6 +1424,10 @@ class Toolbox:
                                      within_budget_instead=self._swaps(sq, wider, within))  # fmt: skip
         if gaps := self._salary_vs_rankers(sq, chosen):
             out["salary_vs_rankers"] = gaps
+        if loose and (rare := [f"{c['entry']['name']} {(c['card']['season'] or '').split(' (')[0]}" for c in chosen
+                               if c and (c["card"]["rankers"] or 0) < CARD_MIN_RANKERS]):  # fmt: skip
+            out["rarely_used"] = {"cards": rare, "why": f"랭커 {CARD_MIN_RANKERS}명 이상이 쓴 카드만으로는 급여·예산·팀컬러 조건을 맞출 수 없어 "
+                                                      "랭커가 몇 명만 쓴 카드도 넣음 (표본이 적은 범위)"}
         if knobs:
             out["applied"] = {k: sorted(v) if isinstance(v, set) else v for k, v in knobs.items()}
         return out
