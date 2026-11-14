@@ -4,8 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FCLM | FC Online 랭커 데이터 기반 AI</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.07 4.93A10 10 0 1 0 19.07 19.07' fill='none' stroke='%23a5b4fc' stroke-width='3.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='12' r='2.6' fill='%237dd3fc'/%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <meta name="theme-color" content="#101116">
+<meta name="description" content="FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI 챗봇">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FCLM">
+<meta property="og:title" content="FCLM | FC Online 랭커 데이터 기반 AI">
+<meta property="og:description" content="FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI 챗봇">
+<meta property="og:url" content="https://fclm.onrender.com/">
+<meta property="og:image" content="https://fclm.onrender.com/static/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   /* 에이전트형 다크 테마: 거의 검은 바탕 + 은은한 빛, 반투명 패널, 얇은 테두리 */
   :root {
@@ -37,11 +48,10 @@
   @media (prefers-reduced-transparency: reduce) { :root { --panel: #191a21; } section { backdrop-filter: none; -webkit-backdrop-filter: none; } }
   /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
   header { display: flex; align-items: center; gap: 14px; height: var(--head-h); padding: 0 2px; }
-  header .brand { width: 44px; height: 44px; border-radius: 14px; background: var(--panel-strong); border: 1px solid var(--line);
-                  display: flex; align-items: center; justify-content: center; flex: none; }
   header h1 { margin: 0; line-height: 0; }
-  header h1 svg { height: 28px; width: auto; }
-  header .logo-a { stop-color: var(--logo-a); } header .logo-b { stop-color: var(--logo-b); }
+  header h1 img { height: 24px; width: auto; }
+  header h1 a { display: inline-block; border-radius: 8px; } header h1 a:hover { opacity: .85; }
+  header h1 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   main { --head-h: 60px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
          max-width: 1640px; margin: 0 auto; padding: 16px; } /* 위아래 16px = 챗봇 칸 sticky 여백 */
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -381,19 +391,8 @@
 <main>
   <div class="col">
   <header>
-    <div class="brand"><canvas id="brand-orb" width="32" height="32" aria-hidden="true"></canvas></div>
     <div>
-      <!-- FCLM 로고: 획으로 그린 글자, C는 센터서클과 센터스폿 -->
-      <h1><svg viewBox="-1 -1 84 26" role="img" aria-label="FCLM"><title>FCLM</title>
-        <defs><linearGradient id="logo-g" x1="0" x2="1"><stop offset="0" class="logo-a"/><stop offset="1" class="logo-b"/></linearGradient></defs>
-        <g fill="none" stroke="url(#logo-g)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 22V2h12M2 11.5h9"/>
-          <path d="M38.07 4.93A10 10 0 1 0 38.07 19.07"/>
-          <path d="M44 2v20h11"/>
-          <path d="M62 22V2l9 12 9-12v20"/>
-        </g>
-        <circle cx="31" cy="12" r="2.6" style="fill: var(--accent)"/>
-      </svg></h1>
+      <h1><a href="/"><img src="/static/fclm-logo.png" alt="FCLM" width="113" height="24"></a></h1>
     </div>
     <a class="guide-link" href="/guide">가이드</a>
   </header>
@@ -1366,7 +1365,6 @@ fetch("/static/examples.txt").then((r) => r.text()).then((t) => {
 }).catch(() => {});
 say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
-mountOrb($("brand-orb"), "solving", 32);
 loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
 mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
   ariaLabel: "분포 보기 전환",
