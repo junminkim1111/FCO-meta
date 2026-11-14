@@ -67,7 +67,7 @@
   .foot { color: var(--faint); font-size: 12px; margin-top: 12px; }
   footer.foot p { margin: 0 0 4px; line-height: 1.5; }
   /* 저작권·안내: 두 칸 아래에 구분선을 긋고 그 밑에, 칸들과 같은 폭으로 */
-  footer.foot { width: min(1608px, 100% - 32px); margin: 8px auto 0; padding: 16px 4px 32px; border-top: 1px solid var(--line);
+  footer.foot { width: min(1608px, 100% - 32px); margin: 24px auto 0; padding: 16px 4px 32px; border-top: 1px solid var(--line);
                 word-break: keep-all; overflow-wrap: break-word; } /* 한국어는 낱말 중간에서 줄을 바꾸지 않는다 */
   /* 가이드 링크는 오른쪽 칸(.side) 안에 있다. 좁은 화면: main 기준으로 로고 줄 오른쪽 끝 */
   .guide-link { position: absolute; z-index: 2; right: 16px; top: calc(16px + var(--head-h) / 2); transform: translateY(-50%);
@@ -94,6 +94,7 @@
   textarea:focus { border-color: var(--line-strong); outline: none; }
 
   /* formation distribution */
+  .dist-head { margin-bottom: 12px; } /* 전환 버튼과 막대 사이 */
   .fchart { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; }
   /* 한 줄(이름·막대·%)이 통째로 버튼: 줄 간격 32px · 올리면 회색 테두리, 상세를 띄운 줄은 흰 테두리 */
   .fchart .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; margin: 0 -8px;
@@ -422,7 +423,7 @@
     </div>
   </header>
   <section aria-label="랭커 분포">
-    <div class="dist-head"><div id="dist-mode"></div><span id="form-scope" class="stat"></span></div>
+    <div class="dist-head"><div id="dist-mode"></div></div>
     <div id="fchart" class="fchart"></div>
   </section>
 
@@ -525,13 +526,11 @@ const MAX_BARS = 5;  // 더보기를 누르기 전에 보이는 순위
 const MODES = {
   formation: {
     list: "/api/formations", rows: (d) => d.formations || [], key: (r) => r.formation,
-    scope: (d) => "· " + d.team_color,
     more: 15,  // 더보기를 누르면 이 순위까지
     detail: (name) => "/api/formation?" + new URLSearchParams({ name }),
   },
   team: {
     list: "/api/teamcolors", rows: (d) => d.rows || [], key: (r) => r.team_color, icon: (r) => r.icon,
-    scope: (d) => "· " + ((d.scope && d.scope.description) || "랭킹"),
     more: 20,
     detail: (name) => "/api/teamcolor?" + new URLSearchParams({ name }),
   },
@@ -559,7 +558,6 @@ async function loadChart() {
   try {
     const d = await api(m.list);
     if (mode !== want) return;  // 그사이 전환했으면 버린다
-    $("form-scope").textContent = m.scope(d);
     const all = m.rows(d);
     if (!all.length) {
       box.replaceChildren(el("p", { class: "stat", text: d.note || "랭킹 스냅샷이 없습니다." }));
@@ -679,7 +677,7 @@ function roll(text, from = "") {
 }
 
 function renderPitchArea(d) {
-  const area = el("div");
+  const area = el("div", { style: "margin-top:24px" }); // 위 타일과 띄운다 (전에는 "스쿼드" 제목이 띄웠다)
   const top = d.top_ranker_squad, best = d.best_eleven;
   const what = d.formation ? "이 포메이션을 쓰는" : "이 팀컬러";
   const views = {
@@ -729,7 +727,6 @@ function renderMatchups(m) {
     el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:var(--win)" }), "승"),
        el("span", {}, el("i", { style: "background:var(--draw)" }), "무"), el("span", {}, el("i", { style: "background:var(--loss)" }), "패")),
     el("div", { class: "mu" }, ...rows),
-    el("p", { class: "foot", text: `수집된 공식경기 ${m.games}경기 기준` }),
   ];
 }
 
@@ -745,9 +742,8 @@ async function showDetail(name) {
     const d = await api(MODES[mode].detail(name));
     if (selected !== name || mode !== want) return;  // 그사이 다른 막대를 눌렀거나 전환했으면 버린다
     const r = d.ranking;
-    const groups = r ? (isForm ? r.formations : r.team_colors) : 0;
     const out = [el("div", { class: "fd-head" }, el("h2", { text: isForm ? name : plain(d.team_color) }),
-      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 / ${groups}개 · ${pct(r.share)}` : (d.note || "") }))];
+      el("span", { class: "stat", text: r ? `사용률 ${r.usage_rank}위 · ${pct(r.share)}` : (d.note || "") }))];
     if (r) {
       const avg = isForm ? d.all_formations_win_rate : d.all_rankers_win_rate;
       const diff = avg != null ? (r.season_win_rate - avg) * 100 : null;
@@ -757,7 +753,7 @@ async function showDetail(name) {
         tile("평균 구단가치", r.avg_squad_value || "-", ""),
         tile("최고 순위", `${r.best_rank}위`, "")));
     }
-    out.push(el("h3", { text: "스쿼드" }), renderPitchArea(d));
+    out.push(renderPitchArea(d));
     if (isForm) out.push(el("h3", { text: "상대 포메이션별 전적" }), ...renderMatchups(d.matchups));
     if (r) {
       // 포메이션 보기: 그 포메이션을 쓰는 팀컬러 / 팀컬러 보기: 그 팀컬러가 쓰는 포메이션
