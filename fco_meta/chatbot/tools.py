@@ -335,6 +335,7 @@ class _Squad:
     usage_id: int
     chem: dict[str, Any] | None
     derived: TeamColor | None  # 케미 이름에서 가져온 클럽 팀컬러
+    include_clubs: list[TeamColor] | None  # 팀컬러 없이 include만 받았을 때 그 선수들이 뛴 클럽, 없으면 국적 (첫째로 짬), None = 해당 없음
     must: list[str]  # 꼭 넣을 선수 (이름, 띄어쓰기 없이)
     formation: str | None
     source: str
@@ -920,7 +921,9 @@ class Toolbox:
             hint = self._team_color_candidates(str(value))
             raise ToolError(
                 f"알 수 없는 팀컬러: {value}" + (f". 후보: {', '.join(hint)}" if hint else "")
-                + ". 팀컬러와 무관하게 보려면 team_color를 생략(상위 랭커 전체)"
+                + ". 사용자가 말하지 않은 팀컬러면 team_color를 생략(상위 랭커 전체). 사용자가 말한 팀컬러면 생략하거나"
+                " 다른 팀컬러로 바꿔 답하지 말고 어느 팀컬러인지 사용자에게 되물을 것"
+                + (" (후보를 제시)" if hint else "")
             )
         return tc
 
@@ -981,6 +984,32 @@ class Toolbox:
             if tc and tc.category in ("club", "nationality"):
                 return tc
         return None
+
+    def _include_clubs(self, names: list[str]) -> list[TeamColor]:
+        """Team colors for a squad built around `names` (띄어쓰기 없는 이름) when no team color was given
+        ('굴리트 포함 스쿼드' → AC 밀란): clubs in every named player's career (card details) whose rankers used
+        them, most used first; when they share no such club, their shared nation ('굴리트+반 바스텐+...' → 네덜란드).
+        Empty when neither."""
+        key = lambda t: "".join((t or "").split()).casefold()  # noqa: E731
+        careers, nations, used = [], [], []
+        for name in names:
+            like = (f"%{name}%",)
+            rows = self.conn.execute(
+                "SELECT d.clubs, d.nation FROM card_detail d JOIN meta_spid s ON s.sp_id = d.spid WHERE REPLACE(s.name, ' ', '') LIKE ?", like
+            ).fetchall()  # fmt: skip
+            careers.append({key(c["club"]) for clubs, _ in rows for c in json.loads(clubs)})
+            nations.append({key(n) for _, n in rows if n})
+            used.append(dict(self.conn.execute(
+                "SELECT u.team_color_id, SUM(u.ranker_count) FROM usage_stats u JOIN meta_spid s ON s.sp_id = u.sp_id"
+                " WHERE u.formation = ? AND u.strict = 0 AND REPLACE(s.name, ' ', '') LIKE ?"
+                " AND u.data_as_of = (SELECT MAX(data_as_of) FROM usage_sample m WHERE m.team_color_id = u.team_color_id)"
+                " GROUP BY u.team_color_id", (ALL_FORMATIONS, *like))))  # fmt: skip
+        for category, sets in (("club", careers), ("nationality", nations)):
+            score = {t.id: min(u.get(t.id, 0) for u in used) for t in self.catalog.entries
+                     if t.category == category and all(key(t.name) in c for c in sets)}  # fmt: skip
+            if found := sorted((t for t in self.catalog.entries if score.get(t.id)), key=lambda t: -score[t.id]):
+                return found
+        return []
 
     def team_color_icons(self) -> dict[str, str]:
         """Team color display name → its icon on the ranking pages (path under the Nexon CDN's externalAssets/common):
@@ -1972,6 +2001,12 @@ class Toolbox:
                     pinned[name] = role.strip().upper()
         knobs = knobs or {}
         owned = knobs.get("owned", [])
+        include_clubs = None
+        if must and not chem and not slots and self._scope(team_color)[0] == ALL_RANKERS:
+            # "굴리트 포함 스쿼드"처럼 팀컬러 없이 선수만 받았으면 그 선수가 뛴 클럽 중 랭커가 그 선수를 가장 많이 쓰는 클럽 팀컬러
+            include_clubs = self._include_clubs(must)
+            if include_clubs:
+                team_color = include_clubs[0].id
         must += [o["name"] for o in owned if o["name"] not in must]  # 가진 카드도 꼭 넣는다
         derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
         if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
@@ -2081,7 +2116,7 @@ class Toolbox:
 
         return _Squad(
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
-            must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
+            include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
             strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first,
         )  # fmt: skip
 
@@ -2180,6 +2215,15 @@ class Toolbox:
         if must:
             got = {name: next((c["entry"]["name"] for c in chosen if c and f"include:{name}" in c["tags"]), None) for name in must}
             out["include"] = got
+            if sq.include_clubs:
+                out["team_color_from_include"] = {
+                    "team_color": tc_name, "by": "클럽 경력" if tc.category == "club" else "국적",
+                    "others": [t.name for t in sq.include_clubs[1:5]],
+                    "why": "팀컬러를 말하지 않아 넣을 선수의 클럽 경력(함께 뛴 클럽이 없으면 국적) 중 그 팀컬러 랭커들이 그 선수를 가장 많이 쓴"
+                           " 팀컬러로 짬 (11명 모두 그 소속)",
+                }  # fmt: skip
+            elif sq.include_clubs == []:
+                notes.append("넣을 선수들이 함께 뛴 클럽·같은 국적 중 랭커 데이터가 있는 팀컬러가 없어 전체 랭커 기준으로 짬")
             for name, player in got.items():
                 if player is None:
                     notes.append(f"'{name}'를 넣지 못함 (이 팀컬러·포메이션 랭커들이 쓴 기록이 없거나, 소속·급여·예산 조건에 맞는 카드가 없음)")
