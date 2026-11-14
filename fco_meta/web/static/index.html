@@ -251,6 +251,10 @@
     @keyframes sq-breathe { 50% { box-shadow: 0 0 0 1px rgba(165, 180, 252, .4), 0 0 40px rgba(99, 102, 241, .4); } }
   } /* 칸이 화면보다 크면 가운데 대신 위를 16px 띄워 맞춘다 */
   #squad-panel .pitch { margin-top: 12px; }
+  /* 금액·급여 숫자 굴리기: 자리마다 0~9 두 바퀴를 세로로 쌓고 위로 밀어 올려 그 숫자에 멈춘다 */
+  .roll { display: inline-flex; white-space: pre; } .roll > span { height: 1.2em; line-height: 1.2em; } .roll .col { overflow: hidden; }
+  .roll .col > span { display: block; transition: transform var(--t, .9s) cubic-bezier(.15, .8, .25, 1); }
+  .roll .col > span > span { display: block; height: 1.2em; }
   .ovr-box { position: absolute; left: 8px; top: 8px; z-index: 2; display: grid; gap: 1px; padding: 4px 8px; border-radius: 8px;
              background: rgba(16, 17, 22, .72); border: 1px solid var(--line-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
   .ovr-box div { display: flex; justify-content: space-between; gap: 8px; }
@@ -258,6 +262,14 @@
   @media (prefers-reduced-motion: no-preference) {
     .pp.enter { animation: pp-in .42s cubic-bezier(.2, .8, .3, 1.2) backwards; }
     @keyframes pp-in { from { opacity: 0; transform: translate(-50%, -30%) scale(.7); } }
+  }
+  .pp.sub-in::before, .pp.sub-out::before { position: absolute; left: 6%; top: -4px; z-index: 2; font-size: 13px; font-weight: 900; }
+  .pp.sub-in::before { content: "▲"; color: #4ade80; } .pp.sub-out::before { content: "▼"; color: #f87171; }
+  @media (prefers-reduced-motion: no-preference) {
+    .pp.sub-out { animation: sub-out .55s ease-in forwards; }
+    @keyframes sub-out { to { opacity: 0; transform: translate(-50%, -10%) scale(.85); filter: grayscale(1); } }
+    .pp.sub-in { animation: sub-in .5s cubic-bezier(.2, .8, .3, 1.2) backwards; }
+    @keyframes sub-in { from { opacity: 0; transform: translate(-50%, -90%) scale(.85); } }
   }
   #squad-panel .fd-head button { margin-left: auto; padding: 2px 10px; background: none; border: 1px solid var(--line); color: var(--muted); }
   .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); text-decoration: none; }
@@ -642,6 +654,26 @@ function tile(k, val, sub) {
             sub ? el("div", { class: "sub", text: sub }) : null);
 }
 
+// text의 숫자만 위로 굴러가 멈춘다. from이 있으면 그 숫자에서 출발 (같은 자리 숫자). 오른쪽 자리일수록 오래 구른다
+function roll(text, from = "") {
+  const box = el("span", { class: "roll", ariaLabel: text });
+  const digits = [...text].filter((c) => /\d/.test(c)).length;
+  const old = [...from].filter((c) => /\d/.test(c)).reverse();
+  let k = digits;
+  for (const c of text) {
+    if (!/\d/.test(c)) { box.append(el("span", { text: c, ariaHidden: "true" })); continue; }
+    k--;
+    const strip = el("span", {}, ...Array.from({ length: 20 }, (_, i) => el("span", { text: String(i % 10) })));
+    const start = Number(old[k] ?? 0), end = 10 + Number(c);
+    strip.style.transform = `translateY(${-start * 1.2}em)`;
+    strip.style.setProperty("--t", `${0.7 + (digits - k) * 0.12}s`);
+    requestAnimationFrame(() => requestAnimationFrame(() => (strip.style.transform = `translateY(${-end * 1.2}em)`)));
+    box.append(el("span", { class: "col", ariaHidden: "true" }, strip));
+    if (k === 0) strip.addEventListener("transitionend", () => box.replaceWith(text), { once: true }); // 다 멈추면 보통 글자로
+  }
+  return box;
+}
+
 function renderPitchArea(d) {
   const area = el("div");
   const top = d.top_ranker_squad, best = d.best_eleven;
@@ -909,7 +941,9 @@ async function send(text) {
         const ours = !mine || shownSquad === mine;
         if (ev.type === "tool" && SQUAD_STEPS.includes(ev.name) && ours) {
           if (!mine) {
-            showSquad(mine = { players: [] }, { status: TOOL_STATUS[ev.name](ev.args || {}) });
+            // 이미 짠 스쿼드가 열려 있으면 그걸 고쳐 짠다 (바뀐 선수만 교체). 아니면 빈 경기장부터
+            if (shownSquad?.players.length) mine = shownSquad, squadStatus(TOOL_STATUS[ev.name](ev.args || {}));
+            else showSquad(mine = { players: [] }, { status: TOOL_STATUS[ev.name](ev.args || {}) });
             // 왼쪽에서 어딜 보고 있었든 스쿼드 칸을 화면 가운데로 (모바일은 칸이 챗봇 아래라 답을 읽던 자리를 지킨다)
             if (matchMedia("(min-width: 861px)").matches)
               $("squad-panel").scrollIntoView({ block: $("squad-panel").offsetHeight > innerHeight - 32 ? "start" : "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -939,7 +973,7 @@ async function send(text) {
   }
   timers.forEach(clearTimeout);
   setBusy(null);
-  if (mine && shownSquad === mine) built ? squadStatus(null) : showSquad(null); // 다 짰으면 진행 문구를 떼고, 못 짰으면 빈 칸을 닫는다
+  if (mine && shownSquad === mine) built || mine.players.length ? squadStatus(null) : showSquad(null); // 다 짰거나 원래 있던 스쿼드면 진행 문구만 떼고, 빈 칸이면 닫는다
   if (ctrl.signal.aborted && !answer) {
     stopOrb();
     bubble.removeAttribute("title");
@@ -988,20 +1022,48 @@ function showSquad(sq, { status = null, prev = null } = {}) {
   }).filter(Boolean);
   if (lines.length) field.append(el("div", { class: "ovr-box", ariaLabel: "줄별 평균 OVR" }, ...lines));
   if (status) {
-    const before = new Map((prev?.players || []).map((p) => [p.code, p.sp_id]));
+    const before = new Map((prev?.players || []).map((p) => [p.code, p]));
+    const subs = [];
     let n = 0;
     field.querySelectorAll(".pp").forEach((node, i) => {
-      if (before.get(players[i].code) === players[i].sp_id) return; // 그대로인 선수는 가만히
+      const old = before.get(players[i].code);
+      if (old?.sp_id === players[i].sp_id) return; // 그대로인 선수는 가만히
+      if (old) return subs.push([old, sq.players[i], node]); // 같은 자리에 다른 선수 → 교체
       node.classList.add("enter");
       node.style.animationDelay = `${n++ * (before.size ? 60 : 110)}ms`;
     });
+    if (subs.length) substitute(field, subs);
+  }
+  const tiles = el("div", { class: "tiles" }, tile("팀컬러", sq.team_color ? plain(sq.team_color) : sq.players.length ? "없음" : "-", ""),
+                  tile("포메이션", sq.formation || "-", ""), tile("총 금액", sq.price || "-", ""),
+                  tile("총 급여", sq.salary != null ? String(sq.salary) : "-", ""));
+  // 짜는 중에 값이 바뀌면 금액·급여 숫자를 굴린다 (다시 열 때나 움직임 줄이기 설정이면 그냥 보인다)
+  if (status && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    [[2, sq.price, prev?.price], [3, sq.salary, prev?.salary]].forEach(([i, now, was]) => {
+      if (now == null || String(now) === String(was ?? "")) return;
+      tiles.children[i].querySelector(".val").replaceChildren(roll(String(now), String(was ?? "")));
+    });
   }
   panel.replaceChildren(el("div", { class: "fd-head" }, el("h2", { text: "추천 스쿼드" }), close),
-                        el("div", { class: "tiles" }, tile("팀컬러", sq.team_color ? plain(sq.team_color) : sq.players.length ? "없음" : "-", ""),
-                           tile("포메이션", sq.formation || "-", ""), tile("총 금액", sq.price || "-", ""),
-                           tile("총 급여", sq.salary != null ? String(sq.salary) : "-", "")),
-                        el("p", { class: "sq-status" }), field);
+                        tiles, el("p", { class: "sq-status" }), field);
   squadStatus(status);
+}
+// 중계 화면 선수 교체처럼: 나가는 선수(▼ 빨강)는 흐려지며 내려가고, 들어오는 선수(▲ 초록)가 그 자리로 들어온다
+function substitute(field, subs) {
+  const moving = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const ghosts = moving ? pitch(subs.map(([o]) => ({ ...o, position: o.code, name: o.player })), "", () => "").querySelectorAll(".pp") : [];
+  subs.forEach(([, , node], i) => {
+    const ghost = ghosts[i];
+    if (ghost) {
+      ghost.classList.add("sub-out");
+      ghost.style.animationDelay = `${i * 300}ms`;
+      ghost.addEventListener("animationend", () => ghost.remove(), { once: true });
+      field.append(ghost);
+    }
+    node.classList.add("sub-in");
+    node.style.animationDelay = `${i * 300 + 450}ms`;
+    setTimeout(() => node.classList.remove("sub-in"), 4500);
+  });
 }
 // 스쿼드 칸 위 진행 문구 (채팅창 기다리는 문구와 같은 말). null이면 뗀다
 function squadStatus(text) {
