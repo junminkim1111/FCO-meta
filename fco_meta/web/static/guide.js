@@ -307,6 +307,13 @@ const SCENES = {
 // 좁은 화면의 가로 목차: 지금 페이지 칸이 보이게
 const here = document.querySelector('.g-side [aria-current="page"]');
 if (here && matchMedia("(max-width: 860px)").matches) here.parentElement.scrollLeft = here.offsetLeft - here.parentElement.offsetLeft - 16;
+// ---------- 데이터 & 문의: 수집 범위와 시각 ----------
+const scopeLine = document.getElementById("g-scope");
+if (scopeLine) json("/api/meta").then((m) => {
+  const s = m && m.daily_scope;
+  if (s && s.data_as_of) scopeLine.textContent = `랭킹 상위 ${s.top_rankers}명 · 스쿼드 ${s.squads_collected}명 · ${s.data_as_of.slice(0, 16).replace("T", " ")} 기준 (매일 갱신)`;
+});
+
 // ---------- 꼬리말 ----------
 document.body.append(html(`<footer class="foot">
   <p>© 2026 FCLM. All rights reserved.</p>

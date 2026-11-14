@@ -179,11 +179,7 @@
          padding: 6px 9px; border-radius: 8px; white-space: pre; z-index: 10; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
 
   /* chat */
-  /* 오른쪽 칸: 로고 줄 높이만큼 위에 수집 범위를 두어 챗봇 칸 윗선을 왼쪽 포메이션 칸과 맞춘다 */
   .side { display: flex; flex-direction: column; min-width: 0; }
-  #asof { height: calc(var(--head-h) + 16px); margin: 0; padding: 0 4px 6px; display: flex; align-items: flex-end; justify-content: flex-end;
-          color: var(--muted); font-size: 13px; }
-  @media (max-width: 860px) { #asof { height: auto; justify-content: flex-start; padding: 0 2px 8px; } }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
   /* 챗봇 칸 강조: 로고 색(보라→하늘) 그라데이션 테두리와 바깥 빛, 큰 제목 */
   #chat { position: relative; border-color: transparent;
@@ -194,7 +190,8 @@
   #chat h2 { font-size: 18px; font-weight: 600; }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px 12px; max-height: 60vh; }
   /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
-  @media (min-width: 861px) { .side { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); }
+  /* 로고 줄 높이만큼 위를 비워 챗봇 칸 윗선을 왼쪽 포메이션 칸과 맞춘다 (가이드 링크가 그 자리에 있다) */
+  @media (min-width: 861px) { .side { position: sticky; top: 16px; align-self: start; height: calc(100vh - 32px); padding-top: calc(var(--head-h) + 16px); }
                               #chat { flex: 1; min-height: 0; } #log { max-height: none; } }
   .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
   /* 사용자 질문만 말풍선, 챗봇 답은 박스 없이 대화 영역에 바로 (LLM 채팅처럼) */
@@ -437,7 +434,6 @@
   </div>
 
   <div class="side">
-  <p id="asof">데이터 불러오는 중…</p>
   <section id="chat" aria-labelledby="chat-title">
     <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span><span id="compare-note">해당 질문, 답변과 선택은 모델 개선을 위해 쓰일 수 있습니다.</span><button type="button" id="compare-close">비교 닫기</button></h2>
     <div id="log" aria-live="polite"></div>
@@ -492,7 +488,6 @@ const el = (tag, props = {}, ...children) => {
 };
 const pct = (x) => (x * 100).toFixed(1) + "%";
 const season = (s) => (s || "?").split(" (")[0];
-const asOf = (v) => v ? v.slice(0, 16).replace("T", " ") + " 기준" : "";
 
 async function failure(res) {
   const d = (await res.json().catch(() => ({}))).detail;
@@ -504,14 +499,6 @@ async function api(path, options) {
   const res = await fetch(path, options);
   if (!res.ok) throw await failure(res);
   return res.json();
-}
-
-async function loadMeta() {
-  const meta = await api("/api/meta");
-  const scope = meta.daily_scope;
-  $("asof").textContent = scope
-    ? `랭킹 상위 ${scope.top_rankers}명 · 스쿼드 ${scope.squads_collected}명 · ${asOf(scope.data_as_of)}`
-    : "아직 수집된 랭킹이 없습니다";
 }
 
 // --- tooltip ---
@@ -1445,7 +1432,6 @@ fetch("/static/examples.txt").then((r) => r.text()).then((t) => {
 }).catch(() => {});
 say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
 
-loadMeta().catch((e) => { $("asof").textContent = "불러오기 실패: " + e.message; });
 mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
   ariaLabel: "분포 보기 전환",
   onChange: (v) => { mode = v; selected = null; loadChart(); },
