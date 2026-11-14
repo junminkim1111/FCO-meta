@@ -109,6 +109,7 @@ class ToolResult:
     name: str
     ok: bool
     preview: str
+    result: dict[str, Any] | None = None  # 전체 결과 (스쿼드 도구면 화면 왼쪽 스쿼드 칸에 그린다)
 
 
 @dataclass
@@ -695,7 +696,7 @@ class GeminiChat:
                         line = self.toolbox.evidence(fc.name, result)
                         if line and line not in evidence:
                             evidence.append(line)
-                    yield ToolResult(fc.name, not is_error, _preview(payload.get("result", payload)))
+                    yield ToolResult(fc.name, not is_error, _preview(payload.get("result", payload)), result)
                 part = types.Part.from_function_response(name=fc.name, response=payload)
                 if fc.id:
                     part.function_response.id = fc.id

@@ -150,7 +150,7 @@ class ToolChat:
                 yield ToolCall(name, args)
                 content, is_error = self.toolbox.run(name, args)
                 result = json.loads(content)
-                yield ToolResult(name, not is_error, _preview(result.get("error") if is_error else for_model(name, result)))
+                yield ToolResult(name, not is_error, _preview(result.get("error") if is_error else for_model(name, result)), result)
                 if is_error:
                     out.append((call_id, result["error"], True))
                     continue

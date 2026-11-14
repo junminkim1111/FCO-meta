@@ -106,7 +106,7 @@ table.g-table { width: 100%; border-collapse: collapse; font-size: 14px; margin:
 
 /* ---------- 움직이는 모형 ---------- */
 .m-window { position: relative; border-radius: 18px; background: #16171d; border: 1px solid var(--line-strong); overflow: hidden;
-            box-shadow: 0 30px 80px -30px rgba(0, 0, 0, .8); font-size: 13px; line-height: 1.55;
+            box-shadow: 0 30px 80px -30px rgba(0, 0, 0, .8), 0 0 60px -20px rgba(99, 102, 241, .35); font-size: 13px; line-height: 1.55;
             user-select: none; isolation: isolate; }
 .m-window.hero { margin: 0 0 72px; }
 @media (max-width: 860px) { .m-window.hero { margin-bottom: 48px; } }
@@ -120,7 +120,10 @@ table.g-table { width: 100%; border-collapse: collapse; font-size: 14px; margin:
 
 /* 챗봇 칸 */
 .m-chat { position: relative; display: flex; flex-direction: column; height: 100%; padding: 14px; border-radius: 14px;
-          background: rgba(255, 255, 255, .035); border: 1px solid var(--line-strong); }
+          background: rgba(255, 255, 255, .035); border: 1px solid transparent; }
+.m-chat::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
+                  background: linear-gradient(135deg, var(--logo-a), var(--logo-b)); opacity: .8;
+                  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
 .m-title { font-weight: 600; font-size: 15px; margin-bottom: 8px; } .m-title small { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 .m-log { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; padding-bottom: 10px; }
 .m-hello { color: var(--muted); font-size: 12px; margin-bottom: auto; }

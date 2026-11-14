@@ -171,8 +171,12 @@
           color: var(--muted); font-size: 13px; }
   @media (max-width: 860px) { #asof { height: auto; justify-content: flex-start; padding: 0 2px 8px; } }
   #chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
-  /* 챗봇 칸 강조: 한 단계 밝은 테두리, 큰 제목 */
-  #chat { border-color: var(--line-strong); }
+  /* 챗봇 칸 강조: 로고 색(보라→하늘) 그라데이션 테두리와 바깥 빛, 큰 제목 */
+  #chat { position: relative; border-color: transparent;
+          box-shadow: 0 0 36px -6px rgba(99, 102, 241, .22), 0 0 80px -20px rgba(56, 189, 248, .17); }
+  #chat::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
+                  background: linear-gradient(135deg, var(--logo-a), var(--logo-b));
+                  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
   #chat h2 { font-size: 18px; font-weight: 600; }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px 12px; max-height: 60vh; }
   /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
@@ -221,6 +225,30 @@
   .rate button svg { width: 14px; height: 14px; } .rate button.down svg { rotate: 180deg; } /* 아쉬워요 = 같은 손을 뒤집은 것 */
   @media (hover: hover) { .rate button:hover { background: var(--panel-strong); color: var(--text); opacity: 1; } }
   .rate.gone { opacity: 0; }
+  .rate.feed button { padding: 2px 10px; border-radius: 8px; background: none; border: 1px solid var(--line); color: var(--text); font-size: 12px; }
+  #squad-panel .sq-status { margin: 12px 0 0; min-height: 1.4em; font-size: 13px; }
+  #squad-panel .sq-status:empty { display: none; }
+  #squad-panel { scroll-margin: 16px; transition: border-color .6s ease-out, background-color .6s ease-out, box-shadow .6s ease-out; }
+  /* 짜는 중: 강조색 테두리 + 은은한 바깥 빛 + 살짝 물든 바탕. 다 짜면 .6초에 걸쳐 평소 칸으로 돌아간다 */
+  #squad-panel.building { border-color: rgba(165, 180, 252, .55); background-color: rgba(99, 102, 241, .07);
+                          box-shadow: 0 0 0 1px rgba(165, 180, 252, .25), 0 0 28px rgba(99, 102, 241, .28); }
+  #squad-panel.building h2 { color: var(--accent); }
+  @media (prefers-reduced-motion: no-preference) {
+    /* 처음 열릴 때 살짝 작고 흐린 데서 자리 잡는다 (튀지 않게 감쇠 곡선) */
+    #squad-panel.building:not([hidden]) { animation: sq-arrive .45s cubic-bezier(.2, .9, .3, 1) both, sq-breathe 1.8s ease-in-out .45s infinite; }
+    @keyframes sq-arrive { from { opacity: 0; transform: scale(.98); } }
+    @keyframes sq-breathe { 50% { box-shadow: 0 0 0 1px rgba(165, 180, 252, .4), 0 0 40px rgba(99, 102, 241, .4); } }
+  } /* 칸이 화면보다 크면 가운데 대신 위를 16px 띄워 맞춘다 */
+  #squad-panel .pitch { margin-top: 12px; }
+  .ovr-box { position: absolute; left: 8px; top: 8px; z-index: 2; display: grid; gap: 1px; padding: 4px 8px; border-radius: 8px;
+             background: rgba(16, 17, 22, .72); border: 1px solid var(--line-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ovr-box div { display: flex; justify-content: space-between; gap: 8px; }
+  .ovr-box b { font-weight: 600; } .ovr-box strong { font-weight: 700; color: var(--text); } .ovr-box .fw b { color: #f87171; } .ovr-box .mf b { color: #4ade80; } .ovr-box .df b { color: #60a5fa; }
+  @media (prefers-reduced-motion: no-preference) {
+    .pp.enter { animation: pp-in .42s cubic-bezier(.2, .8, .3, 1.2) backwards; }
+    @keyframes pp-in { from { opacity: 0; transform: translate(-50%, -30%) scale(.7); } }
+  }
+  #squad-panel .fd-head button { margin-left: auto; padding: 2px 10px; background: none; border: 1px solid var(--line); color: var(--muted); }
   .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); text-decoration: none; }
   @media (hover: hover) { .rate.feed a:hover { background: var(--panel-strong); } }
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model·/compare) */
@@ -377,6 +405,8 @@
   <section id="fdetail" aria-live="polite">
     <p class="stat">항목을 누르면 여기에 그 포메이션·팀컬러 정보가 나옵니다.</p>
   </section>
+  <!-- 챗봇이 짠 스쿼드: 떠 있는 동안 위 상세 칸을 가린다 -->
+  <section id="squad-panel" aria-live="polite" hidden></section>
   <!-- 넥슨 Open API 이용 조건: 서비스에 'Data based on NEXON Open API'를 명시 -->
   <footer class="foot">
     <p>© 2026 FCLM. All rights reserved.</p>
@@ -668,6 +698,7 @@ function renderMatchups(m) {
 }
 
 async function showDetail(name) {
+  showSquad(null); // 위에서 항목을 고르면 열려 있던 스쿼드는 접힌다
   selected = name;
   markSelected();
   const want = mode, isForm = mode === "formation";
@@ -828,7 +859,7 @@ async function send(text) {
   const bubble = el("div");
   $("log").append(bubble);
   $("log").scrollTop = $("log").scrollHeight;
-  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0, answerId = null, squad = false;
+  let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0, answerId = null, squad = false, built = null, mine = null;
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
@@ -873,6 +904,23 @@ async function send(text) {
         if (trace && (ev.type === "trace" || ev.type === "tool")) addTrace(trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
         if (trace && ev.type === "delta" && !answer) addTrace(trace, { kind: "first", text: "답이 나오기 시작" });
         if (trace && ev.type === "done") addTrace(trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
+        // 왼쪽 스쿼드 칸: 스쿼드 도구가 돌기 시작하면 빈 경기장부터 열고, 짤 때마다 선수를 채운다
+        // (사용자가 닫았거나 다른 스쿼드를 보는 중이면 그대로 둔다)
+        const ours = !mine || shownSquad === mine;
+        if (ev.type === "tool" && SQUAD_STEPS.includes(ev.name) && ours) {
+          if (!mine) {
+            showSquad(mine = { players: [] }, { status: TOOL_STATUS[ev.name](ev.args || {}) });
+            // 왼쪽에서 어딜 보고 있었든 스쿼드 칸을 화면 가운데로 (모바일은 칸이 챗봇 아래라 답을 읽던 자리를 지킨다)
+            if (matchMedia("(min-width: 861px)").matches)
+              $("squad-panel").scrollIntoView({ block: $("squad-panel").offsetHeight > innerHeight - 32 ? "start" : "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+          }
+          else squadStatus(TOOL_STATUS[ev.name](ev.args || {}));
+        }
+        if (ev.type === "squad") {
+          if (ours) showSquad(ev, { status: "스쿼드를 다듬고 있어요...", prev: mine });
+          mine = built = ev;
+        }
+        if (ev.type === "delta" && !answer && mine && shownSquad === mine) squadStatus("설명을 쓰고 있어요...");
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
         else if (ev.type === "done") { answerId = ev.id || null; squad = !!ev.squad; } // 끝까지 받은 답에만 온다 (좋아요·아쉬워요가 이 id로 간다)
         else if (ev.type === "delta") grow(ev.text);
@@ -891,6 +939,7 @@ async function send(text) {
   }
   timers.forEach(clearTimeout);
   setBusy(null);
+  if (mine && shownSquad === mine) built ? squadStatus(null) : showSquad(null); // 다 짰으면 진행 문구를 떼고, 못 짰으면 빈 칸을 닫는다
   if (ctrl.signal.aborted && !answer) {
     stopOrb();
     bubble.removeAttribute("title");
@@ -902,12 +951,66 @@ async function send(text) {
   else if (!answer) grow("답을 받지 못했습니다.");
   if (arg !== "auto") bubble.after(el("div", { class: "applied", text: `/model ${arg} 적용: ${modelOf(arg).name}` }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
-  if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId));
+  if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId, built));
 }
 // 스쿼드 답 아래 "스쿼드메이커로 내보내기": 새 탭의 안내 페이지(/send)에서 넥슨 스쿼드메이커 내 보관함에 저장하는 법을 보여 준다
-function feedRow(id) {
-  return el("div", { class: "rate feed" },
-            el("a", { href: "/send?id=" + encodeURIComponent(id), target: "_blank", rel: "noopener", text: "스쿼드메이커로 내보내기 ↗" }));
+function feedRow(id, sq) {
+  const row = el("div", { class: "rate feed" },
+                 el("a", { href: "/send?id=" + encodeURIComponent(id), target: "_blank", rel: "noopener", text: "스쿼드메이커로 내보내기 ↗" }));
+  if (sq) {
+    const b = el("button", { type: "button", class: "squad-toggle" });
+    b.squad = sq;
+    b.addEventListener("click", () => showSquad(shownSquad === sq ? null : sq));
+    row.append(b);
+    syncSquadButtons(b);
+  }
+  return row;
+}
+// 왼쪽 스쿼드 칸: 챗봇이 짠 스쿼드를 랭커 스쿼드와 같은 경기장에 그린다. null이면 닫고 상세 칸을 다시 보인다
+let shownSquad = null;
+const SQUAD_STEPS = ["squad_candidates", "recommend_squad", "check_squad"];
+// prev: 바로 앞에 그린 스쿼드. 처음이면 골키퍼부터 한 명씩, 고쳐 짠 거면 바뀐 선수만 새로 들어온다
+function showSquad(sq, { status = null, prev = null } = {}) {
+  const panel = $("squad-panel");
+  shownSquad = sq;
+  panel.hidden = !sq;
+  $("fdetail").hidden = !!sq;
+  syncSquadButtons(...document.querySelectorAll(".squad-toggle"));
+  if (!sq) return;
+  const close = el("button", { type: "button", text: "✕", ariaLabel: "스쿼드 닫기", title: "닫기" });
+  close.addEventListener("click", () => showSquad(null));
+  const players = sq.players.map((p) => ({ ...p, position: p.code, name: p.player }));
+  const field = pitch(players, "선수를 고르고 있어요", () => "");
+  // 경기장 왼쪽 위: 줄별 OVR 평균 (spposition 20~ 공격, 9~19 미드필드, 1~8 수비. 골키퍼는 뺀다)
+  const lines = [["FW", (c) => c >= 20], ["MF", (c) => c >= 9 && c < 20], ["DF", (c) => c >= 1 && c < 9]].map(([k, inLine]) => {
+    const ovrs = players.filter((p) => inLine(p.code) && p.ovr != null).map((p) => p.ovr);
+    return ovrs.length ? el("div", { class: k.toLowerCase() }, el("b", { text: k }), el("strong", { text: String(Math.round(ovrs.reduce((a, b) => a + b) / ovrs.length)) })) : null;
+  }).filter(Boolean);
+  if (lines.length) field.append(el("div", { class: "ovr-box", ariaLabel: "줄별 평균 OVR" }, ...lines));
+  if (status) {
+    const before = new Map((prev?.players || []).map((p) => [p.code, p.sp_id]));
+    let n = 0;
+    field.querySelectorAll(".pp").forEach((node, i) => {
+      if (before.get(players[i].code) === players[i].sp_id) return; // 그대로인 선수는 가만히
+      node.classList.add("enter");
+      node.style.animationDelay = `${n++ * (before.size ? 60 : 110)}ms`;
+    });
+  }
+  panel.replaceChildren(el("div", { class: "fd-head" }, el("h2", { text: "추천 스쿼드" }), close),
+                        el("div", { class: "tiles" }, tile("팀컬러", sq.team_color ? plain(sq.team_color) : sq.players.length ? "없음" : "-", ""),
+                           tile("포메이션", sq.formation || "-", ""), tile("총 금액", sq.price || "-", ""),
+                           tile("총 급여", sq.salary != null ? String(sq.salary) : "-", "")),
+                        el("p", { class: "sq-status" }), field);
+  squadStatus(status);
+}
+// 스쿼드 칸 위 진행 문구 (채팅창 기다리는 문구와 같은 말). null이면 뗀다
+function squadStatus(text) {
+  const box = $("squad-panel").querySelector(".sq-status");
+  if (box) text ? box.replaceChildren(shimmer(text)) : box.replaceChildren();
+  $("squad-panel").classList.toggle("building", !!text); // 짜는 동안 칸 테두리·바탕을 강조색으로
+}
+function syncSquadButtons(...buttons) {
+  for (const b of buttons) b.textContent = shownSquad === b.squad ? "스쿼드 접기" : "스쿼드 열기";
 }
 // 답 아래 좋아요·아쉬워요: 매번이 아니라 RATE_CHANCE 확률로만 묻는다 (관리자 페이지에서 그 질문 옆에 보인다)
 const RATE_CHANCE = 0.3;
@@ -976,8 +1079,13 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
     ev.preventDefault();
     $("chat-form").requestSubmit();
+  } else if (ev.key === "Tab" && !ev.shiftKey && !$("msg").value && $("msg").placeholder !== DEFAULT_HINT) {
+    ev.preventDefault(); // 빈 입력창에서 Tab = 흐리게 보이는 예시 질문을 그대로 채운다 (Shift+Tab은 원래대로 이동)
+    $("msg").value = $("msg").placeholder;
+    $("msg").dispatchEvent(new Event("input"));
   }
 });
+const DEFAULT_HINT = $("msg").placeholder; // 예시를 못 불러왔을 때의 기본 안내 ("무엇이든 물어보세요")는 채우지 않는다
 // @닉네임: 빈 입력창에 @를 치면 위에 작은 칸이 뜨고, 그 유저의 최근 경기 선발 11명을 불러와 다음 질문에 붙인다 (멘션처럼 그 질문 한 번)
 // #피드ID: 같은 칸으로 스쿼드메이커 피드의 선발 11명을 붙인다
 let team = null; // 붙인 팀 { nickname, mention, label }
