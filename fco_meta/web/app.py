@@ -30,7 +30,7 @@ from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
 from .chatlog import ChatLog
-from .squadfeed import FeedError, lineup_of, place, squad_link
+from .squadfeed import FeedError, squad_link, squad_view
 from .team import Team, TeamNotFound, fetch_feed, fetch_team
 
 log = logging.getLogger(__name__)
@@ -242,6 +242,11 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             line = {"kind": "fallback", "text": f"{piece.failed} {piece.reason} → {piece.model}이 대신"}
         elif isinstance(piece, ToolResult):
             line = {"kind": "result", "name": piece.name, "ok": piece.ok, "text": piece.preview}
+            if piece.ok and piece.name in SQUAD_TOOLS and piece.result:  # 짜는 중인 스쿼드도 왼쪽 칸에 바로 그린다
+                try:
+                    yield _event(type="squad", **squad_view(piece.result), **extra)
+                except FeedError:
+                    pass  # 자리를 다 못 채운 중간 스쿼드는 건너뛴다
         else:
             if not started:
                 started = True
@@ -787,13 +792,9 @@ def create_app(
             found = squads.get(req.id)
         if not found:
             raise HTTPException(status_code=404, detail="이 답의 스쿼드는 스쿼드메이커로 보낼 수 없어요.")
-        result = tool(*found)
-        title = f"{result.get('team_color') or '랭커'} {result.get('formation') or ''}".strip()
         try:
-            formation = result.get("formation")
-            placed = place(lineup_of(result), formation)
-            return {"url": squad_link(placed, formation, title), "title": title, "formation": formation,
-                    "players": placed, "salary": result.get("total_salary"), "price": result.get("total_price")}  # fmt: skip
+            view = squad_view(tool(*found))
+            return {"url": squad_link(view["players"], view["formation"], view["title"]), **view}
         except FeedError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
 

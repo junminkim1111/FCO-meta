@@ -82,6 +82,26 @@ QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
 SALARY_CAP = 315  # 게임의 팀 급여 상한: 선발 11명은 사용자가 급여 합을 말하지 않으면 이 안에서 고른다 (더 크게 말하면 따르고 경고)
+def _grade(card: dict[str, Any]) -> int:
+    """The grade a squad card is quoted at (its price's grade, else the rankers' most used)."""
+    return (card.get("price_at_most_used_grade") or {}).get("grade") or card.get("most_used_grade") or 1
+
+
+def squad_bonuses(grades: list[int], teams: list[tuple[bool, list[bool]]]) -> list[int]:
+    """선발 11명 각자에게 더해지는 능력치 (OVR·세부 스탯 모두): 선발 +4, 팀컬러, 강화 팀케미.
+    teams: (시즌 단일인가, 선수마다 그 팀컬러 카드인가). 클럽·국가는 11명 +4·8명 이상 +3, 시즌 단일은 8명 이상 +3 (그 소속 선수만,
+    여러 팀컬러면 높은 쪽 하나). 강화 팀케미: 백금(11강~) +5 · 금(8강~) +4 · 은(5강~) +3, 그 등급 이상이 8명 이상일 때
+    그 등급 이상 선수가 받는다 (백금 8명 미만이면 백금카도 금카 팀케미를 받는 식으로 자기 등급 이하 중 가장 높은 것)."""
+    tiers = [5 if g >= 11 else 4 if g >= 8 else 3 if g >= 5 else 0 for g in grades]
+    out = []
+    for i, t in enumerate(tiers):
+        chem = next((k for k in (5, 4, 3) if k <= t and sum(x >= k for x in tiers) >= 8), 0)
+        team = max((4 if not special and sum(m) >= 11 else 3 if sum(m) >= 8 else 0 for special, m in teams if m[i]), default=0)
+        out.append(4 + chem + team)
+    return out
+
+
+POSITION_ALIAS = {"DM": "CDM", "RAM": "CAM", "LAM": "CAM"}  # 스쿼드 역할 → 카드 상세의 포지션 이름
 GRADE_OVR = (0, 0, 1, 2, 4, 6, 8, 11, 15, 17, 19, 21, 24, 27)  # 강화 등급(1~13) → 누적 OVR 상승 (게임의 강화 안내표)
 BUDGET_STRETCH = 0.10  # 예산을 이만큼까지는 넘겨도 된다 — 넘긴 스쿼드가 STRETCH_GAIN 이상 나을 때만
 STRETCH_GAIN = 0.03  # 예산을 넘길 만한 점수(사용률 합) 차이  # ponytail: 고정 기준 — 사용자 평가가 쌓이면 조정
@@ -1336,6 +1356,33 @@ class Toolbox:
             dist.update({int(g): c for g, c in json.loads(raw).items()})
         return dict(dist)
 
+    def _add_bonuses(self, lineup: list[dict[str, Any]], sq: _Squad) -> None:
+        """Each starter's bonus (squad_bonuses) onto its OVR: the squad's team color, and any 시즌 단일 team color 8+ cards share."""
+        picked = [p for p in lineup if p.get("player")]
+        ids = [p["card"]["sp_id"] for p in picked]
+        teams = [(sq.season_rule, [sq.fits(i) for i in ids])] if sq.fits else []
+        seasons = Counter(i // 1_000_000 for i in ids)
+        if max(seasons.values(), default=0) >= 8 and not sq.season_rule:  # 클럽 팀컬러여도 시즌 단일이 더 높을 수 있다
+            for tc in self.catalog.entries:
+                if tc.category == "special" and (fits := self._team_color_cards(tc)) and sum(map(fits, ids)) >= 8:
+                    teams.append((True, [fits(i) for i in ids]))
+        grades = [_grade(p["card"]) for p in picked]
+        for p, bonus in zip(picked, squad_bonuses(grades, teams)):
+            p["bonus"] = bonus
+            if p.get("ovr") is not None:
+                p["ovr"] += bonus
+
+    def _ovr(self, sp_id: int, role: str, grade: int) -> int | None:
+        """The card's OVR in this role at this grade (화면의 FW·MF·DF 평균용): its 1강 OVR at that position, or at its main
+        position when the role isn't one it lists, plus the grade's OVR gain."""
+        # ponytail: 카드가 몇 자리 OVR만 갖고 있어 그 밖의 자리는 주 포지션 OVR로 갈음한다
+        row = self.conn.execute("SELECT positions FROM card_detail WHERE spid = ?", (sp_id,)).fetchone()
+        base = json.loads(row[0]).get(POSITION_ALIAS.get(role, role)) if row and row[0] else None
+        if base is None:
+            main = self.conn.execute("SELECT ovr FROM card WHERE spid = ?", (sp_id,)).fetchone()
+            base = main[0] if main else None
+        return None if base is None else base + GRADE_OVR[min(grade, len(GRADE_OVR) - 1)]
+
     def _salary(self, sp_id: int) -> int | None:
         row = self.conn.execute("SELECT salary FROM card WHERE spid = ?", (sp_id,)).fetchone()
         return row[0] if row else None
@@ -2055,6 +2102,7 @@ class Toolbox:
             lineup.append({
                 **({"owned": True} if c.get("owned") else {}),
                 "role": role, "player": e["name"], "pid": e["pid"], "season": card["season"], "rankers": card["rankers"], "usage_rate": _card_usage(c),
+                "ovr": self._ovr(card["sp_id"], role, _grade(card)),
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
                                               "price_at_most_used_grade", "salary", "new_traits", "added_trait") if k in card},
             })  # fmt: skip
@@ -2075,6 +2123,7 @@ class Toolbox:
                              "price": price["price"] if price else None, "salary": o["salary"]})  # fmt: skip
             alternatives[role] = alts[:3]
 
+        self._add_bonuses(lineup, sq)
         out: dict[str, Any] = {
             "team_color": tc_name,
             "formation": sq.formation,
@@ -2095,6 +2144,8 @@ class Toolbox:
                 "price_at_most_used_grade": "랭커들이 그 카드를 가장 많이 쓴 강화 단계의 최근 수집 시세",
                 "layout": "slots로 준 자리, 아니면 그 포메이션으로 실제 경기한 랭커 스쿼드에서 가장 흔한 역할 구성",
                 "total_price·total_salary": "시세·급여가 수집된 선수만 더한 값",
+                "ovr·bonus": "ovr = 그 자리·강화의 OVR에 bonus를 더한 경기 속 OVR. bonus = 선발 +4, 팀컬러(클럽·국가 11명 +4·8명+ +3, "
+                             "시즌 단일 8명+ +3), 강화 팀케미(백금 +5·금 +4·은 +3, 그 등급 이상 8명+)로 모든 능력치에 더해지는 값",
             },
         }
         notes = []

@@ -22,11 +22,12 @@ class FeedError(Exception):
 
 
 def lineup_of(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """recommend_squad / check_squad result → [{role, player, season, sp_id, grade}] (the grade its price is quoted at)."""
+    """recommend_squad / check_squad result → [{role, player, season, sp_id, grade, pid, season_img}] (the grade its price is quoted at)."""
     if result.get("ok") is False or not result.get("lineup") or any(p.get("player") is None for p in result["lineup"]):
         raise FeedError("규칙을 다 맞춘 스쿼드만 스쿼드메이커로 보낼 수 있어요.")
     return [
         {"role": p["role"], "player": p["player"], "season": (p["card"].get("season") or "").split(" (")[0], "sp_id": p["card"]["sp_id"],
+         "pid": p.get("pid"), "season_img": p["card"].get("season_img"), "ovr": p.get("ovr"),
          "grade": (p["card"].get("price_at_most_used_grade") or {}).get("grade") or p["card"].get("most_used_grade") or 1}
         for p in result["lineup"]
     ]  # fmt: skip
@@ -44,8 +45,16 @@ def place(lineup: list[dict[str, Any]], formation: str | None) -> list[dict[str,
         if p is None:
             raise FeedError("스쿼드의 자리가 스쿼드메이커 포메이션과 맞지 않아 보낼 수 없어요.")
         left.remove(p)
-        placed.append({"position": slot["role"], "x": slot["x"], "y": slot["y"], **{k: p[k] for k in ("player", "season", "sp_id", "grade")}})
+        placed.append({"position": slot["role"], "code": POSITION_CODE[slot["role"]], "x": slot["x"], "y": slot["y"],
+                       **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}})
     return placed
+
+
+def squad_view(result: dict[str, Any]) -> dict[str, Any]:
+    """A squad tool result as the chat shows it on its pitch: {title, formation, team_color, players (placed), salary, price}."""
+    formation = result.get("formation")
+    return {"title": f"{result.get('team_color') or '랭커'} {formation or ''}".strip(), "formation": formation, "team_color": result.get("team_color"),
+            "players": place(lineup_of(result), formation), "salary": result.get("total_salary"), "price": result.get("total_price")}  # fmt: skip
 
 
 def squad_link(placed: list[dict[str, Any]], formation: str, title: str) -> str:
