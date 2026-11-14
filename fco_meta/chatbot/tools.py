@@ -574,7 +574,7 @@ TOOLS: list[dict[str, Any]] = [
             "스쿼드 초안의 자리를 바꿀 때 보는 후보: 자리마다 랭커들이 쓴 선수 3~5명과 "
             "사용률, 사용 랭커 시즌 승률, 경기 평점, TOP 10,000 경기 성적, 능력치, 고를 수 있는 카드(시즌·강화·시세·급여). "
             "팀컬러·케미·포함 선수·예산 조건에 맞는 카드만 나온다. 바꿀 자리만 roles로 (예: 'GK', 'ST,RW'). "
-            "고른 뒤 check_squad로 검사한다. 나머지 인자는 recommend_squad와 같다"
+            "고른 뒤 check_squad로 검사한다. 조건 인자는 recommend_squad와 같다 (traits·exclude 포함)"
         ),
         "input_schema": None,  # 아래에서 recommend_squad의 인자를 그대로 쓴다
     },
@@ -798,9 +798,12 @@ for _tool in TOOLS:
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], **_KNOBS}}
     if _tool["name"] == "squad_candidates":
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], "roles": {
-            "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"}, "exclude": _KNOBS["exclude"]}}
+            "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"},
+            **{k: _KNOBS[k] for k in ("exclude", "traits", "can_add_trait")}}}
     elif _tool["name"] == "check_squad":
-        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **_SQUAD_ARGS["properties"]}, "required": ["picks"]}
+        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **_SQUAD_ARGS["properties"], "spend": {
+            "type": "boolean", "description": "예산을 주면 남는 돈으로 picks의 강화를 OVR이 많이 오르는 것부터 올린다 (기본 true, 아끼라고 하면 "
+            "false). 올린 카드는 결과의 raised_grades"}}, "required": ["picks"]}
     elif _tool["name"] == "diagnose_team":  # 블록의 선발을 그대로 picks로, 팀컬러 줄·포메이션을 조건으로
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **{k: _SQUAD_ARGS["properties"][k] for k in ("team_color", "formation")}},
                                  "required": ["picks"]}  # fmt: skip
@@ -1694,12 +1697,14 @@ class Toolbox:
         include: str | None = None,
         roles: str | None = None,
         exclude: str | None = None,
+        traits: str | None = None,
+        can_add_trait: bool = False,
     ) -> dict[str, Any]:
         """Per slot 3~5 players with the data to judge them; the model picks and check_squad verifies.
 
         The players of one combination within every limit are always among them (so a passing squad exists), but
         that combination is not shown — the model judges on its own."""
-        knobs = self._squad_knobs(exclude, None, None, None, None, None)
+        knobs = self._squad_knobs(exclude, None, None, None, None, None, traits, can_add_trait)
         sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs)
         if isinstance(sq, dict):
             return sq
@@ -1818,9 +1823,11 @@ class Toolbox:
         slots: str | None = None,
         chemistry: str | None = None,
         include: str | None = None,
+        spend: bool | None = None,
     ) -> dict[str, Any]:
         """The model's own lineup checked against the same rules: slots filled, rankers used each card there,
-        no player twice, salary/budget, team color, chemistry, season, include. ok = every rule held."""
+        no player twice, salary/budget, team color, chemistry, season, include. ok = every rule held. Leftover budget
+        raises the picks' grades like recommend_squad does (spend false keeps them)."""
         if not isinstance(picks, list) or not all(isinstance(p, dict) for p in picks):
             raise ToolError("picks는 [{role, player, season, grade}] 목록 (예: [{'role': 'ST', 'player': '홀란', 'season': '25 UCL'}])")
         names = ["".join(str(p.get("player") or "").split()) for p in picks]
@@ -1872,7 +1879,15 @@ class Toolbox:
         twice = [n for n, c in Counter(c["entry"]["name"] for c in chosen if c).items() if c > 1]
         if twice:
             problems.append(f"같은 선수를 두 자리에: {', '.join(twice)}")
+        raised = []
+        if "price" in sq.limits and spend is not False and sum(c["price"] or 0 for c in chosen if c) <= sq.limits["price"]:
+            before = list(chosen)  # 모델이 고른 강화로 예산이 남으면 recommend_squad처럼 남는 돈으로 올린다
+            chosen = self._spend(sq, chosen, {})
+            raised = [{"role": role, "player": a["entry"]["name"], "from": f"{a['card']['most_used_grade']}강", "to": f"{b['card']['most_used_grade']}강"}
+                      for (role, _), a, b in zip(sq.slot_options, before, chosen) if a and a is not b]  # fmt: skip
         out = self._squad_result(sq, chosen, checking=True)
+        if raised:
+            out["raised_grades"] = raised
         for kind, cap in sq.limits.items():
             spent = sum(c[kind] or 0 for c in chosen if c)
             if spent > cap:
