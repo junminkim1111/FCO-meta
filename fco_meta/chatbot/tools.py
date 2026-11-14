@@ -991,19 +991,24 @@ class Toolbox:
         them, most used first; when they share no such club, their shared nation ('굴리트+반 바스텐+...' → 네덜란드).
         Empty when neither."""
         key = lambda t: "".join((t or "").split()).casefold()  # noqa: E731
+        latest = dict(self.conn.execute("SELECT team_color_id, MAX(data_as_of) FROM usage_sample GROUP BY team_color_id"))
         careers, nations, used = [], [], []
         for name in names:
-            like = (f"%{name}%",)
-            rows = self.conn.execute(
-                "SELECT d.clubs, d.nation FROM card_detail d JOIN meta_spid s ON s.sp_id = d.spid WHERE REPLACE(s.name, ' ', '') LIKE ?", like
-            ).fetchall()  # fmt: skip
+            # 이름 → 카드 먼저 (meta_spid는 작다), 그 카드로만 큰 usage_stats를 스냅샷(기본 키 앞자리)별로 본다
+            spids = [r[0] for r in self.conn.execute("SELECT sp_id FROM meta_spid WHERE REPLACE(name, ' ', '') LIKE ?", (f"%{name}%",))]
+            marks = ",".join("?" * len(spids))
+            rows = self.conn.execute(f"SELECT clubs, nation FROM card_detail WHERE spid IN ({marks})", spids).fetchall()
             careers.append({key(c["club"]) for clubs, _ in rows for c in json.loads(clubs)})
             nations.append({key(n) for _, n in rows if n})
-            used.append(dict(self.conn.execute(
-                "SELECT u.team_color_id, SUM(u.ranker_count) FROM usage_stats u JOIN meta_spid s ON s.sp_id = u.sp_id"
-                " WHERE u.formation = ? AND u.strict = 0 AND REPLACE(s.name, ' ', '') LIKE ?"
-                " AND u.data_as_of = (SELECT MAX(data_as_of) FROM usage_sample m WHERE m.team_color_id = u.team_color_id)"
-                " GROUP BY u.team_color_id", (ALL_FORMATIONS, *like))))  # fmt: skip
+            count: dict[int, int] = {}
+            for as_of in set(latest.values()):
+                for tc_id, n in self.conn.execute(
+                    f"SELECT team_color_id, SUM(ranker_count) FROM usage_stats WHERE data_as_of = ? AND formation = ? AND strict = 0"
+                    f" AND sp_id IN ({marks}) GROUP BY team_color_id", (as_of, ALL_FORMATIONS, *spids)
+                ):  # fmt: skip
+                    if latest.get(tc_id) == as_of:
+                        count[tc_id] = n
+            used.append(count)
         for category, sets in (("club", careers), ("nationality", nations)):
             score = {t.id: min(u.get(t.id, 0) for u in used) for t in self.catalog.entries
                      if t.category == category and all(key(t.name) in c for c in sets)}  # fmt: skip
