@@ -175,11 +175,14 @@ class _Session:
         self.bots: dict[str, list[Any]] = {}  # key → [chat, history 중 이 chat이 아는 개수]
         self.team: Team | None = None  # @닉네임으로 붙인 팀: 다음 질문 하나가 가져간다 (멘션처럼)
         self.last: str | None = None  # 마지막 질문 (팀 블록 없이, Jev가 이어지는 질문인지 볼 때)
+        self.squad: dict[str, Any] | None = None  # 마지막으로 짠 스쿼드의 recommend_squad 인자 (기록엔 답 글만 남아 다음 질문에 붙인다)
 
     def take(self, message: str) -> tuple[str, Team | None]:
         """What the model gets for this question: the attached team ahead of it, used up by this question
         (its block stays in the history, so follow-ups still know the team)."""
         team, self.team = self.team, None
+        if self.squad:  # "WG 말고 UC로" 같은 이어지는 바람이 앞 조건(예산 등)을 잃지 않게
+            message += f"\n\n(앞서 짠 스쿼드의 recommend_squad 인자: {json.dumps(self.squad, ensure_ascii=False)})"
         return (f"{team.for_model()}\n\n{message}" if team else message), team
 
     def bot(self, key: str, make: Callable[[], Any]) -> Any:
@@ -191,8 +194,9 @@ class _Session:
         entry[1] = len(self.history)
         return entry[0]
 
-    def answered(self, key: str | None, question: str, answer: str, plain: str | None = None) -> None:
+    def answered(self, key: str | None, question: str, answer: str, plain: str | None = None, calls: Iterable[tuple[str, Any]] = ()) -> None:
         self.history.append((question, answer))
+        self.squad = next((args for name, args in reversed(list(calls)) if name == "recommend_squad"), self.squad)
         self.last = plain or question
         if key in self.bots:  # 답한 chat은 이 턴을 이미 안다
             self.bots[key][1] = len(self.history)
@@ -633,7 +637,7 @@ def create_app(
                     return
                 finally:  # 정지로 끊겨도 잠금을 풀기 전에 닫아, 그 질문을 기록에서 빼는 일이 다음 질문보다 먼저 끝나게 한다
                     stream.close()
-                session.answered(key, ask, turn.text, req.message)  # 팀 블록째 남겨 이어지는 질문도 그 팀을 안다
+                session.answered(key, ask, turn.text, req.message, turn.tool_calls)  # 팀 블록째 남겨 이어지는 질문도 그 팀을 안다
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다

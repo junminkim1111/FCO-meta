@@ -11,7 +11,7 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -347,6 +347,7 @@ class _Squad:
     limits: dict[str, int]
     slot_options: list[tuple[str, list[dict[str, Any]]]]
     first: Any  # 첫 자리의 top_players 결과 (표본·기준 시각)
+    must_season: dict[str, str] = field(default_factory=dict)  # 넣을 선수 중 시즌을 정한 선수 (이름 → 시즌)
 
 
 MAX_UPGRADES = 2  # recommend_squad의 upgrades: 자리마다 보여 줄 강화·시즌 선택지 수
@@ -562,7 +563,8 @@ TOOLS: list[dict[str, Any]] = [
                 "include": {
                     "type": "string",
                     "description": "꼭 넣을 선수 이름, 쉼표로 (예: '슈케르', '라이스,사카'). 랭커들이 그 선수를 쓴 자리에 넣고 나머지를 한도 안에서 "
-                    "다시 고른다. 자리를 정해 달라면 '이름:자리' (예: '호날두:ST', 자리는 GK·CB·ST 같은 역할). 결과의 include로 들어갔는지 확인",
+                    "다시 고른다. 자리를 정해 달라면 '이름:자리' (예: '호날두:ST', 자리는 GK·CB·ST 같은 역할), 시즌을 정해 달라면 '이름:시즌' "
+                    "(예: '반페르시:UC', 둘 다면 '반페르시:ST:UC'). 결과의 include로 들어갔는지 확인",
                 },
             },
             [],
@@ -2011,14 +2013,17 @@ class Toolbox:
         result as it is). `names` (띄어쓰기 없는 이름): players to look up beyond the usual top candidates (check_squad)."""
         names = [n for n in names if n]
         chem = self._chemistry(chemistry) if chemistry else None
-        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시). '이름:자리'면 그 자리에만 넣는다 ('호날두:ST')
-        must, pinned = [], {}
+        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시). 뒤에 ':자리'면 그 자리에만, ':시즌'이면 그 시즌 카드로 ('반페르시:ST:UC')
+        must, pinned, wanted_season = [], {}, {}
         for n in re.split(r"[,/+]", include or ""):
-            name, _, role = n.partition(":")
+            name, *rest = n.split(":")
             if name := "".join(name.split()):
                 must.append(name)
-                if role.strip():
-                    pinned[name] = role.strip().upper()
+                for part in filter(None, ("".join(x.split()) for x in rest)):
+                    if part.upper() in ROLES:
+                        pinned[name] = part.upper()
+                    else:
+                        wanted_season[name] = part.casefold()
         knobs = knobs or {}
         owned = knobs.get("owned", [])
         include_clubs = None
@@ -2095,6 +2100,16 @@ class Toolbox:
                     cards = [c for c in cards if fits(c["sp_id"])]
                     if not cards:
                         continue
+                if season := next((wanted_season[n] for n in must if f"include:{n}" in wanted and n in wanted_season), None):
+                    # 넣을 선수의 시즌을 정했으면 그 시즌 카드만 (이 자리에 랭커가 안 쓴 카드면 전체 카드에서, 강화는 8강 시세로)
+                    matched = [c for c in cards if season in "".join((c["season"] or "").split()).casefold()]
+                    if not matched:  # ponytail: 랭커가 안 쓴 카드는 8강(또는 min_grade)으로 셈 — 강화 지정 인자가 생기면 그 값으로
+                        g = knobs.get("min_grade") or 8
+                        matched = [{**c, "most_used_grade": g, "price_at_most_used_grade": self._price(c["sp_id"], g)}
+                                   for c in self._owned_cards(p.key, season, fits if not season_rule else None)]  # fmt: skip
+                    if not matched:  # 그 시즌 카드가 없으면 이 선수는 넣지 못함 (결과의 include가 null)
+                        continue
+                    cards = matched
                 own = next((o for o in owned if o["name"] in pname), None)
                 if own:  # 가진 카드: 그 시즌·강화로 고정, 시세는 0 (랭커가 적게 쓴 카드여도)
                     note = None
@@ -2137,7 +2152,7 @@ class Toolbox:
         return _Squad(
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
             include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
-            strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first,
+            strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first, must_season=wanted_season,
         )  # fmt: skip
 
     def _squad_result(
@@ -2246,7 +2261,9 @@ class Toolbox:
                 notes.append("넣을 선수들이 함께 뛴 클럽·같은 국적 중 랭커 데이터가 있는 팀컬러가 없어 전체 랭커 기준으로 짬")
             for name, player in got.items():
                 if player is None:
-                    notes.append(f"'{name}'를 넣지 못함 (이 팀컬러·포메이션 랭커들이 쓴 기록이 없거나, 소속·급여·예산 조건에 맞는 카드가 없음)")
+                    card = f" {sq.must_season[name].upper()} 카드" if name in sq.must_season else ""
+                    notes.append(f"'{name}'{card}를 넣지 못함 (이 팀컬러·포메이션 랭커들이 쓴 기록이 없거나, 그 시즌 카드가 없거나, "
+                                 "소속·급여·예산 조건에 맞는 카드가 없음)")
         if chem:
             need = reqs["chem"]
             if sq.derived:
