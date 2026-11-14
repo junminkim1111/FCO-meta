@@ -209,8 +209,26 @@ class ChatLog:
                 e = errors.setdefault(r["error"], {"error": r["error"], "count": 0, "last": r["t"]})
                 e["count"] += 1
                 e["last"] = r["t"]
+        # 모델 API 사용량: 질문 하나의 모델과 /compare 칸마다의 모델을 모델별로 (호출·오류·토큰·비용·걸린 시간)
+        calls = [r for r in records if r.get("model") and r["model"] != "rules"] + [p for c in compares for p in c.get("panes", {}).values() if p.get("model")]
+        by_model: dict[str, dict[str, Any]] = {}
+        for c in calls:
+            m = by_model.setdefault(c["model"], {"model": c["model"], "calls": 0, "errors": 0, "tokens": 0, "cost": 0.0, "ms": []})
+            m["calls"] += 1
+            m["errors"] += bool(c.get("error"))
+            m["tokens"] += c.get("tokens", 0)
+            m["cost"] += c.get("cost", 0)
+            if c.get("ms") is not None:
+                m["ms"].append(c["ms"])
+        for m in by_model.values():
+            ms = sorted(m.pop("ms"))
+            m["cost"] = round(m["cost"], 4)
+            m["p50_ms"] = ms[len(ms) // 2] if ms else None
+            m["p95_ms"] = ms[min(len(ms) - 1, int(len(ms) * 0.95))] if ms else None
         return {
-            "days": days, "since": since, "total": len(records), "pending": len(pending) if self.store else 0,
+            "days": days, "since": since,
+            "by_model": sorted(by_model.values(), key=lambda m: -m["calls"]),
+            "tokens": sum(m["tokens"] for m in by_model.values()), "total": len(records), "pending": len(pending) if self.store else 0,
             "by_outcome": {o: sum(1 for r in records if r["outcome"] == o) for o in OUTCOMES},
             "votes": dict(Counter(r["vote"] for r in records if r.get("vote"))),
             "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 4)} for d, c in sorted(by_day.items(), reverse=True)],

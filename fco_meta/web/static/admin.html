@@ -4,108 +4,244 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>FCLM 관리자 | 답변 기록</title>
+<title>FCLM Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: dark;
-    --bg: #101116; --panel: rgba(255, 255, 255, .045); --line: rgba(255, 255, 255, .1); --line-strong: rgba(255, 255, 255, .18);
-    --text: #ededef; --muted: #8e8e98; --faint: #5f5f69; --accent: #a5b4fc;
-    --ok: #3987e5; --cached: #7dd3fc; --busy: #e66767; --limited: #f2cc60; --cancelled: #8e8e98; --compare: #c4b5fd; --blocked: #fb923c;
+    --bg: #000; --surface: #0a0a0a; --surface-2: #141414; --line: #242424; --line-strong: #333;
+    --text: #ededed; --muted: #a1a1a1; --faint: #666; --hover: rgba(255, 255, 255, .04); --focus: #ededed;
+    --ok: #4ade80; --cached: #67e8f9; --busy: #f87171; --limited: #fbbf24; --cancelled: #a1a1aa; --compare: #60a5fa; --blocked: #fb923c;
+    --up: #4ade80; --down: #f87171; --bar: #ededed;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
-  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
-  h1 { margin: 0; font-size: 20px; font-weight: 700; }
-  h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
-  .muted { color: var(--muted); font-size: 12px; }
-  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .bar .grow { flex: 1; }
-  button, select, input { font: inherit; color: var(--text); background: rgba(0, 0, 0, .35); border: 1px solid var(--line);
-                          border-radius: 8px; padding: 6px 12px; }
-  button { cursor: pointer; } button.on { border-color: var(--accent); color: var(--accent); }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-  .tile .k { font-size: 12px; color: var(--muted); }
-  .tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .tile .p { font-size: 12px; color: var(--faint); }
+         font: 14px/1.5 Geist, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; -webkit-font-smoothing: antialiased; }
+  button, select, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); } .faint { color: var(--faint); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+         border: 1px solid var(--line); background: var(--surface); font-size: 13px; font-weight: 500; white-space: nowrap; }
+  .btn:hover { background: var(--surface-2); } .btn:disabled { opacity: .55; cursor: default; }
+  .btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); } .btn.primary:hover { opacity: .88; }
+  select.btn { padding-right: 8px; }
+  .input { height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 13px; min-width: 0; }
+
+  /* 로그인 */
+  .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+  .login form { width: 100%; max-width: 340px; display: grid; gap: 12px; }
+  .login h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+  .login p { margin: 0; font-size: 13px; }
+  .error { color: var(--busy); }
+
+  /* 틀: 왼쪽 메뉴 + 본문 */
+  .shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
+  .side { border-right: 1px solid var(--line); background: var(--surface); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px;
+          position: sticky; top: 0; height: 100vh; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 14px; font-weight: 600; text-decoration: none; color: inherit; }
+  .brand img { height: 18px; width: auto; }
+  .brand span { color: var(--faint); font-weight: 400; }
+  .nav { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 13.5px; }
+  .nav:hover { background: var(--hover); color: var(--text); }
+  .nav.on { background: var(--surface-2); color: var(--text); font-weight: 500; }
+  .nav .count { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .side .foot { margin-top: auto; padding: 8px 10px; font-size: 12px; color: var(--faint); }
+  .main { min-width: 0; }
+  .top { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 12px 24px; border-bottom: 1px solid var(--line);
+         background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(8px); }
+  .top h1 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }
+  .view { padding: 24px; display: grid; gap: 20px; max-width: 1280px; }
+  @media (max-width: 800px) {
+    .shell { grid-template-columns: minmax(0, 1fr); align-content: start; }
+    .side { position: static; height: auto; flex-direction: row; align-items: center; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 16px; gap: 4px; }
+    .brand { padding: 4px 8px 4px 0; } .brand span, .side .foot, .nav .count { display: none; }
+    .nav { white-space: nowrap; }
+    .top { padding: 10px 16px; } .view { padding: 16px; }
+  }
+
+  /* 카드·숫자 */
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+  .card > header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .card > header h2 { margin: 0; font-size: 13.5px; font-weight: 600; flex: 1; }
+  .card > .body { padding: 16px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+  .kpi { padding: 14px 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; }
+  .kpi .k { font-size: 12.5px; color: var(--muted); }
+  .kpi .v { font: 500 24px/1.25 var(--mono); letter-spacing: -.02em; margin-top: 4px; }
+  .kpi .s { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
+  @media (max-width: 420px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend i, .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: currentColor; margin-right: 5px; vertical-align: 0; }
+  .chart { width: 100%; height: 180px; display: block; }
+  .chart text { fill: var(--faint); font: 11px var(--mono); }
+  .chart .grid { stroke: var(--line); }
+  .meter { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .meter > span { display: block; height: 100%; background: var(--bar); }
+
+  /* 표 */
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
-  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  #days-table th:not(:first-child), #errors th:nth-child(2) { text-align: right; } /* 숫자 칸 제목도 오른쪽 */
-  td.t { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
-  td.q { min-width: 220px; }
-  td.err { color: var(--busy); font-size: 12px; word-break: break-word; }
-  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
-           border: 1px solid currentColor; }
-  .ok { color: var(--ok); } .cached { color: var(--cached); } .busy { color: var(--busy); }
-  .limited { color: var(--limited); } .cancelled { color: var(--cancelled); } .compare { color: var(--compare); } .blocked { color: var(--blocked); }
-  /* /compare 기록: 비교마다 접는 칸, 안에 세 모델의 답을 나란히 */
-  details.cmp { border-top: 1px solid var(--line); padding: 10px 0; }
-  details.cmp > summary { cursor: pointer; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
-  details.cmp > summary .q { font-weight: 600; }
-  .panes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-  @media (max-width: 900px) { .panes { grid-template-columns: minmax(0, 1fr); } }
-  .pane { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
-  .pane.chosen { border-color: var(--compare); box-shadow: 0 0 0 1px var(--compare); }
-  .pane h3 { margin: 0 0 4px; font-size: 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  .pane .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; word-break: break-word; }
-  .md { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child > td { border-bottom: 0; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; white-space: nowrap; background: var(--surface-2); }
+  td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.t { white-space: nowrap; color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+  td.q { min-width: 260px; max-width: 520px; }
+  td.q .text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  td.q .sub { color: var(--busy); font-size: 12px; margin-top: 2px; }
+  td.model { white-space: nowrap; color: var(--muted); font-size: 12.5px; }
+  tbody tr.open-able { cursor: pointer; } tbody tr.open-able:hover > td { background: var(--hover); }
+  tbody tr.sel > td { background: var(--surface-2); }
+  .empty { padding: 32px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12.5px; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .ok { color: var(--ok); } .cached { color: var(--cached); } .busy, .error-o { color: var(--busy); } .limited { color: var(--limited); }
+  .cancelled { color: var(--cancelled); } .compare { color: var(--compare); } .blocked { color: var(--blocked); }
+  .vote-up { color: var(--up); } .vote-down { color: var(--down); }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .toolbar .input { flex: 1 1 220px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 2px; gap: 2px; flex-wrap: wrap; }
+  .seg button { border: 0; background: none; padding: 4px 10px; border-radius: 4px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+  .seg button:hover { color: var(--text); } .seg button.on { background: var(--surface-2); color: var(--text); font-weight: 500; }
+  .seg button .c { font-family: var(--mono); color: var(--faint); margin-left: 4px; }
+
+  /* 오른쪽 trace 창 (Langfuse 같은) */
+  dialog.drawer { margin: 0 0 0 auto; height: 100vh; max-height: 100vh; width: min(760px, 100vw); max-width: 100vw; padding: 0; border: 0;
+                  border-left: 1px solid var(--line); background: var(--surface); color: var(--text); }
+  dialog.drawer::backdrop { background: rgba(0, 0, 0, .3); }
+  .dr { display: flex; flex-direction: column; height: 100%; }
+  .dr-head { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+  .dr-head .id { flex: 1; font: 12.5px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dr-body { overflow-y: auto; padding: 20px; display: grid; gap: 20px; align-content: start; }
+  .dr-q { margin: 0; font-size: 16px; font-weight: 500; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; gap: 5px; align-items: baseline; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; background: var(--surface-2); }
+  .chip b { font-weight: 400; color: var(--muted); }
+  .chip span { font-family: var(--mono); }
+  .dr h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+  .note { font-size: 12.5px; color: var(--muted); margin: 0; }
+  .note.warn { color: var(--busy); }
+  .steps { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .step { display: grid; grid-template-columns: 58px 92px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .step:last-child { border-bottom: 0; }
+  .step .at { font-family: var(--mono); color: var(--faint); }
+  .step .kind { color: var(--muted); }
+  .step .kind.tool, .step .kind.result { color: var(--compare); } .step .kind.error { color: var(--busy); }
+  .step .kind.escalate, .step .kind.fallback, .step .kind.recheck { color: var(--limited); }
+  .step .txt { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .step .txt code { font: 12px var(--mono); }
+  .step details summary { cursor: pointer; color: var(--muted); }
+  .step details[open] summary { margin-bottom: 4px; }
+  @media (max-width: 600px) { .step { grid-template-columns: 48px minmax(0, 1fr); row-gap: 2px; } .step .txt { grid-column: 2; } }
+  .step .wf { grid-column: -2; height: 3px; border-radius: 2px; background: var(--surface-2); position: relative; margin-top: 2px; }
+  .step .wf > span { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: var(--faint); min-width: 2px; }
+  .answer { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .panes { display: grid; gap: 12px; }
+  .pane { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .pane.chosen { border-color: var(--compare); }
+  .pane h4 { margin: 0 0 2px; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
+  .pane .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; overflow-wrap: anywhere; }
+  .md { font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; }
   .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
   .md p, .md ul, .md ol, .md table { margin: 0 0 8px; } .md ul, .md ol { padding-left: 20px; }
-  .md h1, .md h2, .md h3, .md h4 { font-size: 13px; margin: 10px 0 4px; }
+  .md h1, .md h2, .md h3, .md h4 { font-size: 13.5px; margin: 12px 0 4px; }
   .md table { display: block; overflow-x: auto; font-size: 12px; } .md th, .md td { padding: 4px 8px; white-space: nowrap; }
-  .error { color: var(--busy); }
-  /* 최근 질문: 줄을 누르면 그 질문의 trace·답변 (일주일 안 · 저장한 것은 계속) */
-  tr.open-able { cursor: pointer; } tr.open-able:hover td { background: rgba(255, 255, 255, .03); }
-  tr.open-able td.q::after { content: " ▸"; color: var(--faint); } tr.open-able.open td.q::after { content: " ▾"; }
-  td.detail { background: rgba(0, 0, 0, .25); }
-  .detail-box { display: grid; gap: 10px; } .detail-box h3 { margin: 0; font-size: 13px; color: var(--muted); }
-  .trace { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted); }
-  .trace .tr { white-space: pre-wrap; word-break: break-word; }
-  .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
-  .trace .tr .at { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; }
-  .trace .tr.thought span:last-child { color: var(--text); opacity: .75; }
-  details.saved { border-top: 1px solid var(--line); padding: 10px 0; }
-  details.saved > summary { cursor: pointer; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
-  details.saved > summary .q { font-weight: 600; }
-  details.saved .detail-box { margin-top: 10px; }
-  #login { max-width: 360px; }
-  .back { color: var(--muted); text-decoration: none; font-size: 13px; } .back:hover { color: var(--text); }
-  #login form { display: flex; gap: 8px; } #login input { flex: 1; }
+  .md code { font: 12.5px var(--mono); }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px;
+           border-radius: 6px; font-size: 13px; z-index: 10; }
 </style>
 </head>
 <body>
-<main>
-  <div class="bar"><a href="/" class="back">← FCLM</a><h1>답변 기록</h1><span class="grow"></span>
-    <select id="days" aria-label="기간"><option value="1">오늘</option><option value="7" selected>최근 7일</option><option value="30">최근 30일</option></select>
-    <button id="reload" type="button">새로고침</button>
+<div id="login" class="login" hidden>
+  <form>
+    <h1>FCLM Admin</h1>
+    <p class="muted">관리자 비밀번호를 입력하세요.</p>
+    <input id="key" class="input" type="password" autocomplete="current-password" aria-label="비밀번호" required>
+    <button class="btn primary" type="submit">로그인</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</div>
+
+<div id="app" class="shell" hidden>
+  <nav class="side" aria-label="관리자 메뉴">
+    <a class="brand" href="/" aria-label="FCLM 홈으로"><img src="/static/fclm-logo.png" alt="" width="85" height="18"><span>Admin</span></a>
+    <a class="nav" href="#overview">개요</a>
+    <a class="nav" href="#traces">Traces<span class="count" data-count="traces"></span></a>
+    <a class="nav" href="#feedback">피드백<span class="count" data-count="feedback"></span></a>
+    <a class="nav" href="#saved">저장됨<span class="count" data-count="saved"></span></a>
+    <a class="nav" href="#models">모델 API</a>
+    <a class="nav" href="#errors">오류<span class="count" data-count="errors"></span></a>
+    <div class="foot" id="foot"></div>
+  </nav>
+  <div class="main">
+    <header class="top">
+      <h1 id="title"></h1>
+      <select id="days" class="btn" aria-label="기간"><option value="1">오늘</option><option value="7" selected>최근 7일</option><option value="30">최근 30일</option></select>
+      <button id="reload" class="btn" type="button">새로고침</button>
+    </header>
+
+    <section class="view" data-view="overview">
+      <div class="kpis" id="kpis"></div>
+      <div class="card"><header><h2>날짜별 질문</h2><div class="legend" id="legend"></div></header><div class="body"><svg class="chart" id="chart" role="img" aria-label="날짜별 질문 수"></svg></div></div>
+      <div class="grid2">
+        <div class="card"><header><h2>모델별 호출</h2><a class="btn" href="#models">자세히</a></header><div id="ov-models" class="scroll"></div></div>
+        <div class="card"><header><h2>최근 👎 받은 답</h2><a class="btn" href="#feedback">전체</a></header><div id="ov-down" class="scroll"></div></div>
+      </div>
+    </section>
+
+    <section class="view" data-view="traces" hidden>
+      <div class="toolbar"><input id="search" class="input" type="search" placeholder="질문 검색" aria-label="질문 검색"><div class="seg" id="filters"></div></div>
+      <div class="card scroll" id="traces"></div>
+      <p class="note">trace와 답변은 7일 동안만 보관됩니다. 오래 둘 기록은 열어서 저장하세요. 표는 최근 300건까지 보여 줍니다.</p>
+    </section>
+
+    <section class="view" data-view="feedback" hidden>
+      <div class="toolbar"><div class="seg" id="vote-tabs"></div></div>
+      <div class="card scroll" id="feedback"></div>
+    </section>
+
+    <section class="view" data-view="saved" hidden>
+      <p class="note">저장한 질문·trace·답변은 기간과 상관없이 계속 남습니다.</p>
+      <div class="card scroll" id="saved"></div>
+    </section>
+
+    <section class="view" data-view="models" hidden>
+      <div class="kpis" id="model-kpis"></div>
+      <div class="card scroll" id="models"></div>
+      <div class="card"><header><h2>날짜별 비용 (추정)</h2></header><div class="scroll" id="cost-days"></div></div>
+      <p class="note">비용은 유료 등급 단가로 셈한 추정치입니다 (캐시 할인 제외). /compare 칸마다의 호출도 포함합니다.</p>
+    </section>
+
+
+    <section class="view" data-view="errors" hidden>
+      <div class="card scroll" id="errors"></div>
+    </section>
   </div>
-  <section id="login" hidden>
-    <h2>관리자 비밀번호</h2>
-    <form><input id="key" type="password" autocomplete="current-password" required><button type="submit">보기</button></form>
-    <p id="login-error" class="error"></p>
-  </section>
-  <div id="view" hidden>
-    <section><div id="tiles" class="tiles"></div><p id="note" class="muted"></p></section>
-    <section><h2>날짜별</h2><div class="scroll"><table id="days-table"></table></div></section>
-    <section><h2>혼잡 안내가 나간 원인</h2><div class="scroll"><table id="errors"></table></div></section>
-    <section><h2>모델 비교 (/compare)</h2><p class="muted">고른 답은 테두리로 표시됩니다. 걸린 시간은 칸마다 따로 잰 값입니다.</p><div id="compares"></div></section>
-    <section><h2>저장한 기록</h2><p class="muted">최근 질문에서 저장한 질문·trace·답변은 기간과 상관없이 여기 남습니다.</p><div id="saved"></div></section>
-    <section><div class="bar"><h2>최근 질문</h2><span class="grow"></span><div id="filters" class="bar"></div></div>
-      <div class="scroll"><table id="recent"></table></div></section>
+</div>
+
+<dialog id="drawer" class="drawer" aria-label="질문 상세"><div class="dr">
+  <div class="dr-head"><span class="id" id="dr-id"></span>
+    <button class="btn" id="dr-copy" type="button" title="질문·trace·답변을 AI 에이전트에 붙여 넣을 수 있게 복사">복사</button>
+    <button class="btn" id="dr-save" type="button">저장</button>
+    <button class="btn" id="dr-close" type="button" aria-label="닫기">닫기</button>
   </div>
-</main>
+  <div class="dr-body" id="dr-body"></div>
+</div></dialog>
+
 <script>
 const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김", compare: "비교", blocked: "차단" };
 const MODE = { deep: "/model deep", deep_r: "/model deep --r", gemini: "/model gemini", flash: "/model flash", lite: "/model lite" };
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료", error: "오류" };
-const api = (path, options = {}) => fetch(path, { ...options, headers: { "X-Admin-Key": adminKey } });
-const md = import("/static/md.js"); // 비교 답은 채팅 화면과 같은 마크다운 표시
+const VIEWS = { overview: "개요", traces: "Traces", feedback: "피드백", saved: "저장됨", models: "모델 API", errors: "오류" };
+const VOTE = { up: "👍", down: "👎" };
+const md = import("/static/md.js");
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -113,15 +249,23 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) if (k != null) n.append(k);
   return n;
 };
-const row = (cells, head) => el("tr", {}, ...cells.map((c) => (c instanceof Node ? el(head ? "th" : "td", {}, c) : el(head ? "th" : "td", { text: c ?? "" }))));
-const cell = (cls, text, title) => el("td", { class: cls, text, ...(title && { title }) });
-const badge = (o) => el("span", { class: "badge " + o, text: LABEL[o] || o });
-const VOTE = { up: "👍", down: "👎" }; // 답 아래 👍/👎 (사용자에게 가끔만 보임)
+const api = (path, options = {}) => fetch(path, { ...options, headers: { "X-Admin-Key": adminKey } });
 const usd = (v) => "$" + (v || 0).toFixed(v >= 1 ? 2 : 4); // 유료 등급 기준 추정 (무료 등급이라 실제 청구는 없음)
-let data = null, filter = "all";
-// 비밀번호는 이 탭에만 기억한다 (저장소를 못 쓰는 브라우저면 이 페이지를 연 동안만)
+const sec = (ms) => (ms == null ? "" : (ms / 1000).toFixed(1) + "s");
+const when = (t) => t.slice(5, 16).replace("T", " ");
+const num = (n) => (n || 0).toLocaleString();
+const pct = (a, b) => (b ? ((a / b) * 100).toFixed(1) + "%" : "–");
+const status = (o) => el("span", { class: "status " + o, text: LABEL[o] || o });
+const modelOf = (r) => (r.outcome === "compare" ? "3개 모델" : r.model || "");
+let data = null, filter = "all", voteTab = "down", query = "", current = null;
 let adminKey = "";
 try { adminKey = sessionStorage.getItem("fclm-admin") || ""; } catch {}
+
+function toast(text) {
+  const t = el("div", { class: "toast", text, role: "status" });
+  document.body.append(t);
+  setTimeout(() => t.remove(), 1600);
+}
 
 async function load() {
   if (!adminKey) return showLogin("");
@@ -129,132 +273,274 @@ async function load() {
   if (res.status === 401 || res.status === 403) { // 3회부터 경고, 5회 틀리면 이 IP는 막힘 (서버 문구 그대로)
     adminKey = "";
     try { sessionStorage.removeItem("fclm-admin"); } catch {}
-    const detail = (await res.json().catch(() => ({}))).detail;
-    showLogin(detail || "비밀번호가 맞지 않습니다.");
-    if (res.status === 403) $("login").querySelector("form").hidden = true;
+    showLogin((await res.json().catch(() => ({}))).detail || "비밀번호가 맞지 않습니다.");
+    if (res.status === 403) $("login").querySelector("form").querySelectorAll("input, button").forEach((n) => (n.disabled = true));
     return;
   }
   if (!res.ok) return showLogin(`불러오지 못했습니다 (${res.status})`);
   data = await res.json();
-  $("login").hidden = true; $("view").hidden = false;
+  $("login").hidden = true; $("app").hidden = false;
   render();
 }
-function showLogin(message) { $("login").hidden = false; $("view").hidden = true; $("login-error").textContent = message; }
+function showLogin(message) { $("login").hidden = false; $("app").hidden = true; $("login-error").textContent = message; }
+
+const savedIds = () => new Set((data.saved || []).map((x) => x.id));
+const hasDetail = (r) => r.id && (r.t >= data.detail_since || savedIds().has(r.id));
 
 function render() {
-  const total = data.total || 0;
-  $("tiles").replaceChildren(
-    el("div", { class: "tile" }, el("div", { class: "k", text: "전체 질문" }), el("div", { class: "v", text: total.toLocaleString() })),
-    ...Object.keys(LABEL).map((o) => el("div", { class: "tile" }, el("div", { class: "k " + o, text: LABEL[o] }),
-      el("div", { class: "v", text: (data.by_outcome[o] || 0).toLocaleString() }),
-      el("div", { class: "p", text: total ? ((data.by_outcome[o] / total) * 100).toFixed(1) + "%" : "-" }))),
-    ...Object.entries(VOTE).map(([v, icon]) => el("div", { class: "tile" }, el("div", { class: "k", text: icon }),
-      el("div", { class: "v", text: (data.votes?.[v] || 0).toLocaleString() }))),
-    el("div", { class: "tile", title: "다시 쓰기 뒤에도 도구 결과로 확인되지 않은 수치가 남은 답" }, el("div", { class: "k", text: "수치 미확인" }),
-      el("div", { class: "v", text: (data.unverified || 0).toLocaleString() })),
-    el("div", { class: "tile", title: "유료 등급 단가로 셈한 추정치 (캐시 할인 제외). 무료 등급이라 실제 청구는 없음" },
-      el("div", { class: "k", text: "모델 비용 (추정)" }), el("div", { class: "v", text: usd(data.cost) }),
-      el("div", { class: "p", text: data.by_outcome?.ok ? `답 1개당 ${usd(data.cost / data.by_outcome.ok)}` : "-" })),
+  const view = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "overview";
+  document.querySelectorAll(".view").forEach((s) => (s.hidden = s.dataset.view !== view));
+  document.querySelectorAll(".nav").forEach((a) => { const on = a.hash === "#" + view; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
+  $("title").textContent = VIEWS[view];
+  const counts = { traces: data.total, feedback: Object.values(data.votes || {}).reduce((a, b) => a + b, 0), saved: data.saved.length,
+                   errors: data.errors.length };
+  document.querySelectorAll("[data-count]").forEach((n) => (n.textContent = counts[n.dataset.count] || ""));
+  $("foot").textContent = `${data.since}부터` + (data.pending ? ` · 저장 전 ${data.pending}건` : "");
+  ({ overview: renderOverview, traces: renderTraces, feedback: renderFeedback, saved: renderSaved, models: renderModels, errors: renderErrors })[view]();
+}
+
+const kpi = (k, v, s, title) => el("div", { class: "kpi", ...(title && { title }) }, el("div", { class: "k", text: k }), el("div", { class: "v", text: v }), s ? el("div", { class: "s", text: s }) : null);
+
+function renderOverview() {
+  const total = data.total || 0, o = data.by_outcome, up = data.votes?.up || 0, down = data.votes?.down || 0;
+  const lat = data.recent.filter((r) => r.outcome === "ok" && r.ms != null).map((r) => r.ms).sort((a, b) => a - b);
+  $("kpis").replaceChildren(
+    kpi("질문", num(total), `${data.days}일`),
+    kpi("정상 응답률", pct((o.ok || 0) + (o.cached || 0), total), `혼잡 ${num(o.busy)} · 차단 ${num(o.blocked)}`),
+    kpi("만족도", pct(up, up + down), `👍 ${num(up)} · 👎 ${num(down)}`),
+    kpi("응답 시간 p50", lat.length ? sec(lat[lat.length >> 1]) : "–", lat.length ? `p95 ${sec(lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.95))])}` : "", "최근 300건 중 정상 답 기준"),
+    kpi("모델 비용 (추정)", usd(data.cost), `토큰 ${num(data.tokens)}`, "유료 등급 단가 추정. 무료 등급이라 실제 청구는 없음"),
+    kpi("수치 미확인", num(data.unverified), "도구 결과에 없는 수치가 남은 답"),
   );
-  $("note").textContent = `${data.since}부터 · 기록은 10분마다(서버가 잠들 때도) 저장됩니다` +
-    (data.pending ? ` · 아직 저장 전 ${data.pending}건 포함` : "");
-  $("days-table").replaceChildren(row(["날짜", ...Object.values(LABEL), "비용 (추정)"], true),
-    ...data.by_day.map((d) => el("tr", {}, cell("t", d.date), ...Object.keys(LABEL).map((o) => cell("n", d[o] || "")), cell("n", d.cost ? usd(d.cost) : ""))));
-  $("errors").replaceChildren(row(["원인", "횟수", "마지막"], true),
-    ...(data.errors.length ? data.errors.map((e) => el("tr", {}, cell("err", e.error), cell("n", e.count), cell("t", e.last.slice(5, 16).replace("T", " "))))
-                           : [el("tr", {}, el("td", { colSpan: 3, class: "muted", text: "없음" }))]));
-  $("filters").replaceChildren(...["all", ...Object.keys(LABEL), ...Object.keys(VOTE), "unverified"].map((o) => {
-    const b = el("button", { type: "button", text: o === "all" ? "전체" : o === "unverified" ? "수치 미확인" : LABEL[o] || VOTE[o], class: o === filter ? "on" : "" });
-    b.addEventListener("click", () => { filter = o; render(); });
+  $("legend").replaceChildren(...Object.keys(LABEL).map((k) => el("span", { class: k }, el("i"), el("span", { class: "muted", text: LABEL[k] }))));
+  drawChart();
+  const models = data.by_model || [], top = Math.max(1, ...models.map((m) => m.calls));
+  $("ov-models").replaceChildren(models.length ? table(["모델", "호출", ""], models.slice(0, 6).map((m) =>
+    el("tr", {}, el("td", { class: "mono", text: m.model }), el("td", { class: "n", text: num(m.calls) }),
+      el("td", { style: "width:40%" }, el("div", { class: "meter" }, el("span", { style: `width:${(m.calls / top) * 100}%` })))))) : empty("모델 호출이 없습니다."));
+  const downs = data.recent.filter((r) => r.vote === "down").slice(0, 6);
+  $("ov-down").replaceChildren(downs.length ? traceTable(downs, true) : empty("👎 받은 답이 없습니다."));
+}
+
+function drawChart() {
+  const svg = $("chart"), days = [...data.by_day].reverse(), keys = Object.keys(LABEL);
+  const W = svg.clientWidth || 600, H = 180, pad = { l: 32, b: 20, t: 8 };
+  const max = Math.max(1, ...days.map((d) => keys.reduce((s, k) => s + (d[k] || 0), 0)));
+  const step = (W - pad.l) / Math.max(1, days.length), bw = Math.min(36, step * 0.6);
+  const y = (v) => H - pad.b - (v / max) * (H - pad.b - pad.t);
+  const NS = "http://www.w3.org/2000/svg", s = (tag, a) => { const n = document.createElementNS(NS, tag); for (const k in a) n.setAttribute(k, a[k]); return n; };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const kids = [];
+  for (const v of [0, Math.round(max / 2), max]) {
+    kids.push(s("line", { class: "grid", x1: pad.l, x2: W, y1: y(v), y2: y(v) }));
+    const t = s("text", { x: pad.l - 6, y: y(v) + 4, "text-anchor": "end" }); t.textContent = v; kids.push(t);
+  }
+  days.forEach((d, i) => {
+    let acc = 0;
+    const x = pad.l + i * step + (step - bw) / 2;
+    for (const k of keys) {
+      if (!d[k]) continue;
+      const r = s("rect", { x, y: y(acc + d[k]), width: bw, height: y(acc) - y(acc + d[k]), fill: `var(--${k})` });
+      r.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `${d.date} ${LABEL[k]} ${d[k]}` }));
+      kids.push(r); acc += d[k];
+    }
+    if (days.length <= 16 || i % Math.ceil(days.length / 10) === 0) {
+      const t = s("text", { x: x + bw / 2, y: H - 4, "text-anchor": "middle" }); t.textContent = d.date.slice(5); kids.push(t);
+    }
+  });
+  svg.replaceChildren(...kids);
+}
+
+const empty = (text) => el("div", { class: "empty", text });
+function table(head, rows, numeric = []) {
+  return el("table", {}, el("thead", {}, el("tr", {}, ...head.map((h, i) => el("th", { class: numeric.includes(i) ? "n" : "", text: h })))), el("tbody", {}, ...rows));
+}
+
+// 질문 표 (Traces · 피드백 · 저장됨 · 개요가 함께 쓴다). 줄을 누르면 오른쪽에 trace 창
+function traceTable(records, compact = false) {
+  const head = compact ? ["시각", "질문", "모델"] : ["시각", "상태", "질문", "모델", "시간", "토큰", "비용", ""];
+  const saved = savedIds();
+  return table(head, records.map((r) => {
+    const q = el("td", { class: "q" }, el("div", { class: "text", text: r.q || "" }),
+      r.error ? el("div", { class: "sub", text: r.error }) : null,
+      r.unverified ? el("div", { class: "sub", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null);
+    const cells = compact ? [el("td", { class: "t", text: when(r.t) }), q, el("td", { class: "model", text: modelOf(r) })]
+      : [el("td", { class: "t", text: when(r.t) }), el("td", {}, status(r.outcome)), q, el("td", { class: "model", text: modelOf(r) }),
+         el("td", { class: "n", text: sec(r.ms) }), el("td", { class: "n", text: r.tokens ? num(r.tokens) : "" }), el("td", { class: "n", text: r.cost != null ? usd(r.cost) : "" }),
+         el("td", { class: "n" }, r.vote ? el("span", { class: "vote-" + r.vote, text: VOTE[r.vote], title: r.vote === "up" ? "좋아요" : "싫어요" }) : null,
+           saved.has(r.id) ? el("span", { class: "faint", text: " 저장됨" }) : null)];
+    const tr = el("tr", {}, ...cells);
+    if (hasDetail(r) || r.outcome === "compare") {
+      tr.classList.add("open-able");
+      tr.tabIndex = 0;
+      tr.addEventListener("click", () => openDrawer(r, tr));
+      tr.addEventListener("keydown", (e) => e.key === "Enter" && openDrawer(r, tr));
+    }
+    return tr;
+  }), compact ? [] : [4, 5, 6, 7]);
+}
+
+function renderTraces() {
+  const keys = ["all", ...Object.keys(LABEL), "unverified"];
+  const count = (k) => (k === "all" ? data.recent.length : k === "unverified" ? data.recent.filter((r) => r.unverified).length : data.recent.filter((r) => r.outcome === k).length);
+  $("filters").replaceChildren(...keys.filter((k) => k === "all" || count(k)).map((k) => {
+    const b = el("button", { type: "button", class: k === filter ? "on" : "" }, document.createTextNode(k === "all" ? "전체" : k === "unverified" ? "수치 미확인" : LABEL[k]), el("span", { class: "c", text: count(k) }));
+    b.addEventListener("click", () => { filter = k; renderTraces(); });
     return b;
   }));
-  renderCompares();
-  renderSaved();
-  const shown = data.recent.filter((r) => filter === "all" || r.outcome === filter || r.vote === filter || (filter === "unverified" && r.unverified));
-  $("recent").replaceChildren(row(["시각", "결과", "질문", "도구", "모델", "걸린 시간", "비용"], true),
-    ...shown.map((r) => {
-      const tr = el("tr", {}, cell("t", r.t.slice(5, 16).replace("T", " ")), el("td", {}, badge(r.outcome), r.vote ? el("span", { class: "vote", text: " " + VOTE[r.vote] }) : null),
-        el("td", { class: "q" }, document.createTextNode(r.q || ""), r.error ? el("div", { class: "err", text: r.error }) : null,
-          r.unverified ? el("div", { class: "err", text: `확인 안 된 수치: ${r.unverified.join(", ")}` }) : null),
-        cell("", (r.tools || []).join(", ")), cell("t", r.outcome === "compare" ? `3개 모델${r.chosen ? " · 고름" : ""}` : [MODE[r.mode], r.route, r.model].filter(Boolean).join(" · ")),
-        cell("n", r.ms != null ? (r.ms / 1000).toFixed(1) + "초" : ""),
-        cell("n", r.cost != null ? usd(r.cost) : "", r.tokens ? `토큰 ${r.tokens.toLocaleString()}` : ""));
-      // 일주일 안의 질문(또는 저장한 질문)은 누르면 아래에 trace·답변
-      if (r.id && (r.t >= data.detail_since || data.saved.some((x) => x.id === r.id))) {
-        tr.classList.add("open-able");
-        tr.addEventListener("click", () => toggleDetail(tr, r));
-      }
-      return tr;
-    }));
+  const q = query.trim().toLowerCase();
+  const shown = data.recent.filter((r) => (filter === "all" || r.outcome === filter || (filter === "unverified" && r.unverified)) && (!q || (r.q || "").toLowerCase().includes(q)));
+  $("traces").replaceChildren(shown.length ? traceTable(shown) : empty("해당하는 질문이 없습니다."));
 }
 
-async function toggleDetail(tr, r) {
-  if (tr.nextElementSibling?.classList.contains("detail-row")) { tr.nextElementSibling.remove(); tr.classList.remove("open"); return; }
-  tr.classList.add("open");
-  const td = el("td", { class: "detail", colSpan: 6 }, el("p", { class: "muted", text: "불러오는 중…" }));
-  tr.after(el("tr", { class: "detail-row" }, td));
-  const res = await api("/api/admin/detail?id=" + encodeURIComponent(r.id));
-  if (!res.ok) return td.replaceChildren(el("p", { class: "muted", text: (await res.json().catch(() => ({}))).detail || "불러오지 못했습니다." }));
-  const d = await res.json();
-  const save = el("button", { type: "button", text: d.saved ? "저장됨" : "저장", disabled: d.saved });
-  save.addEventListener("click", async () => {
-    save.disabled = true;
-    const ok = (await api("/api/admin/saved/" + r.id, { method: "POST" })).ok;
-    if (ok) { save.textContent = "저장됨"; await load(); } else { save.disabled = false; save.textContent = "저장 실패 · 다시"; }
-  });
-  td.replaceChildren(await detailBox(d.trace, d.answer, save));
-}
-
-// trace 줄들 + 답변 (채팅 화면의 /trace와 같은 모양)
-async function detailBox(trace, answer, button) {
-  const { renderMarkdown } = await md;
-  const lines = (trace || []).map((t) => {
-    const text = t.kind === "tool" ? `${t.name} ${JSON.stringify(t.args || {})}` : t.kind === "result" ? `${t.name}${t.ok ? "" : " (오류)"} ${t.text}` : t.text || "";
-    return el("div", { class: "tr " + t.kind }, el("span", { class: "at", text: `+${t.at}초` }), el("b", { text: TRACE_LABEL[t.kind] || t.kind }), el("span", { text }));
-  });
-  const body = el("div", { class: "md" });
-  if (answer) renderMarkdown(body, answer); else body.append(el("p", { class: "muted", text: "답이 끝나기 전에 멈춘 질문입니다." }));
-  return el("div", { class: "detail-box" }, el("div", { class: "bar" }, el("h3", { text: "trace" }), el("span", { class: "grow" }), button),
-    lines.length ? el("div", { class: "trace" }, ...lines) : el("p", { class: "muted", text: "trace 없음" }),
-    el("h3", { text: "답변" }), body);
-}
-
-async function renderSaved() {
-  const box = $("saved"), list = data.saved || [];
-  if (!list.length) return box.replaceChildren(el("p", { class: "muted", text: "아직 저장한 기록이 없습니다. 최근 질문의 줄을 눌러 저장할 수 있습니다." }));
-  box.replaceChildren(...await Promise.all(list.map(async (item) => {
-    const r = item.record, unsave = el("button", { type: "button", text: "저장 취소" });
-    unsave.addEventListener("click", async (ev) => {
-      ev.preventDefault();
-      if (!confirm(`"${r.q}" 저장을 취소할까요? 일주일이 지난 질문이면 trace와 답변을 다시 볼 수 없습니다.`)) return;
-      if ((await api("/api/admin/saved/" + item.id, { method: "DELETE" })).ok) await load();
-    });
-    return el("details", { class: "saved" },
-      el("summary", {}, el("span", { class: "muted", text: r.t.slice(0, 16).replace("T", " ") }), badge(r.outcome), el("span", { class: "q", text: r.q }),
-        el("span", { class: "muted", text: [MODE[r.mode], r.model].filter(Boolean).join(" · ") })),
-      await detailBox(item.trace, item.answer, unsave));
-  })));
-}
-
-async function renderCompares() {
-  const box = $("compares"), list = data.compares || [];
-  if (!list.length) return box.replaceChildren(el("p", { class: "muted", text: "아직 비교 기록이 없습니다." }));
-  const { renderMarkdown } = await md;
-  box.replaceChildren(...list.map((c, i) => {
-    const panes = Object.entries(c.panes || {}).map(([key, p]) => {
-      const answer = el("div", { class: "md" });
-      if (p.answer) renderMarkdown(answer, p.answer); else answer.append(el("p", { class: "error", text: p.error || "답 없음" }));
-      const meta = [p.model, p.ms != null ? (p.ms / 1000).toFixed(1) + "초" : null, p.tools?.length ? "도구 " + p.tools.join(", ") : "도구 없음"];
-      return el("div", { class: "pane" + (c.chosen === key ? " chosen" : "") },
-        el("h3", {}, document.createTextNode(p.label || key), c.chosen === key ? el("span", { class: "badge compare", text: "고른 답" }) : null),
-        el("div", { class: "meta", text: meta.filter(Boolean).join(" · ") }), answer);
-    });
-    return el("details", { class: "cmp", open: i === 0 },
-      el("summary", {}, el("span", { class: "muted", text: c.t.slice(5, 16).replace("T", " ") }), el("span", { class: "q", text: c.q }),
-        el("span", { class: "muted", text: c.chosen ? `고른 답: ${c.panes?.[c.chosen]?.label || c.chosen}` : "고르지 않음" })),
-      el("div", { class: "panes" }, ...panes));
+function renderFeedback() {
+  $("vote-tabs").replaceChildren(...Object.entries({ down: "👎 싫어요", up: "👍 좋아요" }).map(([k, label]) => {
+    const b = el("button", { type: "button", class: k === voteTab ? "on" : "" }, document.createTextNode(label), el("span", { class: "c", text: data.votes?.[k] || 0 }));
+    b.addEventListener("click", () => { voteTab = k; renderFeedback(); });
+    return b;
   }));
+  const shown = data.recent.filter((r) => r.vote === voteTab);
+  $("feedback").replaceChildren(shown.length ? traceTable(shown) : empty("아직 없습니다."));
 }
+
+function renderSaved() {
+  const list = data.saved.map((x) => ({ ...x.record, id: x.id }));
+  $("saved").replaceChildren(list.length ? traceTable(list) : empty("저장한 기록이 없습니다. Traces에서 질문을 열어 저장할 수 있습니다."));
+}
+
+function renderModels() {
+  const ms = data.by_model || [], calls = ms.reduce((s, m) => s + m.calls, 0), errs = ms.reduce((s, m) => s + m.errors, 0);
+  $("model-kpis").replaceChildren(kpi("API 호출", num(calls)), kpi("오류율", pct(errs, calls), `${num(errs)}건`), kpi("토큰", num(data.tokens)),
+    kpi("비용 (추정)", usd(data.cost), data.by_outcome?.ok ? `정상 답 1개당 ${usd(data.cost / data.by_outcome.ok)}` : ""));
+  $("models").replaceChildren(ms.length ? table(["모델", "호출", "오류", "토큰", "비용", "p50", "p95", "비중"], ms.map((m) =>
+    el("tr", {}, el("td", { class: "mono", text: m.model }), el("td", { class: "n", text: num(m.calls) }),
+      el("td", { class: "n" + (m.errors ? " error-o" : ""), text: m.errors ? `${num(m.errors)} (${pct(m.errors, m.calls)})` : "0" }),
+      el("td", { class: "n", text: num(m.tokens) }), el("td", { class: "n", text: usd(m.cost) }),
+      el("td", { class: "n", text: sec(m.p50_ms) }), el("td", { class: "n", text: sec(m.p95_ms) }),
+      el("td", { style: "min-width:120px" }, el("div", { class: "meter" }, el("span", { style: `width:${(m.calls / Math.max(1, calls)) * 100}%` })))))
+  , [1, 2, 3, 4, 5, 6]) : empty("모델 호출이 없습니다."));
+  $("cost-days").replaceChildren(table(["날짜", "질문", "비용"], data.by_day.map((d) =>
+    el("tr", {}, el("td", { class: "t", text: d.date }), el("td", { class: "n", text: num(Object.keys(LABEL).reduce((s, k) => s + (d[k] || 0), 0)) }),
+      el("td", { class: "n", text: d.cost ? usd(d.cost) : "–" }))), [1, 2]));
+}
+
+
+function renderErrors() {
+  $("errors").replaceChildren(data.errors.length ? table(["원인", "횟수", "마지막"], data.errors.map((e) =>
+    el("tr", {}, el("td", { class: "error-o", style: "overflow-wrap:anywhere", text: e.error }), el("td", { class: "n", text: num(e.count) }), el("td", { class: "t", text: when(e.last) }))), [1])
+    : empty("이 기간에 오류가 없습니다."));
+}
+
+/* 오른쪽 trace 창 */
+const traceText = (t) => (t.kind === "tool" ? `${t.name} ${JSON.stringify(t.args || {})}` : t.kind === "result" ? `${t.name}${t.ok ? "" : " (오류)"} ${t.text}` : t.text || "");
+
+// AI 에이전트에 붙여 넣을 글: 질문 / 답변(trace 포함)
+function copyText(r, d) {
+  const meta = [r.t, LABEL[r.outcome] || r.outcome, r.model, MODE[r.mode], r.route, sec(r.ms), r.tools?.length ? "도구 " + r.tools.join(", ") : null,
+                r.vote ? "피드백 " + VOTE[r.vote] : null, r.error ? "오류 " + r.error : null].filter(Boolean).join(" · ");
+  if (r.outcome === "compare") {
+    const panes = Object.entries(r.panes || {}).map(([k, p]) => `## ${p.label || k} (${p.model || "?"}, ${sec(p.ms)}${r.chosen === k ? ", 사용자가 고름" : ""})\n${p.answer || p.error || "(답 없음)"}`);
+    return `질문: ${r.q}\n\n답변:\n[메타] ${meta}\n\n${panes.join("\n\n")}`;
+  }
+  const trace = (d?.trace || []).map((t) => `+${t.at}s [${TRACE_LABEL[t.kind] || t.kind}] ${traceText(t)}`).join("\n");
+  return `질문: ${r.q}\n\n답변(trace 포함):\n[메타] ${meta}\n[trace]\n${trace || "(없음)"}\n\n[답변]\n${d?.answer || "(답이 끝나기 전에 멈춤)"}`;
+}
+
+const chip = (k, v, cls) => (v ? el("span", { class: "chip" }, el("b", { text: k }), el("span", { class: cls || "", text: v })) : null);
+
+async function openDrawer(r, tr) {
+  document.querySelectorAll("tr.sel").forEach((n) => n.classList.remove("sel"));
+  tr?.classList.add("sel");
+  current = { r, d: null };
+  const body = $("dr-body"), save = $("dr-save");
+  $("dr-id").textContent = `${r.t.slice(0, 19).replace("T", " ")} · ${r.id || r.compare_id || ""}`;
+  save.hidden = r.outcome === "compare";
+  save.disabled = true; save.textContent = "저장";
+  $("dr-copy").disabled = true;
+  body.replaceChildren(...[el("p", { class: "dr-q", text: r.q }),
+    el("div", { class: "chips" }, chip("상태", LABEL[r.outcome] || r.outcome, r.outcome), chip("모델", modelOf(r)), chip("모드", MODE[r.mode]), chip("경로", r.route),
+      chip("시간", sec(r.ms)), chip("토큰", r.tokens && num(r.tokens)), chip("비용", r.cost != null && usd(r.cost)), chip("도구", r.tools?.join(", ")),
+      chip("피드백", r.vote && VOTE[r.vote]), chip("팀", r.team), chip("세션", r.session)),
+    r.error ? el("p", { class: "note warn", text: "오류: " + r.error }) : null,
+    r.unverified ? el("p", { class: "note warn", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null,
+    el("p", { class: "note", text: "불러오는 중…" })].filter(Boolean));
+  if (!$("drawer").open) $("drawer").showModal();
+  const { renderMarkdown } = await md;
+  const mdBox = (text) => { const n = el("div", { class: "md" }); renderMarkdown(n, text); return n; };
+
+  if (r.outcome === "compare") {
+    const c = (data.compares || []).find((x) => x.compare_id === r.compare_id) || r;
+    current.r = c;
+    body.lastChild.replaceWith(c.panes ? el("div", {}, el("h3", { text: "세 모델의 답" }), el("div", { class: "panes" }, ...Object.entries(c.panes).map(([k, p]) =>
+      el("div", { class: "pane" + (c.chosen === k ? " chosen" : "") },
+        el("h4", {}, document.createTextNode(p.label || k), c.chosen === k ? el("span", { class: "compare", text: "고른 답" }) : null),
+        el("div", { class: "meta", text: [p.model, sec(p.ms), p.tokens && `토큰 ${num(p.tokens)}`, p.cost != null && usd(p.cost), p.tools?.length ? "도구 " + p.tools.join(", ") : "도구 없음"].filter(Boolean).join(" · ") }),
+        p.answer ? mdBox(p.answer) : el("p", { class: "note warn", text: p.error || "답 없음" })))))
+      : el("p", { class: "note", text: "이 비교의 답은 최근 50건에만 남습니다." }));
+    $("dr-copy").disabled = !c.panes;
+    return;
+  }
+
+  const saved = data.saved.find((x) => x.id === r.id);
+  let d = saved && { trace: saved.trace, answer: saved.answer, saved: true };
+  if (!d) {
+    const res = await api("/api/admin/detail?id=" + encodeURIComponent(r.id));
+    if (current.r !== r) return; // 그사이 다른 줄을 열었다
+    if (!res.ok) { body.lastChild.replaceWith(el("p", { class: "note", text: (await res.json().catch(() => ({}))).detail || "불러오지 못했습니다." })); return; }
+    d = await res.json();
+  }
+  current.d = d;
+  $("dr-copy").disabled = false;
+  setSaveButton(d.saved);
+
+  const trace = d.trace || [], total = Math.max(r.ms ? r.ms / 1000 : 0, ...trace.map((t) => t.at), 0.1);
+  const steps = trace.map((t, i) => {
+    const end = trace[i + 1]?.at ?? total, text = traceText(t);
+    const long = text.length > 240 || t.kind === "thought";
+    const content = t.kind === "tool" ? el("div", { class: "txt" }, el("b", { text: t.name + " " }), el("code", { text: JSON.stringify(t.args || {}) }))
+      : long ? el("details", { class: "txt" }, el("summary", { text: text.slice(0, 120).replace(/\s+/g, " ") + (text.length > 120 ? "…" : "") }), el("div", { text }))
+      : el("div", { class: "txt", text });
+    return el("div", { class: "step" }, el("span", { class: "at", text: `+${t.at}s` }),
+      el("span", { class: "kind " + t.kind, text: (TRACE_LABEL[t.kind] || t.kind) + (t.kind === "result" && !t.ok ? " ✕" : "") }), content,
+      el("div", { class: "wf", title: `${t.at}s → ${end}s` }, el("span", { style: `left:${(t.at / total) * 100}%;width:${((end - t.at) / total) * 100}%` })));
+  });
+  body.lastChild.replaceWith(el("div", {}, el("h3", { text: `Trace · ${trace.length}단계` }), steps.length ? el("div", { class: "steps" }, ...steps) : el("p", { class: "note", text: "trace 없음" })));
+  body.append(el("div", {}, el("h3", { text: "답변" }), el("div", { class: "answer" }, d.answer ? mdBox(d.answer) : el("p", { class: "note", text: "답이 끝나기 전에 멈춘 질문입니다." }))));
+}
+
+function setSaveButton(isSaved) {
+  const b = $("dr-save");
+  b.disabled = false;
+  b.textContent = isSaved ? "저장 취소" : "저장";
+  b.classList.toggle("primary", !isSaved);
+  b.title = isSaved ? "영구 저장을 풉니다 (7일이 지난 기록이면 지워집니다)" : "7일이 지나도 지워지지 않게 영구 저장";
+}
+
+$("dr-save").addEventListener("click", async () => {
+  const { r, d } = current, b = $("dr-save");
+  if (!d) return;
+  if (d.saved && !confirm(`저장을 취소할까요? 7일이 지난 질문이면 trace와 답변을 다시 볼 수 없습니다.`)) return;
+  b.disabled = true;
+  const res = await api("/api/admin/saved/" + r.id, { method: d.saved ? "DELETE" : "POST" });
+  if (!res.ok) { b.disabled = false; return toast("실패했습니다. 다시 시도하세요."); }
+  d.saved = !d.saved;
+  setSaveButton(d.saved);
+  toast(d.saved ? "영구 저장했습니다." : "저장을 취소했습니다.");
+  await load();
+});
+$("dr-copy").addEventListener("click", async () => {
+  const text = copyText(current.r, current.d);
+  try { await navigator.clipboard.writeText(text); return toast("복사했습니다."); } catch {}
+  // 클립보드 API를 못 쓰는 곳(http, 일부 임베드)에서는 예전 방식으로 (모달 안에 붙여야 선택된다)
+  const ta = el("textarea", { value: text, style: "position:fixed;opacity:0" });
+  $("drawer").append(ta); ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  toast(ok ? "복사했습니다." : "복사하지 못했습니다.");
+});
+$("dr-close").addEventListener("click", () => $("drawer").close());
+$("drawer").addEventListener("click", (e) => e.target === $("drawer") && $("drawer").close()); // 바깥(배경)을 누르면 닫기
+$("drawer").addEventListener("close", () => document.querySelectorAll("tr.sel").forEach((n) => n.classList.remove("sel")));
 
 $("login").querySelector("form").addEventListener("submit", (ev) => {
   ev.preventDefault();
@@ -262,8 +548,11 @@ $("login").querySelector("form").addEventListener("submit", (ev) => {
   try { sessionStorage.setItem("fclm-admin", adminKey); } catch {}
   load();
 });
+$("search").addEventListener("input", (e) => { query = e.target.value; renderTraces(); });
 $("reload").addEventListener("click", load);
 $("days").addEventListener("change", load);
+addEventListener("hashchange", () => data && render());
+addEventListener("resize", () => data && !document.querySelector('[data-view="overview"]').hidden && drawChart());
 load();
 </script>
 </body>
