@@ -561,7 +561,7 @@ TOOLS: list[dict[str, Any]] = [
                 "include": {
                     "type": "string",
                     "description": "꼭 넣을 선수 이름, 쉼표로 (예: '슈케르', '라이스,사카'). 랭커들이 그 선수를 쓴 자리에 넣고 나머지를 한도 안에서 "
-                    "다시 고른다. 결과의 include로 들어갔는지 확인",
+                    "다시 고른다. 자리를 정해 달라면 '이름:자리' (예: '호날두:ST', 자리는 GK·CB·ST 같은 역할). 결과의 include로 들어갔는지 확인",
                 },
             },
             [],
@@ -1962,7 +1962,14 @@ class Toolbox:
         result as it is). `names` (띄어쓰기 없는 이름): players to look up beyond the usual top candidates (check_squad)."""
         names = [n for n in names if n]
         chem = self._chemistry(chemistry) if chemistry else None
-        must = ["".join(n.split()) for n in re.split(r"[,/+]", include or "") if n.strip()]  # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시)
+        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시). '이름:자리'면 그 자리에만 넣는다 ('호날두:ST')
+        must, pinned = [], {}
+        for n in re.split(r"[,/+]", include or ""):
+            name, _, role = n.partition(":")
+            if name := "".join(name.split()):
+                must.append(name)
+                if role.strip():
+                    pinned[name] = role.strip().upper()
         knobs = knobs or {}
         owned = knobs.get("owned", [])
         must += [o["name"] for o in owned if o["name"] not in must]  # 가진 카드도 꼭 넣는다
@@ -2023,7 +2030,7 @@ class Toolbox:
                 pname = "".join((p.name or "").split())
                 if any(x in pname for x in knobs.get("exclude", ())):
                     continue
-                wanted = {f"include:{name}" for name in must if name in pname}
+                wanted = {f"include:{name}" for name in must if name in pname and pinned.get(name, role) == role}
                 listed = any(n in pname for n in names)
                 if not (i < top or p.key in members or wanted or listed or (fits and any(fits(x.sp_id) for x in p.seasons))):
                     continue
