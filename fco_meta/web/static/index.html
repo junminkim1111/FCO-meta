@@ -49,7 +49,7 @@
   /* 로고 줄은 왼쪽 칸 맨 위에 둔다 — 오른쪽 챗봇 칸이 페이지 맨 위부터 화면 높이를 꽉 채우도록 */
   header { display: flex; align-items: center; gap: 14px; height: var(--head-h); padding: 0 2px; }
   header h1 { margin: 0; line-height: 0; }
-  header h1 img { height: 24px; width: auto; }
+  header h1 img { height: 32px; width: auto; }
   header h1 a { display: inline-block; border-radius: 8px; } header h1 a:hover { opacity: .85; }
   header h1 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   main { --head-h: 60px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; /* 챗봇이 주 기능이라 반반 */
@@ -69,9 +69,10 @@
   header .guide-link { margin-left: auto; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
                        color: var(--muted); font-size: 13px; text-decoration: none; }
   @media (hover: hover) { header .guide-link:hover { color: var(--text); border-color: var(--line-strong); } }
-  /* 넓은 화면: 로고 줄 높이에 맞춰 페이지 맨 오른쪽 (챗봇 칸 위). 좁은 화면은 로고 줄 오른쪽 끝 그대로 */
-  @media (min-width: 861px) { main { position: relative; }
-                              header .guide-link { position: absolute; z-index: 2; right: 16px; top: calc(16px + var(--head-h) / 2); transform: translateY(-50%); } }
+  /* 넓은 화면: 챗봇 칸 오른쪽 위에 고정 (챗봇 칸이 sticky라 스크롤해도 같이 머문다). 오른쪽 = main(최대 1640px, 가운데)의 오른쪽 여백.
+     좁은 화면은 로고 줄 오른쪽 끝 그대로 */
+  @media (min-width: 861px) { header .guide-link { position: fixed; z-index: 2; right: max(16px, calc((100% - 1640px) / 2 + 16px));
+                                                   top: calc(16px + var(--head-h) / 2); transform: translateY(-50%); } }
   header .guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   footer.foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
   footer.foot .contact a { display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
@@ -392,7 +393,7 @@
   <div class="col">
   <header>
     <div>
-      <h1><a href="/"><img src="/static/fclm-logo.png" alt="FCLM" width="113" height="24"></a></h1>
+      <h1><a href="/"><img src="/static/fclm-logo.png" alt="FCLM" width="151" height="32"></a></h1>
     </div>
     <a class="guide-link" href="/guide">가이드</a>
   </header>

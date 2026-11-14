@@ -25,7 +25,7 @@ a { color: var(--accent); }
 main { min-width: 0; padding: 24px 0 40px; }
 .g-side-in { position: sticky; top: 24px; }
 .g-logo { display: inline-flex; padding: 4px 4px 4px 12px; margin-bottom: 36px; border-radius: 8px; }
-.g-logo img { height: 21px; width: auto; }
+.g-logo img { height: 28px; width: auto; }
 .g-logo:hover { opacity: .85; } .g-logo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .g-side nav { display: flex; flex-direction: column; gap: 2px; }
 .g-side nav a { display: block; padding: 7px 12px; border-radius: 9px; color: var(--muted); font-size: 14px; text-decoration: none;
@@ -39,7 +39,7 @@ main { min-width: 0; padding: 24px 0 40px; }
   .g-side { position: sticky; top: 0; z-index: 40; margin: 0 -16px; padding: 10px 16px; background: rgba(16, 17, 22, .86);
             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
   .g-side-in { position: static; display: flex; align-items: center; gap: 10px; }
-  .g-logo { flex: none; margin: 0; padding: 2px; } .g-logo img { height: 15px; }
+  .g-logo { flex: none; margin: 0; padding: 2px; } .g-logo img { height: 20px; }
   .g-side nav { flex-direction: row; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none;
                mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent); padding: 0 14px; } /* 넘기는 칸 양끝을 흐리게 */
   .g-side nav::-webkit-scrollbar { display: none; }
