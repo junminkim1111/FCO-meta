@@ -240,9 +240,20 @@
   @media (hover: hover) { .rate button:hover { background: var(--panel-strong); color: var(--text); opacity: 1; } }
   .rate.gone { opacity: 0; }
   .rate.feed button { padding: 2px 10px; border-radius: 8px; background: none; border: 1px solid var(--line); color: var(--text); font-size: 12px; }
-  #squad-panel .sq-status { margin: 12px 0 0; min-height: 1.4em; font-size: 13px; }
-  #squad-panel .sq-status:empty { display: none; }
+  /* 짜는 중 로딩: FCLM 로고를 흐리게 깔고 그 위로 빛이 지나간다. 빈 경기장이면 가운데 크게, 선수가 있으면 오른쪽 위에 작게 */
+  .sq-loader { display: none; position: absolute; z-index: 2; aspect-ratio: 452 / 96; pointer-events: none; }
+  #squad-panel.building .sq-loader { display: block; }
+  .sq-loader { right: 10px; top: 10px; width: 64px; } .pitch:has(.empty-pitch) .sq-loader { right: auto; top: 50%; left: 50%; width: 32%; transform: translate(-50%, -50%); }
+  .sq-loader::before, .sq-loader::after { content: ""; position: absolute; inset: 0; -webkit-mask: url(/static/fclm-logo.png) center / contain no-repeat; mask: url(/static/fclm-logo.png) center / contain no-repeat; }
+  .sq-loader::before { background: rgba(255, 255, 255, .55); }
+  @media (prefers-reduced-motion: no-preference) {
+    .sq-loader::before { background: rgba(255, 255, 255, .28); }
+    .sq-loader::after { background: linear-gradient(100deg, transparent 35%, #fff 50%, transparent 65%) 0 0 / 300% 100%; animation: logo-shine 1.6s ease-in-out infinite; }
+    @keyframes logo-shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  }
   #squad-panel { scroll-margin: 16px; transition: border-color .6s ease-out, background-color .6s ease-out, box-shadow .6s ease-out; }
+  /* 평소에도 다른 칸보다 살짝: 옅은 강조색 테두리와 은은한 빛 (짜는 중에는 아래 .building이 더 세게) */
+  #squad-panel { border-color: rgba(165, 180, 252, .28); box-shadow: 0 0 18px rgba(99, 102, 241, .12); }
   /* 짜는 중: 강조색 테두리 + 은은한 바깥 빛 + 살짝 물든 바탕. 다 짜면 .6초에 걸쳐 평소 칸으로 돌아간다 */
   #squad-panel.building { border-color: rgba(165, 180, 252, .55); background-color: rgba(99, 102, 241, .07);
                           box-shadow: 0 0 0 1px rgba(165, 180, 252, .25), 0 0 28px rgba(99, 102, 241, .28); }
@@ -254,6 +265,7 @@
     @keyframes sq-breathe { 50% { box-shadow: 0 0 0 1px rgba(165, 180, 252, .4), 0 0 40px rgba(99, 102, 241, .4); } }
   } /* 칸이 화면보다 크면 가운데 대신 위를 16px 띄워 맞춘다 */
   #squad-panel .pitch { margin-top: 12px; }
+  #squad-panel .tile .val { white-space: normal; word-break: keep-all; } /* 좁은 화면: 한 줄에 안 들어가면 띄어쓰기에서 줄을 바꾼다 ('188억 / 8,300만') */
   /* 금액·급여 숫자 굴리기: 자리마다 0~9 두 바퀴를 세로로 쌓고 위로 밀어 올려 그 숫자에 멈춘다 */
   .roll { display: inline-flex; white-space: pre; } .roll > span { height: 1.2em; line-height: 1.2em; } .roll .col { overflow: hidden; }
   .roll .col > span { display: block; transition: transform var(--t, .9s) cubic-bezier(.15, .8, .25, 1); }
@@ -1018,7 +1030,8 @@ function showSquad(sq, { status = null, prev = null } = {}) {
   const close = el("button", { type: "button", text: "✕", ariaLabel: "스쿼드 닫기", title: "닫기" });
   close.addEventListener("click", () => showSquad(null));
   const players = sq.players.map((p) => ({ ...p, position: p.code, name: p.player }));
-  const field = pitch(players, "선수를 고르고 있어요", () => "");
+  const field = pitch(players, "", () => "");
+  field.append(el("div", { class: "sq-loader", role: "status" }));
   // 경기장 왼쪽 위: 줄별 OVR 평균 (spposition 20~ 공격, 9~19 미드필드, 1~8 수비. 골키퍼는 뺀다)
   const lines = [["FW", (c) => c >= 20], ["MF", (c) => c >= 9 && c < 20], ["DF", (c) => c >= 1 && c < 9]].map(([k, inLine]) => {
     const ovrs = players.filter((p) => inLine(p.code) && p.ovr != null).map((p) => p.ovr);
@@ -1049,7 +1062,7 @@ function showSquad(sq, { status = null, prev = null } = {}) {
     });
   }
   panel.replaceChildren(el("div", { class: "fd-head" }, el("h2", { text: "추천 스쿼드" }), close),
-                        tiles, el("p", { class: "sq-status" }), field);
+                        tiles, field);
   squadStatus(status);
 }
 // 중계 화면 선수 교체처럼: 나가는 선수(▼ 빨강)는 흐려지며 내려가고, 들어오는 선수(▲ 초록)가 그 자리로 들어온다
@@ -1069,10 +1082,10 @@ function substitute(field, subs) {
     setTimeout(() => node.classList.remove("sub-in"), 4500);
   });
 }
-// 스쿼드 칸 위 진행 문구 (채팅창 기다리는 문구와 같은 말). null이면 뗀다
+// 짜는 중 표시: 경기장의 로고 로딩 (진행 문구는 화면에 쓰지 않고 스크린리더에만). null이면 뗀다
 function squadStatus(text) {
-  const box = $("squad-panel").querySelector(".sq-status");
-  if (box) text ? box.replaceChildren(shimmer(text)) : box.replaceChildren();
+  const box = $("squad-panel").querySelector(".sq-loader");
+  if (box) box.ariaLabel = text || "";
   $("squad-panel").classList.toggle("building", !!text); // 짜는 동안 칸 테두리·바탕을 강조색으로
 }
 function syncSquadButtons(...buttons) {
