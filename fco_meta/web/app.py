@@ -73,16 +73,12 @@ def heavy_word(question: str) -> str | None:
     return m.group(0) if m else None
 
 
-def gemini_pick(question: str, route: Route | None) -> tuple[dict[str, Any], str]:
-    """(GeminiChat options, why) for a question: heavy (Jev, or a heavy word Jev missed) → 3.5 Flash from the start,
+def gemini_pick(question: str) -> tuple[dict[str, Any], str]:
+    """(GeminiChat options, why) for a question on a server without OpenRouter: a heavy word → 3.5 Flash from the start,
     otherwise Flash-Lite handing over to 3.5 Flash from the second tool call."""
-    if route:  # Jev가 판단하고, 어려운 질문 단어(짜줘·스쿼드·업그레이드…)가 있으면 그래도 어려움 — Jev가 스쿼드 질문을 가볍게 볼 때가 있다
-        word = heavy_word(question) if route.scope == "fco" else None
-        heavy, why = route.heavy or bool(word), route.describe() + (f" + 키워드 '{word}'" if word and not route.heavy else "")
-    else:
-        word = heavy_word(question)
-        heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
-    if heavy:
+    word = heavy_word(question)
+    why = f"키워드 '{word}'" if word else "키워드 없음"
+    if word:
         return {"model": FLASH_MODEL}, f"{why} → {FLASH_MODEL}"
     return {"escalate_to": FLASH_MODEL}, f"{why} → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
 
@@ -380,7 +376,7 @@ class TeamRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    # auto(/model 없이: DeepSeek 생각 끔, OpenRouter 키가 없으면 Jev가 고른 Gemini) · gemini(모델 선택창의 Gemini 3.5 Flash, 안 되면
+    # auto(/model 없이: DeepSeek 생각 끔, OpenRouter 키가 없으면 키워드로 고른 Gemini) · gemini(모델 선택창의 Gemini 3.5 Flash, 안 되면
     # 다른 Gemini) · deep(DeepSeek 생각 끔) · deep_r(DeepSeek + think) · luna(GPT-6 Luna 생각 끔) · luna_r(GPT-6 Luna + think)
     mode: Literal["auto", "gemini", "deep", "deep_r", "luna", "luna_r"] = "auto"
     think: bool = False  # Gemini + think: 생각 깊이 HIGH (기본은 모델이 정함). gpt·deepseek의 think는 mode luna_r·deep_r
@@ -571,7 +567,7 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode in ("auto", "gemini"):  # gemini: Jev가 질문을 보고 Flash-Lite·3.5 Flash를 고른다. auto: DeepSeek (키가 없는 서버만 Gemini)
+                if req.mode in ("auto", "gemini"):  # auto: DeepSeek (키가 없는 서버만 키워드로 Flash-Lite·3.5 Flash). gemini: 3.5 Flash
                     cached = answers.get(req.message) if req.mode == "auto" and first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
@@ -582,13 +578,13 @@ def create_app(
                         yield _event(type="done", tool_calls=[], cached=True, id=entry["id"])
                         return
                     key = "gemini"
-                    options, why = gemini_pick(req.message, route)
+                    options, why = gemini_pick(req.message)
                     if req.mode == "gemini":  # 모델 선택창의 Gemini 3.5 Flash (안 되면 다른 Flash 먼저, 그다음 Lite)
                         entry["mode"] = req.mode
                         options, why = {"model": FLASH_MODEL}, f"/model gemini → {GEMINI_LABEL} (안 되면 다른 Gemini 모델)"
                     elif _deepseek_ready():  # 기본은 DeepSeek 생각 끔 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
                         key, options = "deep", {"deadline": LONG_DEADLINE}
-                        why = f"{why.split(' → ')[0]} → {DEEP_LABEL[key]}"
+                        why = f"{route.describe() if route else 'Jev 없음'} → {DEEP_LABEL[key]}"
                     entry["route"] = why
                 else:  # deep·luna (OpenRouter)
                     if not _deepseek_ready():
@@ -898,7 +894,7 @@ def _http() -> Any:
 
 
 def _jev_route(question: str, previous: str | None) -> Route | None:
-    """Jev's routing for this question, or None (no OPENROUTER_API_KEY, error or timeout → the keyword rule)."""
+    """Jev's routing for this question, or None (no OPENROUTER_API_KEY, error or timeout → nothing is blocked)."""
     if not jev_ready():
         return None
     try:
