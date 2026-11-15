@@ -294,16 +294,28 @@
   .pane.selectable.marked { border-color: var(--pick); box-shadow: 0 0 0 1px var(--pick); }
   .pane.selectable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pane.gone { opacity: 0; }
-  #pick-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
-  #pick-dialog::backdrop { background: rgba(0, 0, 0, .55); }
-  #pick-dialog, #pick-dialog::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
-  #pick-dialog:not([open]), #pick-dialog:not([open])::backdrop { opacity: 0; transform: scale(.96); }
-  @starting-style { #pick-dialog[open], #pick-dialog[open]::backdrop { opacity: 0; transform: scale(.96); } }
-  #pick-dialog::backdrop { transform: none !important; }
+  #pick-dialog, #model-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
+  #pick-dialog::backdrop, #model-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  #pick-dialog, #pick-dialog::backdrop, #model-dialog, #model-dialog::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
+  #pick-dialog:not([open]), #pick-dialog:not([open])::backdrop, #model-dialog:not([open]), #model-dialog:not([open])::backdrop { opacity: 0; transform: scale(.96); }
+  @starting-style { #pick-dialog[open], #pick-dialog[open]::backdrop, #model-dialog[open], #model-dialog[open]::backdrop { opacity: 0; transform: scale(.96); } }
+  #pick-dialog::backdrop, #model-dialog::backdrop { transform: none !important; }
   #pick-dialog p { margin: 0 0 14px; font-size: 14px; }
-  #pick-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
-  #pick-dialog button { padding: 6px 14px; }
-  #pick-dialog .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
+  #pick-dialog .row, #model-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+  #pick-dialog button, #model-dialog button { padding: 6px 14px; }
+  #pick-dialog .yes, #model-dialog .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
+  /* /model: 모델 선택창 (고른 줄은 강조색 테두리) */
+  #model-dialog { width: calc(100% - 32px); max-width: 380px; }
+  #model-dialog h3 { margin: 0 0 12px; font-size: 15px; }
+  #model-dialog fieldset { border: 0; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+  #model-dialog .opt { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+  #model-dialog .opt:has(:checked) { border-color: var(--accent); background: rgba(165, 180, 252, .08); }
+  #model-dialog .opt input { grid-row: span 2; margin: 3px 0 0; accent-color: var(--accent); }
+  #model-dialog .opt b { font-size: 14px; font-weight: 600; }
+  #model-dialog small { color: var(--muted); font-size: 12px; }
+  #model-dialog .think { display: flex; gap: 8px; align-items: center; margin: 0 0 16px; font-size: 13px; cursor: pointer; }
+  #model-dialog .think input { margin: 0; accent-color: var(--accent); }
+  #model-dialog .think:has(:disabled) { opacity: .45; cursor: default; }
   #compare-note { display: none; color: var(--muted); font-size: 13px; font-weight: 400; }
   #chat.comparing #compare-note { display: inline; }
   #chat.comparing #chat-title > .stat { display: none; }
@@ -406,7 +418,7 @@
   #cmd-menu, #team-box, #jump { transform-origin: bottom left; transition: opacity .15s ease-out, transform .15s ease-out, display .15s allow-discrete; }
   #cmd-menu[hidden], #team-box[hidden], #jump[hidden] { opacity: 0; transform: scale(.96) translateY(4px); }
   @starting-style { #cmd-menu:not([hidden]), #team-box:not([hidden]), #jump:not([hidden]) { opacity: 0; transform: scale(.96) translateY(4px); } }
-  @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #pick-dialog { transform: none !important; } }
+  @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #pick-dialog, #model-dialog { transform: none !important; } }
   /* 위로 올려 읽는 동안 새 답이 오면 입력창 위 가운데에 '↓ 새 답' */
   #jump { position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 5; translate: -50% 0; transform-origin: bottom center;
           padding: 5px 12px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--tip-bg);
@@ -442,6 +454,10 @@
     <div id="compare" hidden></div>
     <dialog id="pick-dialog"><form method="dialog"><p>이 답변을 선택할까요? 다른 답변은 사라지고 이 답변으로 대화를 이어 갑니다.</p>
       <div class="row"><button value="no">취소</button><button value="yes" class="yes">선택</button></div></form></dialog>
+    <dialog id="model-dialog" aria-labelledby="model-title"><form method="dialog"><h3 id="model-title">답할 모델</h3>
+      <fieldset id="model-opts" aria-labelledby="model-title"></fieldset>
+      <label class="think"><input type="checkbox" id="model-think"> 생각 켬 <small>더 깊게 답하지만 느려짐</small></label>
+      <div class="row"><button type="button" id="model-cancel">취소</button><button value="yes" class="yes">적용</button></div></form></dialog>
     <form id="chat-form">
       <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="구단주명" aria-label="팀을 불러올 구단주명">
         <button type="button" id="team-ok" aria-label="팀 불러오기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
@@ -1112,7 +1128,7 @@ function updateCmdMenu() {
 function pickCmd(c) {
   $("msg").value = c + " "; cmdShown = []; $("cmd-menu").hidden = true;
   $("msg").focus(); $("msg").setSelectionRange($("msg").value.length, $("msg").value.length);
-  if (c === "/model") updateCmdMenu(); // 이어서 모델 목록
+  if (c === "/model") { $("msg").value = ""; pickModel(); } // 모델 선택창
 }
 function cmdKeys(ev) {
   if ($("cmd-menu").hidden || ev.isComposing) return false;
@@ -1235,6 +1251,26 @@ function adminPrompt() {
   input.focus();
 }
 const note = (text) => say("bot note done", text); // 명령어가 적용됐다는 안내
+$("model-cancel").addEventListener("click", () => $("model-dialog").close("no")); // 제출 버튼이 아니어야 창 안의 Enter가 '적용'이 된다
+// /model (값 없이)이나 명령어 목록에서 /model을 고르면 뜨는 선택창. 지금 설정이 골라져 있고, 적용하면 /model 값을 친 것과 같다
+async function pickModel() {
+  const dialog = $("model-dialog"), think = $("model-think"), now = (modelAll || "").replace(/ --r$/, "");
+  const options = [["", "기본", "DeepSeek V4.1 Flash 생각 끔, 안 되면 Gemini"], ...Object.entries(MODELS).map(([arg, [, name, , desc]]) => [arg, name, desc])];
+  $("model-opts").replaceChildren(...options.map(([arg, name, desc]) => el("label", { class: "opt" },
+    el("input", { type: "radio", name: "model", value: arg, checked: arg === now }), el("b", { text: name }), el("small", { text: desc }))));
+  const chosen = () => dialog.querySelector("input[name=model]:checked").value;
+  const sync = () => { think.disabled = !chosen(); if (think.disabled) think.checked = false; }; // 기본은 생각 켬을 고를 수 없다
+  think.checked = !!modelAll?.endsWith(" --r");
+  $("model-opts").onchange = sync;
+  sync();
+  dialog.returnValue = "";
+  dialog.showModal();
+  await new Promise((done) => dialog.addEventListener("close", done, { once: true }));
+  $("msg").focus();
+  if (dialog.returnValue !== "yes") return;
+  if (!chosen()) { modelAll = null; return note("/model 적용: 기본 모델 (DeepSeek V4.1 Flash 생각 끔, 안 되면 Gemini)."); }
+  command(`/model ${chosen()}${think.checked ? " --r" : ""}`);
+}
 // "/"로 시작하면 모델에 보내지 않는다: 아는 명령어면 실행, 아니면 invalid command.
 function command(text) {
   const [name, ...flags] = text.split(/\s+/);
@@ -1247,11 +1283,7 @@ function command(text) {
   }
   if (cmd === "/model") {
     const [value, ...rest] = flags.map((f) => f.toLowerCase());
-    if (!value) { // 값 없이: 지금 설정과 고를 수 있는 값
-      const now = modelAll ? `지금: ${modelOf(modelAll).name} (새로고침이나 /cancel 전까지)` : "지금: 기본 (DeepSeek 생각 끔, 안 되면 Gemini)";
-      return note([now, ...Object.entries(MODELS).map(([arg, [, , , desc]]) => `/model ${arg} — ${desc}`),
-                   "--r을 붙이면 생각 켬 (gpt·deepseek은 생각 켬, gemini는 가장 깊게 생각 — 느려짐)", "/cancel로 기본 모델로 돌아갑니다"].join("\n"));
-    }
+    if (!value) return pickModel(); // 값 없이: 모델 선택창
     if (MODELS[value] && (!rest.length || (rest.length === 1 && rest[0] === "--r"))) {
       const arg = value + (rest.length ? " --r" : ""), { mode, name } = modelOf(arg);
       const slow = mode.startsWith("deep") ? " 답마다 최대 5분 걸릴 수 있어요." : rest.length ? " 더 깊게 생각해 답이 늦어질 수 있어요." : "";
@@ -1270,7 +1302,7 @@ function command(text) {
   if (cmd === "/help" && !flags.length) {
     return note([
       "명령어 (질문 대신 입력, 새로고침하면 모두 처음 상태로)",
-      "/model — 답할 모델을 고릅니다. 새로고침이나 /cancel 전까지 계속 적용 (값 없이 치면 지금 설정과 목록)",
+      "/model — 답할 모델을 고릅니다. 새로고침이나 /cancel 전까지 계속 적용 (값 없이 치면 모델 선택창)",
       ...Object.entries(MODELS).map(([arg, [, , , desc]]) => `  /model ${arg} — ${desc}`),
       "  --r을 붙이면 생각 켬 (gemini는 가장 깊게 생각)",
       "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
