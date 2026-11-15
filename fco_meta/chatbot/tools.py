@@ -46,7 +46,7 @@ from ..analytics.query import _card_details, stat_value
 from ..crawler import teamcolor_info
 from ..crawler.models import TeamColor
 from ..crawler.teamcolors import TeamColorCatalog
-from ..market.money import format_bp
+from ..market.money import format_bp, parse_bp
 from ..market.roles import ROLES, resolve_roles
 from ..market.storage import SCHEMA as MARKET_SCHEMA
 from ..pipeline.formation import FORMATIONS
@@ -112,7 +112,7 @@ SQUAD_MAX_GRADE = 11  # 스쿼드 추천은 11강까지: 12·13강은 돈이 있
 NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
     "크로스 포쳐": ["크포", "크로스포처"], "아크로바틱 피니셔": ["아크로", "아크로바틱"], "타이탄": [], "블로커": [],
-    "프레데터": [], "레이저 슈터": ["레이저"], "커맨더": [],
+    "프레데터": [], "레이저 슈터": ["레이저"], "커맨더": [], "2개의 심장": ["두심", "두개의심장", "2심"],
 }  # fmt: skip
 TRAIT_NAMES = {"".join(k.split()): k for k in NEW_TRAITS} | {a: k for k, v in NEW_TRAITS.items() for a in v}
 ADD_TRAIT_GRADE = 8
@@ -502,8 +502,8 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "true면 실제 경기 배치가 해당 포메이션과 일치한 스쿼드만 집계",
                 },
                 "max_price_bp": {
-                    "type": "integer",
-                    "description": "카드 1장 최대 가격(BP). 랭커들이 가장 많이 쓴 강화 단계의 시세로 비교",
+                    "type": "string",
+                    "description": "카드 1장 최대 가격. 질문에 적힌 금액 그대로('5억'), BP 정수도 됨. 랭커들이 가장 많이 쓴 강화 단계의 시세로 비교",
                 },
                 "max_salary": {"type": "integer", "description": "카드 1장 최대 급여 (예: '급여 29 미만' = 28)"},
                 "sort": {
@@ -548,7 +548,7 @@ TOOLS: list[dict[str, Any]] = [
                 "team_color": {"type": "string", "description": "팀컬러. 클럽·국가면 11명 모두 그 소속 카드, 시즌 단일(예: 'WS')이면 그 시즌 카드를 최대한. 생략하면 상위 랭커 전체"},
                 "formation": {"type": "string", "description": "포메이션 (예: 4-2-3-1). 생략하면 그 범위에서 가장 많이 쓰인 포메이션"},
                 "strict": {"type": "boolean", "description": "true면 실제 배치가 포메이션과 일치한 스쿼드만 집계"},
-                "max_total_price_bp": {"type": "integer", "description": "고른 선수들의 총 예산(BP). 예: 50억 = 5000000000"},
+                "max_total_price_bp": {"type": "string", "description": "고른 선수들의 총 예산. 질문에 적힌 금액 그대로('20억', '1억 5천만'), BP 정수도 됨"},
                 "max_total_salary": {"type": "integer", "description": "고른 선수들의 급여 합 상한 ('미만'이면 1 뺀 값)"},
                 "slots": {
                     "type": "string",
@@ -610,6 +610,8 @@ TOOLS: list[dict[str, Any]] = [
                 "name": {"type": "string", "description": "선수 이름 (예: 라이스)"},
                 "team_color": {"type": "string", "description": "팀컬러로 범위 제한. 생략하면 상위 랭커 전체"},
                 "formation": {"type": "string", "description": "포메이션으로 범위 제한. 생략하면 전체 포메이션"},
+                "season": {"type": "string", "description": "시즌 약칭(예: GR, 26 TOTS). 주면 season_card에 그 카드의 급여·OVR·포지션·강화별 시세를 "
+                           "준다 — 랭커가 쓰지 않은 카드여도 ('GR 돈나룸마 급여')"},
             },
             ["name"],
         ),
@@ -822,6 +824,41 @@ class ToolError(Exception):
     """Invalid tool input; returned to the model as an error result."""
 
 
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JUNG = ["ㅏ", "ㅐ", "ㅑ", "ㅒ", "ㅓ", "ㅔ", "ㅕ", "ㅖ", "ㅗ", "ㅗㅏ", "ㅗㅐ", "ㅗㅣ", "ㅛ", "ㅜ", "ㅜㅓ", "ㅜㅔ", "ㅜㅣ", "ㅠ", "ㅡ", "ㅡㅣ", "ㅣ"]
+_JONG = ["", "ㄱ", "ㄲ", "ㄱㅅ", "ㄴ", "ㄴㅈ", "ㄴㅎ", "ㄷ", "ㄹ", "ㄹㄱ", "ㄹㅁ", "ㄹㅂ", "ㄹㅅ", "ㄹㅌ", "ㄹㅍ", "ㄹㅎ", "ㅁ", "ㅂ", "ㅂㅅ",
+         "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ"]
+
+
+def _jamo(text: str) -> str:
+    """Hangul split into letters, compound vowels too ('워' → ㅇㅜㅓ), so '베켄바우어' and '베켄바워' are one letter apart."""
+    out = []
+    for ch in text:
+        code = ord(ch) - 0xAC00
+        out.append(_CHO[code // 588] + _JUNG[code % 588 // 28] + _JONG[code % 28] if 0 <= code < 11172 else ch.casefold())
+    return "".join(out)
+
+
+def _typo_close(typed: str, name: str) -> bool:
+    """`typed` is a small typo of `name` (spaces ignored): at most one Hangul letter off, two for 4+ syllables
+    ('손흥미' ~ '손흥민', '룸바르디이' ~ '롬바르디아'), but not the same text."""
+    a, b = "".join(typed.split()), "".join(name.split())
+    if a == b:
+        return False
+    limit = 2 if len(a) >= 4 else 1
+    x, y = _jamo(a), _jamo(b)
+    if abs(len(x) - len(y)) > limit:
+        return False
+    row = list(range(len(y) + 1))
+    for i, cx in enumerate(x, 1):
+        prev, row[0] = row[0], i
+        for j, cy in enumerate(y, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (cx != cy))
+        if min(row) > limit:
+            return False
+    return row[-1] <= limit
+
+
 class Toolbox:
     def __init__(
         self,
@@ -865,6 +902,9 @@ class Toolbox:
         known = inspect.signature(handler).parameters
         tool_input = {_arg_name(k, known): v for k, v in tool_input.items()}
         try:
+            for k, v in tool_input.items():  # 금액은 '20억'처럼 받아 도구가 바꾼다 (모델이 0을 하나 더 붙이던 실수: 20억 → 200억)
+                if k.endswith("_bp") and isinstance(v, str):
+                    tool_input[k] = parse_bp(v.replace("천만", "000만").replace("천", "000"))
             return json.dumps(handler(**tool_input), ensure_ascii=False), False
         except (ToolError, TypeError, ValueError) as exc:  # 잘못된 인자·조합 → 모델이 고쳐 다시 부른다
             return json.dumps({"error": str(exc)}, ensure_ascii=False), True
@@ -881,6 +921,7 @@ class Toolbox:
         if isinstance(value, int) or str(value).strip().isdigit():
             return self.catalog.resolve(value)
         text = str(value).strip()
+        text = re.sub(r"^\d(?:-?\d){2,4}\s*(?=\D)", "", text)  # "4141룸바르디이": 붙여 쓴 포메이션은 떼어낸다 ("25 UCL"은 두 자리라 그대로)
         category = None
         if m := re.fullmatch(r"(.+?)\s*\((클럽|국가|특수)\)", text):
             text, category = m.group(1), CATEGORY_CODES[m.group(2)]
@@ -897,6 +938,11 @@ class Toolbox:
             partial = {t.name for t in self.catalog.entries if len(key) >= 2 and key in "".join(t.name.split()).casefold()}
             if len(partial) == 1:
                 candidates = self.catalog.find(partial.pop())
+        if not candidates:  # 오타 ("챌시" → 첼시, "룸바르디이" → 롬바르디아 FC): 이름이나 그 한 단어가 비슷한 팀컬러가 하나뿐이면
+            near = {t.name for t in self.catalog.entries if len("".join(text.split())) >= 2
+                    and any(_typo_close(text, w) for w in [t.name, *t.name.split()])}  # fmt: skip
+            if len(near) == 1:
+                candidates = self.catalog.find(near.pop())
         if category:
             candidates = [t for t in candidates if t.category == category] or candidates
         if len(candidates) > 1:
@@ -974,6 +1020,15 @@ class Toolbox:
             raise ToolError("관계(케미) 팀컬러 정보를 아직 수집하지 않음 — chemistry 없이 다시 호출")
         want = key(name)
         hits = [e for e in relation if key(e["name"]) == want] or [e for e in relation if want in key(e["name"])]
+        if not hits and (m := re.fullmatch(r"(현역|최신|\d{2}-(\d{2})|\d{2}(\d{2}))\s*(.+)", name.strip())):
+            # 클럽 케미는 '25-26 레알 마드리드', 국가 케미는 '2026 프랑스' — "현역"·다른 시즌 표기도 그 팀의 같은(없으면 최신) 시즌 케미로
+            year = int(m[2] or m[3]) if m[2] or m[3] else None
+            same = []
+            for e in relation:
+                if (n := re.fullmatch(r"(?:\d{2}-(\d{2})|\d{2}(\d{2}))\s*(.+)", e["name"])) and key(n[3]) == key(m[4]):
+                    same.append((int(n[1] or n[2]), e))
+            pick = [x for x in same if x[0] == year] or (same if year is None else [])
+            hits = [max(pick, key=lambda x: x[0])[1]] if pick else []
         if len(hits) != 1:
             names = ", ".join(e["name"] for e in hits[:10])
             raise ToolError(f"케미 팀컬러 '{name}'를 하나로 정할 수 없음" + (f": {names} 중 하나로" if hits else " — get_team_color_info로 이름 확인"))
@@ -1507,7 +1562,9 @@ class Toolbox:
             out.update(self._grade_changes(sq, chosen))
             if wider:
                 out["budget"].update(over_by=format_bp(out["total_price_bp"] - sq.limits["price"]),
-                                     within_budget_instead=self._swaps(sq, wider, within))  # fmt: skip
+                                     within_budget_instead=self._swaps(sq, wider, within),
+                                     stretched="의도한 결과: 훨씬 많이 쓰이는 카드라 예산을 10% 안에서 넘김. 이대로 답하고 예산 안 구성은"
+                                               " within_budget_instead로 안내 (예산에 맞추려고 다시 부르지 않음)")  # fmt: skip
         if gaps := self._salary_vs_rankers(sq, chosen):
             out["salary_vs_rankers"] = gaps
         if loose and (rare := [f"{c['entry']['name']} {(c['card']['season'] or '').split(' (')[0]}" for c in chosen
@@ -1832,7 +1889,7 @@ class Toolbox:
         raises the picks' grades like recommend_squad does (spend false keeps them)."""
         if not isinstance(picks, list) or not all(isinstance(p, dict) for p in picks):
             raise ToolError("picks는 [{role, player, season, grade}] 목록 (예: [{'role': 'ST', 'player': '홀란', 'season': '25 UCL'}])")
-        names = ["".join(str(p.get("player") or "").split()) for p in picks]
+        names = ["".join(str(p.get("player") or "").replace("★", "").split()) for p in picks]  # 답 표의 케미 표시 ★는 이름이 아니다
         sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, names)
         if isinstance(sq, dict):
             return sq
@@ -1914,7 +1971,7 @@ class Toolbox:
             if not found or len(found) != 1:
                 raise ToolError(f"'{p.get('role')}'는 자리 하나가 아님 (예: ST, RW, CB)")
             roles.append(found[0])
-        names = ["".join(str(p.get("player") or "").split()) for p in picks]
+        names = ["".join(str(p.get("player") or "").replace("★", "").split()) for p in picks]  # 답 표의 케미 표시 ★는 이름이 아니다
         sq = self._squad_setup(team_color, formation, False, None, None, ",".join(roles), None, None, names)
         if isinstance(sq, dict):
             return sq
@@ -2271,6 +2328,9 @@ class Toolbox:
             inside = [c["entry"]["name"] for c in chosen if c and "chem" in c["tags"]]
             out["chemistry"] = {"team_color": chem["name"], "need": need, "players_in_lineup": inside, "count": len(inside),
                                 "active": len(inside) >= need, "levels": chem["levels"]}  # fmt: skip
+            for row in out["lineup"]:  # 표에 그대로 옮기면 ★가 남도록 이름에 붙인다 (모델이 ★ 규칙을 잊을 때가 있다)
+                if row.get("player") in inside:
+                    row["player"] += " ★"
             if len(inside) < need:
                 notes.append(f"케미 발동 인원 {need}명 중 {len(inside)}명만 넣음 (명단 선수 중 이 범위 랭커들이 그 자리에 쓴 선수가 부족하거나 급여·예산 한도 때문)")
         if limits:
@@ -2297,7 +2357,43 @@ class Toolbox:
             out["note"] = " / ".join(notes)
         return out
 
-    def get_player_detail(self, name: str, team_color: str | None = None, formation: str | None = None) -> dict[str, Any]:
+    def _typo_name(self, name: str) -> str | None:
+        """The player rankers used whose name, or one word of it, is a small typo away from `name` ('손흥미' → '손흥민',
+        '베켄바우어' → '베켄바워'), or None. 3글자 미만이면 고치지 않고, 후보가 여럿이면 랭커가 3배 이상 더 쓴 선수일 때만."""
+        key = "".join(name.split())
+        if len(key) < 3:
+            return None
+        used = self.conn.execute(
+            "SELECT sp.name, SUM(u.ranker_count) FROM usage_stats u JOIN meta_spid sp ON sp.sp_id = u.sp_id"
+            " WHERE u.formation = '*' AND u.strict = 0 GROUP BY sp.name"
+        ).fetchall()
+        near = sorted(((n or 0, full) for full, n in used if full and any(_typo_close(key, w) for w in [full, *full.split()])),
+                      reverse=True)  # fmt: skip
+        if near and (len(near) == 1 or near[0][0] >= 3 * near[1][0]):
+            return near[0][1]
+        return None
+
+    def _season_card(self, name: str, season: str) -> dict[str, Any]:
+        """That season's card of the player (any card, used by rankers or not): salary, OVR, position, price per grade."""
+        key = "".join(season.split()).upper()
+        rows = [r for r in self.conn.execute(
+            "SELECT spid, name, season_code, main_position, ovr, salary FROM card WHERE REPLACE(name, ' ', '') LIKE ?",
+            (f"%{''.join(name.split())}%",)) if "".join((r["season_code"] or "").split()).upper() == key]  # fmt: skip
+        if not rows:
+            return {"season": season, "note": f"'{name}' 선수의 {season} 카드를 찾지 못함"}
+        r = rows[0]
+        prices = self.conn.execute("SELECT grade, price FROM card_price_latest WHERE spid = ? AND price IS NOT NULL ORDER BY grade", (r["spid"],))
+        return {"player": r["name"], "season": r["season_code"], "position": r["main_position"], "ovr": r["ovr"], "salary": r["salary"],
+                "prices": {f"{g}강": format_bp(v) for g, v in prices}, **({"note": "같은 이름의 다른 선수 카드도 있음"} if len(rows) > 1 else {})}
+
+    def get_player_detail(self, name: str, team_color: str | None = None, formation: str | None = None,
+                          season: str | None = None, _typo_retry: bool = False) -> dict[str, Any]:
+        out = self._player_detail(name, team_color, formation, _typo_retry)
+        if season:  # 랭커가 쓰지 않은 카드의 급여 ("GR 돈나룸마 쓰고 싶은데 급여를 어디서")
+            out["season_card"] = self._season_card(out.get("players", [{}])[0].get("name", name) if out.get("players") else name, season)
+        return out
+
+    def _player_detail(self, name: str, team_color: str | None, formation: str | None, _typo_retry: bool) -> dict[str, Any]:
         name = name.strip()
         if not name:
             raise ToolError("name이 필요합니다")
@@ -2325,6 +2421,10 @@ class Toolbox:
         ).fetchall()
         players = self._player_summaries(like, tc_id, tc_name, formation)
         if not rows and not players:
+            if (fixed := self._typo_name(name)) and not _typo_retry:
+                out = self._player_detail(fixed, team_color, formation, True)
+                out["typo"] = f"'{name}'을 찾지 못해 비슷한 이름 '{fixed}'로 찾음 (답 첫 줄에 '{fixed}' 기준이라고 밝힐 것)"
+                return out
             return {"name": name, "usage": [], "note": "수집된 랭커 스쿼드에서 이 이름의 선수를 찾지 못함"}
         names = sorted({r["name"] for r in rows} | {p["name"] for p in players})
         usage = []

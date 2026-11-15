@@ -3,10 +3,11 @@
     python -m fco_meta.chatbot.golden              # eval/golden.json을 사이트와 같은 경로(Jev → 모델 → 도구)로 → reports/golden-*.md
     python -m fco_meta.chatbot.golden --oracle     # 모델 없이: 각 질문의 oracle 도구를 직접 불러 조건 자체가 맞는지 (토큰 0)
     python -m fco_meta.chatbot.golden --only 1-5,12
+    python -m fco_meta.chatbot.golden --mode luna  # 모델 선택창의 모델로 (deep·luna, 기본은 사이트 기본 auto)
 
 Each case's `expect` (all optional):
     blocked            Jev가 막아 모델을 부르지 않는다
-    route              "light"(Flash-Lite로 시작) | "heavy"(처음부터 3.5 Flash)
+    route              "light"(Flash-Lite로 시작) | "heavy"(처음부터 3.5 Flash) — Gemini가 답할 때만 확인
     no_tools           도구를 부르지 않는다
     tools / tools_any  모두 / 하나 이상 불러야 할 도구
     max_calls          도구 호출 수 상한 (한 명씩 조회하는 비효율 잡기)
@@ -37,7 +38,7 @@ from .tools import BUDGET_STRETCH, Toolbox
 
 DEFAULT_CASES = Path("eval/golden.json")
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
-ADMITS = ("넘", "초과", "부족", "불가", "어렵", "안 됩", "안됩", "못 ", "없습니다", "모자")  # 예산이 안 될 때 답이 인정하는 말
+ADMITS = ("넘", "초과", "부족", "불가", "어렵", "안 됩", "안됩", "못 ", "못했", "못합", "없습니다", "모자")  # 예산이 안 될 때 답이 인정하는 말
 
 Check = tuple[str, bool, str]  # (조건, 통과, 설명)
 
@@ -69,7 +70,7 @@ def check(expect: dict[str, Any], record: dict[str, Any] | None, calls: list[tup
             return out
         add("정상 답", record["outcome"] in ("ok", "cached"), record.get("error") or record["outcome"])
         add("수치 확인", not record.get("unverified"), ", ".join(record.get("unverified") or []))
-        if route := expect.get("route"):
+        if (route := expect.get("route")) and "Flash" in (record.get("route") or ""):  # DeepSeek·Luna는 Gemini 라우팅이 없다
             light = "Flash-Lite" in (record.get("route") or "")
             add(f"라우팅 {route}", light == (route == "light"), record.get("route") or "")
     names = [n for n, _ in calls]
@@ -176,7 +177,7 @@ def _data_date(toolbox: Toolbox) -> datetime:
     return datetime.fromisoformat(max(c["data_as_of"] for c in combos))
 
 
-def run_live(cases: list[tuple[int, dict]], db: Path, toolbox: Toolbox) -> list[dict[str, Any]]:
+def run_live(cases: list[tuple[int, dict]], db: Path, toolbox: Toolbox, mode: str = "auto") -> list[dict[str, Any]]:
     """Each question in its own conversation, through the web app in this process (Jev, routing, model, tools, number check)."""
     from fastapi.testclient import TestClient
 
@@ -188,7 +189,12 @@ def run_live(cases: list[tuple[int, dict]], db: Path, toolbox: Toolbox) -> list[
     rows = []
     for i, case in cases:
         started = time.monotonic()
-        client.post("/api/chat", json={"message": case["q"]})
+        res = client.post("/api/chat", json={"message": case["q"], "mode": mode})
+        if res.status_code != 200:  # 거부된 질문은 기록이 남지 않는다 — 앞 질문의 기록을 읽지 않게
+            rows.append({"i": i, "case": case, "record": {}, "answer": res.text, "checks": [("요청", False, f"HTTP {res.status_code}")],
+                         "s": time.monotonic() - started})  # fmt: skip
+            print(f"{i:>2} 실패  {case['q'][:40]}", flush=True)
+            continue
         record, detail = log.pending[-1], log.details_pending[-1]
         calls = [(t["name"], t.get("args") or {}) for t in detail["trace"] if t["kind"] == "tool"]
         rows.append({"i": i, "case": case, "record": record, "answer": detail["answer"] or "",
@@ -239,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--only", help="이 번호만 (예: 1-5,12)")
     parser.add_argument("--oracle", action="store_true", help="모델 없이 oracle 도구로 조건만 확인 (토큰 0)")
+    parser.add_argument("--mode", default="auto", choices=("auto", "deep", "luna"), help="답할 모델 (기본: 사이트 기본)")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     if not args.db.exists():
@@ -246,9 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     cases = select(json.loads(args.cases.read_text(encoding="utf-8"))["cases"], args.only)
     toolbox = Toolbox(sqlite3.connect(f"file:{args.db}?mode=ro", uri=True))
-    rows = run_oracle(cases, toolbox) if args.oracle else run_live(cases, args.db, toolbox)
+    rows = run_oracle(cases, toolbox) if args.oracle else run_live(cases, args.db, toolbox, args.mode)
     text = report(rows, args.oracle)
-    out = args.out or DEFAULT_OUT_DIR / f"golden{'-oracle' if args.oracle else ''}-{datetime.now():%Y%m%d-%H%M}.md"
+    out = args.out or DEFAULT_OUT_DIR / f"golden{'-oracle' if args.oracle else ''}{'' if args.mode == 'auto' else '-' + args.mode}-{datetime.now():%Y%m%d-%H%M}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     print(re.sub(r"\*\*", "", text.splitlines()[2]), f"→ {out}")

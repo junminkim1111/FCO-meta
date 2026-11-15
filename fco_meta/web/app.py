@@ -628,11 +628,11 @@ def create_app(
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
                 answers.put(req.message, turn.text)
-            entry.update(outcome="ok", model=bot.last_model, tools=[n for n, _ in turn.tool_calls],
+            entry.update(outcome="ok", model=bot.last_model, provider=getattr(bot, "last_provider", None), tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
             if unverified := getattr(bot, "unverified", None):  # 다시 쓰기 뒤에도 도구 결과로 확인되지 않은 수치 (관리자 페이지에서 모아 본다)
                 entry["unverified"] = unverified
-            keep.add("done", text=f"모델 {bot.last_model}")
+            keep.add("done", text=f"모델 {bot.last_model}" + (f" · 제공사 {p}" if (p := getattr(bot, "last_provider", None)) else ""))
             keep.answer = turn.text
             squad = _squad_call(keep.lines)
             if squad:  # 답 아래 "스쿼드메이커로 내보내기": 누르면 같은 호출을 다시 돌려(결과는 pages에 캐시) 링크를 만든다
@@ -926,11 +926,18 @@ def _deepseek_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
     from ..chatbot.llm import OpenAIChat
 
     # fp4 제공사(Sail Research 등)는 도구 인자를 빠뜨린다 (2026-11-15: 같은 질문 5/5에서 팀컬러·포메이션 누락, DeepInfra는 5/5 정상)
-    provider = {"order": ["deepinfra"], "quantizations": ["fp8"]}  # DeepInfra 먼저, 안 되면 fp8 제공사로만
-    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL, extra={"reasoning": {"enabled": reasoning}, "provider": provider})
+    # DeepInfra는 긴 답에서 한글이 깨진다 (2026-11-15: temperature 기본 72개 중 6개, 0.3에서도 71개 중 2개 — "사요률", "포메숀").
+    # 같은 측정에서 Nebius·Fireworks는 0.3으로 48개씩 깨짐 0. 다른 제공사로 넘기지 않는다
+    provider = {"only": ["nebius", "fireworks"]}
+    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL,
+                      extra={"reasoning": {"enabled": reasoning}, "provider": provider, "temperature": 0.3})
 
 
 def _luna_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
     from ..chatbot.llm import OpenAIChat
 
-    return OpenAIChat(_http(), toolbox, model=LUNA_MODEL, extra={"reasoning": {"enabled": reasoning}, "provider": {"only": ["openai"]}})
+    from ..chatbot.prompt import LUNA_ADDENDUM
+
+    bot = OpenAIChat(_http(), toolbox, model=LUNA_MODEL, extra={"reasoning": {"enabled": reasoning}, "provider": {"only": ["openai"]}})
+    bot.prompt += LUNA_ADDENDUM  # 공통 지시문 + Luna만의 몇 줄
+    return bot

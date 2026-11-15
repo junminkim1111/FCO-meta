@@ -54,6 +54,7 @@ class ToolChat:
         self.judge = judges(model) if judge is None else judge  # 스쿼드를 모델이 직접 고르는가
         self.prompt = JUDGE_PROMPT if self.judge else SYSTEM_PROMPT
         self.last_model: str | None = None
+        self.last_provider: str | None = None  # OpenRouter가 고른 제공사 (DeepInfra 등) — 제공사별 품질 차이를 찾으려고
         self.deadline = ANSWER_DEADLINE
         self.history: list[tuple[str, str]] = []  # (질문, 답)
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
@@ -261,6 +262,7 @@ class OpenAIChat(ToolChat):
         if "error" in data:  # OpenRouter는 200에 error를 담기도 한다
             raise RuntimeError(f"{self.model}: {data['error']}")
         self.last_model = data.get("model", self.model)
+        self.last_provider = data.get("provider")
         usage = data.get("usage") or {}
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
         self.billed.setdefault(self.model, Counter()).update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))
