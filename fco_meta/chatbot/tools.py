@@ -2148,17 +2148,21 @@ class Toolbox:
 
         slots = []
         for pick, name, role in zip(picks, names, roles):
-            used: list[dict[str, Any]] = []  # 그 자리에 쓰인 시즌 카드, 많이 쓰인 순 (카드당 한 번)
-            for o in sorted(by_role.get(role, []), key=_card_usage, reverse=True):
-                if all(u["card"]["sp_id"] != o["card"]["sp_id"] for u in used):
-                    used.append(o)
+            # 그 자리에 쓰인 시즌 카드 전부, 많이 쓰인 순 (같은 선수도 시즌이 다르면 다른 카드). 스쿼드 후보는 선수당 가장 많이
+            # 쓰인 카드 하나뿐이라, 선수의 카드 목록(entry["cards"])을 펼친다
+            used: list[dict[str, Any]] = []
+            for o in by_role.get(role, []):
+                for c in o["entry"]["cards"]:
+                    if (not sq.fits or sq.season_rule or sq.fits(c["sp_id"])) and all(u["card"]["sp_id"] != c["sp_id"] for u in used):
+                        used.append({**o, "card": c})
+            used.sort(key=_card_usage, reverse=True)
             season = "".join(str(pick.get("season") or "").split()).casefold()
             at = next((i for i, o in enumerate(used) if same(o, name, season)), None)
-            if at is None and season:  # 그 시즌 카드는 랭커가 안 썼으면 같은 선수의 다른 카드로
-                at = next((i for i, o in enumerate(used) if same(o, name, "")), None)
             row: dict[str, Any] = {"role": role, "player": pick.get("player"), "season": pick.get("season"), "grade": pick.get("grade")}
             if at is None:
-                row["note"] = "이 범위 랭커들이 이 자리에 쓴 기록이 없음 (또는 이 팀컬러 소속 카드가 아님)"
+                row["note"] = "이 범위 랭커들이 이 자리에 이 시즌 카드를 쓴 기록이 없음 (또는 이 팀컬러 소속 카드가 아님)"
+                if other := next((o for o in used if same(o, name, "")), None):  # 같은 선수의 다른 시즌 카드는 쓰였으면 알린다
+                    row["note"] += f". 랭커들은 이 자리에 이 선수를 {other['card']['season']} 카드로 씀 ({_card_usage(other):.1%})"
             else:
                 o = used[at]
                 row.update(usage_rank=at + 1, usage_rate=_card_usage(o), rankers=o["card"]["rankers"], rankers_card=card(o))
@@ -2170,7 +2174,7 @@ class Toolbox:
             "sample_size": sq.first.sample_size, "fallback_to_all_formations": sq.first.fallback, "slots": slots,
             "definitions": {
                 "usage_rank": "이 범위 랭커들이 그 자리에 쓴 시즌 카드 중 사용 순위 (1 = 가장 많이 씀, 같은 선수도 시즌이 다르면 다른 카드)",
-                "usage_rate": "표본 랭커 중 이 시즌 카드를 이 자리에 선발로 쓴 비율 (그 시즌 카드를 랭커가 안 썼으면 같은 선수의 가장 많이 쓰인 카드)",
+                "usage_rate": "표본 랭커 중 이 시즌 카드를 이 자리에 선발로 쓴 비율 (선수가 아니라 그 시즌 카드 기준)",
                 "rankers_card": "순위를 매긴 카드: 시즌·랭커들이 가장 많이 쓴 강화와 그 시세·급여",
                 "used_more": "이 자리에 이 카드보다 많이 쓰이는 시즌 카드 (사용자 팀에 이미 있는 선수 제외, 최대 3장)",
             },
