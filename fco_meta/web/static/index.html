@@ -308,14 +308,14 @@
   #model-dialog { width: calc(100% - 32px); max-width: 380px; }
   #model-dialog h3 { margin: 0 0 12px; font-size: 15px; }
   #model-dialog fieldset { border: 0; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
-  #model-dialog .opt { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+  #model-dialog .opt { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
   #model-dialog .opt:has(:checked) { border-color: var(--accent); background: rgba(165, 180, 252, .08); }
-  #model-dialog .opt input { grid-row: span 2; margin: 3px 0 0; accent-color: var(--accent); }
+  #model-dialog .opt:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #model-dialog .opt input { position: absolute; opacity: 0; pointer-events: none; } /* 동그라미는 숨기고 고른 줄을 테두리로 (키보드·화면 낭독은 그대로) */
+  #model-dialog .opt img { width: 20px; height: 20px; flex: none; }
   #model-dialog .opt b { font-size: 14px; font-weight: 600; }
-  #model-dialog small { color: var(--muted); font-size: 12px; }
-  #model-dialog .think { display: flex; gap: 8px; align-items: center; margin: 0 0 16px; font-size: 13px; cursor: pointer; }
-  #model-dialog .think input { margin: 0; accent-color: var(--accent); }
-  #model-dialog .think:has(:disabled) { opacity: .45; cursor: default; }
+  #model-dialog #model-think { display: block; margin: 0 0 16px; padding: 5px 14px; border-radius: 999px; color: var(--muted); background: none; border: 1px solid var(--line); }
+  #model-dialog #model-think[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: rgba(165, 180, 252, .08); }
   #compare-note { display: none; color: var(--muted); font-size: 13px; font-weight: 400; }
   #chat.comparing #compare-note { display: inline; }
   #chat.comparing #chat-title > .stat { display: none; }
@@ -456,7 +456,7 @@
       <div class="row"><button value="no">취소</button><button value="yes" class="yes">선택</button></div></form></dialog>
     <dialog id="model-dialog" aria-labelledby="model-title"><form method="dialog"><h3 id="model-title">답할 모델</h3>
       <fieldset id="model-opts" aria-labelledby="model-title"></fieldset>
-      <label class="think"><input type="checkbox" id="model-think"> 생각 켬 <small>더 깊게 답하지만 느려짐</small></label>
+      <button type="button" id="model-think" aria-pressed="false">think</button>
       <div class="row"><button type="button" id="model-cancel">취소</button><button value="yes" class="yes">적용</button></div></form></dialog>
     <form id="chat-form">
       <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="구단주명" aria-label="팀을 불러올 구단주명">
@@ -829,21 +829,17 @@ const TOOL_STATUS = {
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
   escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
-// 명령어 상태 (새로고침하면 처음으로): /model 값 = 새로고침이나 /cancel 전까지 그 모델, /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
-let modelAll = null, traceOn = false, compareArmed = false; // /model 값 그대로 ("deepseek --r"), null이면 기본
-// /model 값 → [서버 mode, 이름, 짧은 설명(목록), 설명(/model·/help)]
-const MODELS = {
-  gemini: ["gemini", "Gemini", "질문에 맞춰 Flash-Lite·3.5 Flash", "질문을 보고 Gemini Flash-Lite·3.5 Flash를 고름 (안 되면 다른 Gemini 모델)"],
-  gpt: ["luna", "GPT-6 Luna", "GPT-6 Luna (빠르게)", "OpenAI GPT-6 Luna (빠르고 짧게 답함)"],
-  deepseek: ["deep", "DeepSeek V4.1 Flash", "DeepSeek V4.1 Flash (최대 5분)", "DeepSeek V4.1 Flash (답마다 최대 5분)"],
-};
-// "/model deepseek --r"의 값 → 서버에 보낼 mode·think와 이름. --r은 gpt·deepseek이면 그 모델 생각 켬, gemini면 생각 깊게(HIGH)
-function modelOf(arg) {
-  const think = arg.endsWith(" --r"), [mode, name] = MODELS[arg.replace(/ --r$/, "")];
-  if (mode === "gemini") return { mode, think, name: name + (think ? " · 생각 깊게" : "") };
-  return { mode: think ? `${mode}_r` : mode, think: false, name: `${name} 생각 ${think ? "켬" : "끔"}` };
+// 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침이나 /cancel 전까지), /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
+let model = null, traceOn = false, compareArmed = false; // { key: "gpt", think: true }, null이면 기본 (DeepSeek V4.1 Flash, think 끔)
+// 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]
+const MODELS = { gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], gpt: ["luna", "GPT-6 Luna", "openai"], deepseek: ["deep", "DeepSeek V4.1 Flash", "deepseek"] };
+const modelText = (m) => `model: ${MODELS[m.key][1]}${m.think ? " (think)" : ""}`;
+// 서버에 보낼 mode·think: gpt·deepseek의 think는 mode(luna_r·deep_r), Gemini의 think는 생각 깊이 HIGH
+function modelRequest(m) {
+  if (!m) return { mode: "auto", think: false };
+  const mode = MODELS[m.key][0];
+  return mode === "gemini" ? { mode, think: m.think } : { mode: m.think ? `${mode}_r` : mode, think: false };
 }
-const MODEL_ITEMS = Object.entries(MODELS).map(([arg, [, , short]]) => [`/model ${arg}`, short]); // /model 뒤에 뜨는 목록
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료" };
 // 생각 표시 줄 하나 (이어서 오는 생각 조각은 한 줄로 붙인다)
@@ -897,7 +893,7 @@ async function send(text) {
   const ctrl = new AbortController();
   setBusy(ctrl);
   mention(say("me", text));
-  const arg = modelAll || "auto", { mode, think } = modelAll ? modelOf(modelAll) : { mode: "auto", think: false };
+  const used = model, { mode, think } = modelRequest(used); // 답 도중에 모델을 바꿔도 이 답의 표시는 그대로
   const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace);
   const bubble = el("div");
@@ -995,7 +991,7 @@ async function send(text) {
   }
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
-  if (arg !== "auto") bubble.after(el("div", { class: "applied", text: `/model ${arg} 적용: ${modelOf(arg).name}` }));
+  if (used) bubble.after(el("div", { class: "applied", text: modelText(used) }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
   if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId, built));
 }
@@ -1105,17 +1101,16 @@ function rateRow(id) {
 }
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [
-  ["/model", "답할 모델 (gemini·gpt·deepseek), 새로고침 전까지\n--r 생각 켬"],
+  ["/model", "답할 모델 고르기 (새로고침 전까지)"],
   ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"],
   ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
-  ["/help", "명령어와 @구단주명 사용법"],
+  ["/help", "명령어 안내 (새 탭)"],
 ];
 let cmdShown = [], cmdIndex = 0;
 function updateCmdMenu() {
   const v = $("msg").value;
-  const pool = /^\/model\s/i.test(v) ? MODEL_ITEMS : COMMANDS; // /model 뒤에서는 고를 수 있는 모델
-  cmdShown = /^\/[^\n]*$/.test(v) ? pool.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
+  cmdShown = /^\/[^\n]*$/.test(v) ? COMMANDS.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
   cmdIndex = Math.min(cmdIndex, Math.max(cmdShown.length - 1, 0));
   $("cmd-menu").hidden = !cmdShown.length;
   $("cmd-menu").replaceChildren(...cmdShown.map(([c, desc], i) => {
@@ -1124,7 +1119,7 @@ function updateCmdMenu() {
     return li;
   }));
 }
-// 고르면 입력창에 채우기만 한다 (실행은 Enter로). 뒤에 한 칸을 띄워 옵션(--r 등)을 이어 칠 수 있게
+// 고르면 입력창에 채우기만 한다 (실행은 Enter로). /model은 바로 모델 선택창
 function pickCmd(c) {
   $("msg").value = c + " "; cmdShown = []; $("cmd-menu").hidden = true;
   $("msg").focus(); $("msg").setSelectionRange($("msg").value.length, $("msg").value.length);
@@ -1252,24 +1247,23 @@ function adminPrompt() {
 }
 const note = (text) => say("bot note done", text); // 명령어가 적용됐다는 안내
 $("model-cancel").addEventListener("click", () => $("model-dialog").close("no")); // 제출 버튼이 아니어야 창 안의 Enter가 '적용'이 된다
-// /model (값 없이)이나 명령어 목록에서 /model을 고르면 뜨는 선택창. 지금 설정이 골라져 있고, 적용하면 /model 값을 친 것과 같다
+$("model-think").addEventListener("click", (ev) => { const b = ev.currentTarget; b.ariaPressed = String(b.ariaPressed !== "true"); });
+// /model이나 명령어 목록에서 /model을 고르면 뜨는 선택창. 지금 설정이 골라져 있다
 async function pickModel() {
-  const dialog = $("model-dialog"), think = $("model-think"), now = (modelAll || "").replace(/ --r$/, "");
-  const options = [["", "기본", "DeepSeek V4.1 Flash 생각 끔, 안 되면 Gemini"], ...Object.entries(MODELS).map(([arg, [, name, , desc]]) => [arg, name, desc])];
-  $("model-opts").replaceChildren(...options.map(([arg, name, desc]) => el("label", { class: "opt" },
-    el("input", { type: "radio", name: "model", value: arg, checked: arg === now }), el("b", { text: name }), el("small", { text: desc }))));
-  const chosen = () => dialog.querySelector("input[name=model]:checked").value;
-  const sync = () => { think.disabled = !chosen(); if (think.disabled) think.checked = false; }; // 기본은 생각 켬을 고를 수 없다
-  think.checked = !!modelAll?.endsWith(" --r");
-  $("model-opts").onchange = sync;
-  sync();
+  const dialog = $("model-dialog"), now = model || { key: "deepseek", think: false }; // 고르지 않았으면 기본 DeepSeek
+  $("model-opts").replaceChildren(...Object.entries(MODELS).map(([key, [, name, logo]]) => el("label", { class: "opt" },
+    el("input", { type: "radio", name: "model", value: key, checked: key === now.key }),
+    el("img", { src: `/static/vendor/lobehub-icons/${logo}.svg`, alt: "", width: 20, height: 20 }), el("b", { text: name }))));
+  $("model-think").ariaPressed = String(now.think);
   dialog.returnValue = "";
   dialog.showModal();
+  dialog.querySelector("input[name=model]:checked").focus(); // 처음 포커스는 고른 줄에 (아니면 맨 위 줄에 가서 두 줄이 강조돼 보인다)
   await new Promise((done) => dialog.addEventListener("close", done, { once: true }));
   $("msg").focus();
   if (dialog.returnValue !== "yes") return;
-  if (!chosen()) { modelAll = null; return note("/model 적용: 기본 모델 (DeepSeek V4.1 Flash 생각 끔, 안 되면 Gemini)."); }
-  command(`/model ${chosen()}${think.checked ? " --r" : ""}`);
+  const picked = { key: dialog.querySelector("input[name=model]:checked").value, think: $("model-think").ariaPressed === "true" };
+  model = picked.key === "deepseek" && !picked.think ? null : picked; // 기본과 같으면 기본으로 (첫 질문 답 캐시도 쓴다)
+  note(modelText(picked));
 }
 // "/"로 시작하면 모델에 보내지 않는다: 아는 명령어면 실행, 아니면 invalid command.
 function command(text) {
@@ -1281,36 +1275,20 @@ function command(text) {
     traceOn = true; // 이 페이지에서 새로고침하기 전까지
     return note("/trace 적용: 지금부터 모델의 생각·도구 결과를 답 위에 함께 보여 줍니다. 새로고침하거나 /cancel로 끕니다.");
   }
-  if (cmd === "/model") {
-    const [value, ...rest] = flags.map((f) => f.toLowerCase());
-    if (!value) return pickModel(); // 값 없이: 모델 선택창
-    if (MODELS[value] && (!rest.length || (rest.length === 1 && rest[0] === "--r"))) {
-      const arg = value + (rest.length ? " --r" : ""), { mode, name } = modelOf(arg);
-      const slow = mode.startsWith("deep") ? " 답마다 최대 5분 걸릴 수 있어요." : rest.length ? " 더 깊게 생각해 답이 늦어질 수 있어요." : "";
-      modelAll = arg;
-      return note(`${text} 적용: 새로고침하기 전까지 ${name}.${slow} /cancel로 기본 모델로 돌아갑니다.`);
-    }
-  }
+  if (cmd === "/model" && !flags.length) return pickModel(); // 모델 선택창
   if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
-    const off = [modelAll && `/model ${modelAll}`, traceOn && "/trace(생각 표시)",
+    const off = [model && modelText(model), traceOn && "/trace(생각 표시)",
                  team && `${team.mention}(팀)`,
                  $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
-    modelAll = null; traceOn = false; dropTeam();
+    model = null; traceOn = false; dropTeam();
     if ($("chat").classList.contains("comparing")) closeCompare();
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
-  if (cmd === "/help" && !flags.length) {
-    return note([
-      "명령어 (질문 대신 입력, 새로고침하면 모두 처음 상태로)",
-      "/model — 답할 모델을 고릅니다. 새로고침이나 /cancel 전까지 계속 적용 (값 없이 치면 모델 선택창)",
-      ...Object.entries(MODELS).map(([arg, [, , , desc]]) => `  /model ${arg} — ${desc}`),
-      "  --r을 붙이면 생각 켬 (gemini는 가장 깊게 생각)",
-      "/compare — 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답하고, 마음에 드는 답을 고릅니다 (1시간에 2번)",
-      "/trace — 모델이 고른 경로·생각·도구 결과를 답 위에 함께 보여 줍니다",
-      "/cancel — 켜 둔 명령어를 모두 끄고 기본 모델로 돌아갑니다",
-      "@구단주명 — 빈 입력창에 @를 치고 구단주명을 넣으면 그 유저의 최근 경기 선발 11명을 불러와 그 질문에 함께 보냅니다",
-      "/help — 이 목록",
-    ].join("\n"));
+  if (cmd === "/help" && !flags.length) { // 가이드의 명령어 페이지를 새 탭에 (Enter로 보낸 직후라 팝업 차단에 걸리지 않는다)
+    const tab = window.open("/guide/commands", "_blank");
+    if (tab) { tab.opener = null; return note("/help: 명령어 안내를 새 탭에서 열었습니다."); }
+    note("/help: 새 탭이 막혀 열지 못했습니다. ").append(el("a", { href: "/guide/commands", target: "_blank", rel: "noopener", text: "명령어 안내 열기" }));
+    return;
   }
   if (cmd === "/compare" && !flags.length) {
     note("/compare 적용: 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답합니다. 마음에 드는 답을 누르고 한 번 더 눌러 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");

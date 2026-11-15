@@ -58,6 +58,7 @@ SQUAD_TOOLS = ("recommend_squad", "check_squad")
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
 DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
 LUNA_LABEL = {"luna": "GPT-6 Luna 생각 끔", "luna_r": "GPT-6 Luna 생각 켬"}
+GEMINI_LABEL = "Gemini 3.5 Flash"  # /model gemini·/compare의 Gemini (Jev 판단 없이 이 모델)
 
 
 def gemini_fallbacks(models: Iterable[str]) -> list[str]:
@@ -379,10 +380,10 @@ class TeamRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    # auto(/model 없이: DeepSeek 생각 끔, 안 되면 Jev가 고른 Gemini) · gemini(/model gemini: Jev가 고른 Gemini, 3.5 Flash가 안 되면
-    # 다른 Gemini) · deep(/model deepseek, 생각 끔) · deep_r(/model deepseek --r, 생각 켬) · luna(/model gpt, 생각 끔) · luna_r(/model gpt --r)
+    # auto(/model 없이: DeepSeek 생각 끔, OpenRouter 키가 없으면 Jev가 고른 Gemini) · gemini(모델 선택창의 Gemini 3.5 Flash, 안 되면
+    # 다른 Gemini) · deep(DeepSeek 생각 끔) · deep_r(DeepSeek + think) · luna(GPT-6 Luna 생각 끔) · luna_r(GPT-6 Luna + think)
     mode: Literal["auto", "gemini", "deep", "deep_r", "luna", "luna_r"] = "auto"
-    think: bool = False  # /model gemini --r: Gemini가 생각 깊이 HIGH (기본은 모델이 정함)
+    think: bool = False  # Gemini + think: 생각 깊이 HIGH (기본은 모델이 정함). gpt·deepseek의 think는 mode luna_r·deep_r
     trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
 
 
@@ -570,7 +571,7 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode in ("auto", "gemini"):  # Jev가 질문을 보고 Flash-Lite·3.5 Flash를 고른다 (auto는 DeepSeek이 안 될 때 그 모델)
+                if req.mode in ("auto", "gemini"):  # gemini: Jev가 질문을 보고 Flash-Lite·3.5 Flash를 고른다. auto: DeepSeek (키가 없는 서버만 Gemini)
                     cached = answers.get(req.message) if req.mode == "auto" and first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
@@ -582,13 +583,12 @@ def create_app(
                         return
                     key = "gemini"
                     options, why = gemini_pick(req.message, route)
-                    if req.mode == "gemini":  # DeepSeek으로 넘기지 않고 Gemini 안에서 (다른 Flash 먼저, 그다음 Lite)
+                    if req.mode == "gemini":  # 모델 선택창의 Gemini 3.5 Flash (안 되면 다른 Flash 먼저, 그다음 Lite)
                         entry["mode"] = req.mode
-                        why += " · /model gemini: 3.5 Flash가 안 되면 다른 Gemini 모델로"
-                    elif _deepseek_ready():  # 기본은 DeepSeek 생각 끔. 실패하면 위에서 고른 Gemini가 처음부터 답한다
-                        backup = options
+                        options, why = {"model": FLASH_MODEL}, f"/model gemini → {GEMINI_LABEL} (안 되면 다른 Gemini 모델)"
+                    elif _deepseek_ready():  # 기본은 DeepSeek 생각 끔 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
                         key, options = "deep", {"deadline": LONG_DEADLINE}
-                        why = f"{why.split(' → ')[0]} → {DEEP_LABEL[key]} (안 되면 {backup.get('model', 'Flash-Lite')})"
+                        why = f"{why.split(' → ')[0]} → {DEEP_LABEL[key]}"
                     entry["route"] = why
                 else:  # deep·luna (OpenRouter)
                     if not _deepseek_ready():
@@ -597,42 +597,25 @@ def create_app(
                         yield _event(type="done", tool_calls=[], error="unavailable")
                         return
                     label = {**DEEP_LABEL, **LUNA_LABEL}[req.mode]
-                    name = {"deep": "deepseek", "luna": "gpt"}[req.mode.removesuffix("_r")] + (" --r" if req.mode.endswith("_r") else "")
+                    name = {"deep": "deepseek", "luna": "gpt"}[req.mode.removesuffix("_r")]
                     key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {name} → {label}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
                 if req.think and key == "gemini":
-                    why += " · --r 생각 깊게 (HIGH)"
+                    why += " · think: 생각 깊게 (HIGH)"
                     entry["route"] = why
                 keep.add("route", text=why)
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
-                handover = req.mode == "auto" and key == "deep"  # 기본 DeepSeek이 실패하면 Gemini가 처음부터
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key))
                 if key == "gemini" and req.mode == "gemini":  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
                     options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
-                if key == "gemini" and req.think:  # --r: Gemini가 가장 깊게 생각 (DeepSeek으로 넘어가면 그쪽 설정대로)
+                if key == "gemini" and req.think:  # think: Gemini가 가장 깊게 생각
                     options["think"] = entry["think"] = True
                 stream = bot.ask_stream(ask, **options)
                 try:
-                    try:
-                        turn = yield from _relay(stream, req.trace, keep)
-                    except Exception as exc:
-                        if not handover:
-                            raise
-                        stream.close()
-                        target = backup.get("model", "Flash-Lite")
-                        line = {"kind": "fallback", "text": f"{DEEP_LABEL[key]} 실패 ({describe_error(exc)}) → {target}이 처음부터"}
-                        keep.add(**line)
-                        entry["route"] = f"{entry.get('route', '')} (DeepSeek 실패 → {target})"
-                        if req.trace:
-                            yield _event(type="trace", **line)
-                        yield _event(type="reset")
-                        key = "gemini"
-                        bot = session.bot(key, make_bot(key))
-                        stream = bot.ask_stream(ask, **backup, thoughts=True)
-                        turn = yield from _relay(stream, req.trace, keep)
+                    turn = yield from _relay(stream, req.trace, keep)
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
                     entry.update(outcome="busy", error=describe_error(exc), model=getattr(bot, "last_model", None))
@@ -667,7 +650,7 @@ def create_app(
 
     @app.post("/api/compare")
     def compare(req: ChatRequest, request: Request) -> StreamingResponse:
-        """/compare: 같은 질문을 Gemini(Jev가 고른 Flash-Lite·3.5 Flash)·GPT-6 Luna·DeepSeek이 생각 끔으로 동시에 답한다. 이벤트는 /api/chat과 같고 pane으로 구분하며,
+        """/compare: 같은 질문을 Gemini 3.5 Flash·GPT-6 Luna·DeepSeek이 생각 끔으로 동시에 답한다. 이벤트는 /api/chat과 같고 pane으로 구분하며,
         칸마다 done이 온 뒤 마지막에 all_done. 대화의 앞선 질문·답은 맥락으로 주되 이 비교 답은 대화에 남기지 않는다."""
         who = _visitor(request)
         if backend != "gemini":
@@ -714,7 +697,7 @@ def create_app(
                 bot = make_bot(pane)()
                 for q, a in history:
                     bot.remember(q, a)
-                options = gemini_pick(req.message, route)[0] if pane == "gemini" else {}
+                options = {"model": FLASH_MODEL} if pane == "gemini" else {}
                 turn = yield_into(lines, bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=req.trace, **options), pane)
                 tools = [n for n, _ in turn.tool_calls]
                 result.update(answer=turn.text, tools=tools, finish=turn.finish_reason)
@@ -891,7 +874,7 @@ class _LockedTools:
         return self.toolbox.evidence(name, result)
 
 
-COMPARE_PANES = {"gemini": "Gemini (질문에 맞춰 Flash-Lite·3.5 Flash)", "luna": LUNA_LABEL["luna"], "deep": DEEP_LABEL["deep"]}
+COMPARE_PANES = {"gemini": GEMINI_LABEL, "luna": LUNA_LABEL["luna"], "deep": DEEP_LABEL["deep"]}
 
 
 def _gemini_chat(toolbox: Toolbox | _LockedTools, model: str | None):

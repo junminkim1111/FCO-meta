@@ -51,17 +51,17 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 
 ## 명령어
 
-`/`를 치면 목록이 뜹니다. 마우스를 올리거나 ↑↓로 고르면 설명, 고르면 입력창에 채워지고 Enter로 실행합니다. `/model`을 고르면 이어서 모델 목록이 뜹니다.
+`/`를 치면 목록이 뜹니다. 마우스를 올리거나 ↑↓로 고르면 설명, 고르면 입력창에 채워지고 Enter로 실행합니다. `/model`을 고르면 모델 선택창이 뜹니다.
 
 ![명령어 목록](docs/images/commands.jpg)
 
 | 명령어 | 하는 일 |
 |---|---|
-| `/model` | 값 없이 치면 모델 선택창. 바로 고르려면: `gemini`(질문에 맞춰 Flash-Lite·3.5 Flash) · `gpt`(GPT-6 Luna) · `deepseek`(DeepSeek V4.1 Flash). 새로고침이나 `/cancel` 전까지 계속 적용. `--r` 생각 켬(Gemini는 생각 깊이 최대). 고르지 않으면 DeepSeek, 안 되면 Gemini |
+| `/model` | 모델 선택창: Gemini 3.5 Flash · GPT-6 Luna · DeepSeek V4.1 Flash와 think(생각 켬, Gemini는 생각 깊이 최대). 새로고침이나 `/cancel` 전까지 계속 적용. 고르지 않으면 DeepSeek V4.1 Flash |
 | `/compare` | 다음 질문을 Gemini·GPT·DeepSeek(생각 끔)이 이름을 가린 채 답하고, 고른 답으로 대화를 이어 감 (1시간 2번) |
 | `/trace` | 모델 선택·생각·도구 호출과 결과를 답 위에 표시 |
 | `/cancel` | 켜 둔 명령어를 모두 끔 |
-| `/help` | 사용법 |
+| `/help` | 가이드의 명령어 페이지를 새 탭에 |
 
 ## 답이 만들어지는 과정
 

@@ -236,7 +236,8 @@
 
 <script>
 const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김", compare: "비교", blocked: "차단" };
-const MODE = { deep: "/model deepseek", deep_r: "/model deepseek --r", luna: "/model gpt", luna_r: "/model gpt --r", gemini: "/model gemini", flash: "/model flash", lite: "/model lite" }; // flash·lite는 예전 기록
+const MODE = { deep: "model: DeepSeek V4.1 Flash", deep_r: "model: DeepSeek V4.1 Flash (think)", luna: "model: GPT-6 Luna", luna_r: "model: GPT-6 Luna (think)",
+               gemini: "model: Gemini", flash: "/model flash", lite: "/model lite" }; // flash·lite는 예전 기록. Gemini의 think는 기록의 think
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료", error: "오류" };
 const VIEWS = { overview: "개요", traces: "Traces", feedback: "피드백", saved: "저장됨", models: "모델 API", errors: "오류" };

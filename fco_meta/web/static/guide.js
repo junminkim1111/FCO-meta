@@ -265,20 +265,18 @@ const SCENES = {
     const form = t.q(".m-form"), txt = t.q(".m-input .txt");
     await t.wait(400);
     await t.type(txt, "/");
-    const items = [["/model", "답할 모델 (gemini·gpt·deepseek), 새로고침 전까지"], ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
-                   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"], ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"], ["/help", "명령어와 사용법"]];
+    const items = [["/model", "답할 모델 고르기 (새로고침 전까지)"], ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
+                   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"], ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"], ["/help", "명령어 안내 (새 탭)"]];
     let menu = t.put(form, `<ul class="m-menu">${items.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
     const select = (i) => menu.querySelectorAll("li").forEach((li, j) => li.classList.toggle("on", i === j));
     await t.wait(500);
     for (const i of [0, 1, 2, 1, 0]) { select(i); await t.wait(650); }
-    menu.remove(); txt.textContent = "/model ";
-    const models = [["gemini", "질문에 맞춰 Flash-Lite·3.5 Flash"], ["gpt", "GPT-6 Luna (빠르게)"], ["deepseek", "DeepSeek V4.1 Flash (최대 5분)"]];
-    menu = t.put(form, `<ul class="m-menu">${models.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
-    for (const i of [0, 1, 2]) { select(i); await t.wait(i === 2 ? 900 : 380); }
-    menu.remove(); txt.textContent = "/model deepseek";
-    await t.wait(500);
-    txt.textContent = "";
-    t.put(t.q(".m-log"), `<p class="m-note">/model deepseek 적용: 새로고침하기 전까지 DeepSeek V4.1 Flash 생각 끔.</p>`);
+    menu.remove(); txt.textContent = "";
+    const models = ["Gemini 3.5 Flash", "GPT-6 Luna", "DeepSeek V4.1 Flash"]; // 모델 선택창
+    menu = t.put(form, `<ul class="m-menu">${models.map((m) => `<li>${m}</li>`).join("")}</ul>`, "m-pop");
+    for (const i of [2, 1]) { select(i); await t.wait(i === 1 ? 900 : 500); }
+    menu.remove();
+    t.put(t.q(".m-log"), `<p class="m-note">model: GPT-6 Luna</p>`);
     await t.wait(1500);
   },
 
