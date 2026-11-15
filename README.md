@@ -57,8 +57,8 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 
 | 명령어 | 하는 일 |
 |---|---|
-| `/model` | 다음 질문을 답할 모델: `auto`(기본, 질문에 맞춰 고름) · `gemini`(실패해도 Gemini 안에서) · `flash` · `lite` · `deep`(DeepSeek). `--r` 더 깊게 생각(Gemini는 생각 깊이 최대, deep은 생각 켬), `--a` 새로고침 전까지 계속 |
-| `/compare` | 다음 질문을 세 모델이 이름을 가린 채 답하고, 고른 답으로 대화를 이어 감 (1시간 2번) |
+| `/model` | 답할 모델: `gemini`(질문에 맞춰 Flash-Lite·3.5 Flash) · `gpt`(GPT-6 Luna) · `deepseek`(DeepSeek V4.1 Flash). 새로고침이나 `/cancel` 전까지 계속 적용. `--r` 생각 켬(Gemini는 생각 깊이 최대). 고르지 않으면 DeepSeek, 안 되면 Gemini |
+| `/compare` | 다음 질문을 Gemini·GPT·DeepSeek(생각 끔)이 이름을 가린 채 답하고, 고른 답으로 대화를 이어 감 (1시간 2번) |
 | `/trace` | 모델 선택·생각·도구 호출과 결과를 답 위에 표시 |
 | `/cancel` | 켜 둔 명령어를 모두 끔 |
 | `/help` | 사용법 |
@@ -82,7 +82,7 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 | Backend | Python 3.12, FastAPI + Uvicorn (NDJSON streaming) |
 | Data | SQLite, stored in a private Hugging Face dataset |
 | Collection | NEXON Open API, FC Online Data Center scraping (httpx + selectolax) |
-| AI | Gemini 3.5 Flash-Lite / Flash (google-genai), DeepSeek V4.1 Flash (OpenRouter), DB queries via tool calling |
+| AI | Gemini 3.5 Flash-Lite / Flash (google-genai), DeepSeek V4.1 Flash · GPT-6 Luna (OpenRouter), DB queries via tool calling |
 | Question routing | Jev (OpenRouter Decisions API) |
 | Frontend | Vanilla HTML / CSS / JS, marked + DOMPurify, border-beam, thinking-orbs |
 | Automation / Deploy | GitHub Actions (daily collection), Render |

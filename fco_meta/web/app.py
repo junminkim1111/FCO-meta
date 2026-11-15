@@ -42,12 +42,13 @@ MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
-DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(auto), /model deep, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
-LONG_DEADLINE = 300.0  # /model deep·/compare의 질문당 대기 상한(초). 일반 질문은 120초
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(/model 없을 때), /model deepseek, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
+LUNA_MODEL = "openai/gpt-6-luna"  # /model gpt, /compare (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)
+LONG_DEADLINE = 300.0  # /model deepseek·gpt·/compare의 질문당 대기 상한(초). 일반 질문은 120초
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
 # 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
 # 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
-PRICES = {"deepseek": (0.30, 1.20), "flash-lite": (0.30, 2.50), "flash": (1.50, 9.00)}  # 앞에서부터: deepseek-v4.1-flash가 "flash"로 잡히지 않게
+PRICES = {"deepseek": (0.30, 1.20), "luna": (0.10, 0.50), "flash-lite": (0.30, 2.50), "flash": (1.50, 9.00)}  # 앞에서부터: deepseek-v4.1-flash가 "flash"로 잡히지 않게
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
@@ -56,6 +57,7 @@ SQUAD_TOOLS = ("recommend_squad", "check_squad")
 # 스쿼드 구성·복잡한 질문에 자주 나오는 말 (띄어쓰기 무시) → 처음부터 3.5 Flash
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
 DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
+LUNA_LABEL = {"luna": "GPT-6 Luna 생각 끔", "luna_r": "GPT-6 Luna 생각 켬"}
 
 
 def gemini_fallbacks(models: Iterable[str]) -> list[str]:
@@ -68,6 +70,20 @@ def heavy_word(question: str) -> str | None:
     """The first heavy-question word in `question` (spaces ignored), or None."""
     m = HEAVY_WORDS.search("".join(question.split()))
     return m.group(0) if m else None
+
+
+def gemini_pick(question: str, route: Route | None) -> tuple[dict[str, Any], str]:
+    """(GeminiChat options, why) for a question: heavy (Jev, or a heavy word Jev missed) → 3.5 Flash from the start,
+    otherwise Flash-Lite handing over to 3.5 Flash from the second tool call."""
+    if route:  # Jev가 판단하고, 어려운 질문 단어(짜줘·스쿼드·업그레이드…)가 있으면 그래도 어려움 — Jev가 스쿼드 질문을 가볍게 볼 때가 있다
+        word = heavy_word(question) if route.scope == "fco" else None
+        heavy, why = route.heavy or bool(word), route.describe() + (f" + 키워드 '{word}'" if word and not route.heavy else "")
+    else:
+        word = heavy_word(question)
+        heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
+    if heavy:
+        return {"model": FLASH_MODEL}, f"{why} → {FLASH_MODEL}"
+    return {"escalate_to": FLASH_MODEL}, f"{why} → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
 
 
 class RateLimit:
@@ -343,7 +359,7 @@ class AnswerCache:
 
 class CompareChoice(BaseModel):
     compare_id: str = Field(min_length=1, max_length=64)
-    pane: Literal["flash", "deep_r", "deep"]
+    pane: Literal["gemini", "luna", "deep"]
 
 
 class Feedback(BaseModel):
@@ -363,10 +379,10 @@ class TeamRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    # /model: auto(기본 DeepSeek 생각 끔, 안 되면 Jev가 고른 Gemini) · gemini(Jev가 고른 Gemini, 3.5 Flash가 안 되면 다른 Gemini) · flash · lite
-    # · deep(DeepSeek 생각 끔) · deep_r(/model deep --r, 생각 켬)
-    mode: Literal["auto", "gemini", "flash", "lite", "deep", "deep_r"] = "auto"
-    think: bool = False  # /model auto·gemini·flash·lite --r: Gemini가 답할 때 생각 깊이 HIGH (기본은 모델이 정함)
+    # auto(/model 없이: DeepSeek 생각 끔, 안 되면 Jev가 고른 Gemini) · gemini(/model gemini: Jev가 고른 Gemini, 3.5 Flash가 안 되면
+    # 다른 Gemini) · deep(/model deepseek, 생각 끔) · deep_r(/model deepseek --r, 생각 켬) · luna(/model gpt, 생각 끔) · luna_r(/model gpt --r)
+    mode: Literal["auto", "gemini", "deep", "deep_r", "luna", "luna_r"] = "auto"
+    think: bool = False  # /model gemini --r: Gemini가 생각 깊이 HIGH (기본은 모델이 정함)
     trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
 
 
@@ -498,8 +514,8 @@ def create_app(
     def make_bot(key: str) -> Callable[[], Any]:
         if key == "gemini":
             return lambda: _gemini_chat(gemini_tools, gemini_model)
-        if key == "flash":
-            return lambda: _flash_chat(gemini_tools)
+        if key in LUNA_LABEL:
+            return lambda: _luna_chat(gemini_tools, reasoning=key == "luna_r")
         return lambda: _deepseek_chat(gemini_tools, reasoning=key == "deep_r")
 
     @app.post("/api/chat")
@@ -565,33 +581,24 @@ def create_app(
                         yield _event(type="done", tool_calls=[], cached=True, id=entry["id"])
                         return
                     key = "gemini"
-                    if route:  # Jev가 판단하고, 어려운 질문 단어(짜줘·스쿼드·업그레이드…)가 있으면 그래도 어려움 — Jev가 스쿼드 질문을 가볍게 볼 때가 있다
-                        word = heavy_word(req.message) if route.scope == "fco" else None
-                        heavy, why = route.heavy or bool(word), route.describe() + (f" + 키워드 '{word}'" if word and not route.heavy else "")
-                    else:
-                        word = heavy_word(req.message)
-                        heavy, why = bool(word), f"키워드 '{word}'" if word else "키워드 없음"
-                    options: dict[str, Any] = {"model": FLASH_MODEL} if heavy else {"escalate_to": FLASH_MODEL}
-                    why += f" → {FLASH_MODEL}" if heavy else f" → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
+                    options, why = gemini_pick(req.message, route)
                     if req.mode == "gemini":  # DeepSeek으로 넘기지 않고 Gemini 안에서 (다른 Flash 먼저, 그다음 Lite)
                         entry["mode"] = req.mode
                         why += " · /model gemini: 3.5 Flash가 안 되면 다른 Gemini 모델로"
                     elif _deepseek_ready():  # 기본은 DeepSeek 생각 끔. 실패하면 위에서 고른 Gemini가 처음부터 답한다
                         backup = options
                         key, options = "deep", {"deadline": LONG_DEADLINE}
-                        why = f"{why.split(' → ')[0]} → {DEEP_LABEL[key]} (안 되면 {FLASH_MODEL if heavy else 'Flash-Lite'})"
+                        why = f"{why.split(' → ')[0]} → {DEEP_LABEL[key]} (안 되면 {backup.get('model', 'Flash-Lite')})"
                     entry["route"] = why
-                elif req.mode in ("flash", "lite"):  # 사용자가 고른 Gemini 모델 (Jev 판단 없이)
-                    key, options = "gemini", {"model": FLASH_MODEL} if req.mode == "flash" else {}
-                    why = f"/model flash → {FLASH_MODEL} (안 되면 다른 Gemini Flash)" if req.mode == "flash" else "/model lite → Flash-Lite (3.5 Flash로 넘기지 않음)"
-                    entry["mode"] = req.mode
-                else:
+                else:  # deep·luna (OpenRouter)
                     if not _deepseek_ready():
                         entry.update(outcome="error", error="OPENROUTER_API_KEY 없음")
-                        yield _event(type="delta", text="지금은 DeepSeek을 쓸 수 없어요 (서버에 OpenRouter 키가 없습니다).")
+                        yield _event(type="delta", text="지금은 이 모델을 쓸 수 없어요 (서버에 OpenRouter 키가 없습니다).")
                         yield _event(type="done", tool_calls=[], error="unavailable")
                         return
-                    key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {'deep --r' if req.mode == 'deep_r' else 'deep'} → {DEEP_LABEL[req.mode]}"
+                    label = {**DEEP_LABEL, **LUNA_LABEL}[req.mode]
+                    name = {"deep": "deepseek", "luna": "gpt"}[req.mode.removesuffix("_r")] + (" --r" if req.mode.endswith("_r") else "")
+                    key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {name} → {label}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
                 if req.think and key == "gemini":
@@ -603,7 +610,7 @@ def create_app(
                 handover = req.mode == "auto" and key == "deep"  # 기본 DeepSeek이 실패하면 Gemini가 처음부터
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key))
-                if key == "gemini" and req.mode in ("gemini", "flash"):  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
+                if key == "gemini" and req.mode == "gemini":  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
                     options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
                 if key == "gemini" and req.think:  # --r: Gemini가 가장 깊게 생각 (DeepSeek으로 넘어가면 그쪽 설정대로)
                     options["think"] = entry["think"] = True
@@ -660,7 +667,7 @@ def create_app(
 
     @app.post("/api/compare")
     def compare(req: ChatRequest, request: Request) -> StreamingResponse:
-        """/compare: 같은 질문을 3.5 Flash·DeepSeek 생각 켬·끔이 동시에 답한다. 이벤트는 /api/chat과 같고 pane으로 구분하며,
+        """/compare: 같은 질문을 Gemini(Jev가 고른 Flash-Lite·3.5 Flash)·GPT-6 Luna·DeepSeek이 생각 끔으로 동시에 답한다. 이벤트는 /api/chat과 같고 pane으로 구분하며,
         칸마다 done이 온 뒤 마지막에 all_done. 대화의 앞선 질문·답은 맥락으로 주되 이 비교 답은 대화에 남기지 않는다."""
         who = _visitor(request)
         if backend != "gemini":
@@ -702,12 +709,13 @@ def create_app(
             started, bot = time.monotonic(), None
             result = results[pane] = {"label": COMPARE_PANES[pane]}
             try:
-                if pane != "flash" and not _deepseek_ready():
+                if pane != "gemini" and not _deepseek_ready():
                     raise RuntimeError("OPENROUTER_API_KEY 없음")
                 bot = make_bot(pane)()
                 for q, a in history:
                     bot.remember(q, a)
-                turn = yield_into(lines, bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=req.trace), pane)
+                options = gemini_pick(req.message, route)[0] if pane == "gemini" else {}
+                turn = yield_into(lines, bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=req.trace, **options), pane)
                 tools = [n for n, _ in turn.tool_calls]
                 result.update(answer=turn.text, tools=tools, finish=turn.finish_reason)
                 lines.put(_event(type="done", pane=pane, model=bot.last_model, tool_calls=tools))
@@ -883,7 +891,7 @@ class _LockedTools:
         return self.toolbox.evidence(name, result)
 
 
-COMPARE_PANES = {"flash": "Gemini 3.5 Flash", "deep_r": DEEP_LABEL["deep_r"], "deep": DEEP_LABEL["deep"]}
+COMPARE_PANES = {"gemini": "Gemini (질문에 맞춰 Flash-Lite·3.5 Flash)", "luna": LUNA_LABEL["luna"], "deep": DEEP_LABEL["deep"]}
 
 
 def _gemini_chat(toolbox: Toolbox | _LockedTools, model: str | None):
@@ -893,17 +901,6 @@ def _gemini_chat(toolbox: Toolbox | _LockedTools, model: str | None):
 
     primary, fallbacks = models_from_env(model)
     return GeminiChat(genai.Client(), toolbox, model=primary, fallback_models=fallbacks)
-
-
-def _flash_chat(toolbox: Toolbox | _LockedTools):
-    """3.5 Flash only (/compare): no fallback, so the pane really shows that model."""
-    from google import genai
-
-    from ..chatbot.gemini import GeminiChat
-
-    chat = GeminiChat(genai.Client(), toolbox, model=FLASH_MODEL, fallback_models=[])
-    chat.discover = False
-    return chat
 
 
 _HTTP: Any = None
@@ -949,4 +946,12 @@ def _deepseek_ready() -> bool:
 def _deepseek_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
     from ..chatbot.llm import OpenAIChat
 
-    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL, extra={"reasoning": {"enabled": reasoning}})
+    # fp4 제공사(Sail Research 등)는 도구 인자를 빠뜨린다 (2026-11-15: 같은 질문 5/5에서 팀컬러·포메이션 누락, DeepInfra는 5/5 정상)
+    provider = {"order": ["deepinfra"], "quantizations": ["fp8"]}  # DeepInfra 먼저, 안 되면 fp8 제공사로만
+    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL, extra={"reasoning": {"enabled": reasoning}, "provider": provider})
+
+
+def _luna_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
+    from ..chatbot.llm import OpenAIChat
+
+    return OpenAIChat(_http(), toolbox, model=LUNA_MODEL, extra={"reasoning": {"enabled": reasoning}, "provider": {"only": ["openai"]}})
