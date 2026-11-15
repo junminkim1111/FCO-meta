@@ -153,11 +153,23 @@
   .md h1, .md h2, .md h3, .md h4 { font-size: 13.5px; margin: 12px 0 4px; }
   .md table { display: block; overflow-x: auto; font-size: 12px; } .md th, .md td { padding: 4px 8px; white-space: nowrap; }
   .md code { font: 12.5px var(--mono); }
+  /* 불러오는 중: 스쿼드 칸과 같은 FCLM 로고 로딩 (흐린 로고 위로 빛이 지나간다). 처음엔 가운데 크게, 새로고침 땐 위 막대에 작게 */
+  .logo-loader { position: relative; aspect-ratio: 452 / 96; pointer-events: none; }
+  .logo-loader::before, .logo-loader::after { content: ""; position: absolute; inset: 0; -webkit-mask: url(/static/fclm-logo.png) center / contain no-repeat; mask: url(/static/fclm-logo.png) center / contain no-repeat; }
+  .logo-loader::before { background: rgba(255, 255, 255, .55); }
+  @media (prefers-reduced-motion: no-preference) {
+    .logo-loader::before { background: rgba(255, 255, 255, .28); }
+    .logo-loader::after { background: linear-gradient(100deg, transparent 35%, #fff 50%, transparent 65%) 0 0 / 300% 100%; animation: logo-shine 1.6s ease-in-out infinite; }
+    @keyframes logo-shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  }
+  #boot { position: fixed; top: 50%; left: 50%; width: min(200px, 50vw); transform: translate(-50%, -50%); }
+  #top-loader { width: 56px; }
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px;
            border-radius: 6px; font-size: 13px; z-index: 10; }
 </style>
 </head>
 <body>
+<div id="boot" class="logo-loader" role="status" aria-label="불러오는 중"></div>
 <div id="login" class="login" hidden>
   <form>
     <h1>FCLM Admin</h1>
@@ -182,6 +194,7 @@
   <div class="main">
     <header class="top">
       <h1 id="title"></h1>
+      <div id="top-loader" class="logo-loader" role="status" aria-label="불러오는 중" hidden></div>
       <select id="days" class="btn" aria-label="기간"><option value="1">오늘</option><option value="7" selected>최근 7일</option><option value="30">최근 30일</option></select>
       <button id="reload" class="btn" type="button">새로고침</button>
     </header>
@@ -268,9 +281,18 @@ function toast(text) {
   setTimeout(() => t.remove(), 1600);
 }
 
+// 처음(아직 데이터 없음)엔 화면 가운데 큰 로고, 새로고침·기간 바꿀 땐 위 막대의 작은 로고
+function loading(on) { $("boot").hidden = !(on && !data); $("top-loader").hidden = !(on && data); }
+
 async function load() {
   if (!adminKey) return showLogin("");
-  const res = await api("/api/admin/logs?days=" + $("days").value);
+  if (!data) $("login").hidden = true;
+  loading(true);
+  try { await fetchLogs(); } finally { loading(false); }
+}
+async function fetchLogs() {
+  const res = await api("/api/admin/logs?days=" + $("days").value).catch(() => null);
+  if (!res) return showLogin("서버에 연결하지 못했습니다.");
   if (res.status === 401 || res.status === 403) { // 3회부터 경고, 5회 틀리면 이 IP는 막힘 (서버 문구 그대로)
     adminKey = "";
     try { sessionStorage.removeItem("fclm-admin"); } catch {}
@@ -283,7 +305,7 @@ async function load() {
   $("login").hidden = true; $("app").hidden = false;
   render();
 }
-function showLogin(message) { $("login").hidden = false; $("app").hidden = true; $("login-error").textContent = message; }
+function showLogin(message) { $("boot").hidden = true; $("login").hidden = false; $("app").hidden = true; $("login-error").textContent = message; }
 
 const savedIds = () => new Set((data.saved || []).map((x) => x.id));
 const hasDetail = (r) => r.id && (r.t >= data.detail_since || savedIds().has(r.id));
@@ -464,7 +486,7 @@ async function openDrawer(r, tr) {
       chip("피드백", r.vote && VOTE[r.vote]), chip("팀", r.team), chip("세션", r.session)),
     r.error ? el("p", { class: "note warn", text: "오류: " + r.error }) : null,
     r.unverified ? el("p", { class: "note warn", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null,
-    el("p", { class: "note", text: "불러오는 중…" })].filter(Boolean));
+    el("div", { class: "logo-loader", role: "status", ariaLabel: "불러오는 중", style: "width:72px" })].filter(Boolean));
   if (!$("drawer").open) $("drawer").showModal();
   const { renderMarkdown } = await md;
   const mdBox = (text) => { const n = el("div", { class: "md" }); renderMarkdown(n, text); return n; };

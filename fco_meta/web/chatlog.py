@@ -17,6 +17,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -34,6 +35,7 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # 답 아래 👍/👎(가끔만 보임)는 feedback 기록(ref = 그 질문의 id, vote = up·down)으로 따로 남아 그 질문의 vote가 된다
 OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare", "blocked")
 MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
+DOWNLOADS = 16  # 기록 파일을 이만큼 한꺼번에 받는다 (서버가 깨어난 뒤 첫 관리자 페이지가 파일마다 기다리지 않게)
 
 
 class HfLogStore:
@@ -53,11 +55,36 @@ class HfLogStore:
 
     def read(self, since: str, folder: str = "logs") -> list[dict[str, Any]]:
         """Records in `folder` files dated `since` (YYYY-MM-DD) or later."""
-        out = []
-        for path in sorted(self.api.list_repo_files(self.repo, repo_type="dataset")):
-            if path.startswith(folder + "/") and path.split("/")[1] >= since:
-                out += self._load(path)
-        return out
+        paths = [p for p in sorted(self.api.list_repo_files(self.repo, repo_type="dataset"))
+                 if p.startswith(folder + "/") and p.split("/")[1] >= since]  # fmt: skip
+        return self._load_all(paths)
+
+    def _load_all(self, paths: list[str]) -> list[dict[str, Any]]:
+        with ThreadPoolExecutor(DOWNLOADS) as pool:
+            return [r for records in pool.map(self._load, paths) for r in records]
+
+    def compact(self, folder: str, before: str) -> None:
+        """Merge each of `folder`'s date folders older than `before` (YYYY-MM-DD) that holds several files into one
+        day.jsonl. One commit per date adds it and deletes the rest, so a failure leaves the files as they were."""
+        from huggingface_hub import CommitOperationAdd, CommitOperationDelete
+
+        by_date: dict[str, list[str]] = {}
+        for p in sorted(self.api.list_repo_files(self.repo, repo_type="dataset")):
+            if p.startswith(folder + "/") and p.endswith(".jsonl"):
+                by_date.setdefault(p.split("/")[1], []).append(p)
+        for date, paths in sorted(by_date.items()):
+            if date >= before or len(paths) < 2:
+                continue
+            records, target = self._load_all(paths), f"{folder}/{date}/day.jsonl"
+            body = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records).encode()
+            self.api.create_commit(
+                repo_id=self.repo, repo_type="dataset", commit_message=f"chat {folder}: merge {date} ({len(paths)} files)",
+                operations=[CommitOperationAdd(path_in_repo=target, path_or_fileobj=body),
+                            *(CommitOperationDelete(path_in_repo=p) for p in paths if p != target)],
+            )  # fmt: skip
+            for p in paths:
+                self.read_files.pop(p, None)
+            self.read_files[target] = records
 
     def _load(self, path: str) -> list[dict[str, Any]]:
         from huggingface_hub import hf_hub_download
@@ -113,7 +140,8 @@ class ChatLog:
                     del pending[: len(pending) - MAX_PENDING]
 
     def flush(self) -> None:
-        """Write what is pending to the store (kept for the next try if that fails); once a day, drop old details."""
+        """Write what is pending to the store (kept for the next try if that fails); once a day, drop old details and
+        merge each past day's files into one."""
         if self.store is None:
             return
         now = datetime.fromtimestamp(self.now(), KST)
@@ -129,12 +157,15 @@ class ChatLog:
                 log.exception("writing %d chat %s failed; keeping them for the next try", len(batch), folder)
                 with self.lock:
                     getattr(self, name)[:0] = batch
-        if self.cleaned != now.strftime("%Y-%m-%d"):
+        today = now.strftime("%Y-%m-%d")
+        if self.cleaned != today:
             try:
                 self.store.delete_before("details", self._detail_since().strftime("%Y-%m-%d"))
-                self.cleaned = now.strftime("%Y-%m-%d")
+                for folder in ("logs", "details"):  # 지난 날짜는 파일 하나로 (관리자 페이지가 받을 파일 수를 줄인다)
+                    self.store.compact(folder, today)
+                self.cleaned = today
             except Exception:
-                log.exception("dropping old chat details failed")
+                log.exception("dropping or merging old chat files failed")
 
     def _detail_since(self) -> datetime:
         return datetime.fromtimestamp(self.now(), KST) - timedelta(days=DETAIL_DAYS)
