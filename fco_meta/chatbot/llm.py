@@ -15,25 +15,21 @@ import logging
 import os
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
 
 from .gemini import (
     ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_HISTORY_TURNS, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
     GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, _drain, _preview, unchecked_squad,
 )  # fmt: skip
-from .numbers import RECHECK_AT, unsupported_numbers
+from .numbers import RECHECK_AT, unsupported_numbers, without
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
 log = logging.getLogger(__name__)
-
-# OpenRouter 등은 처리하는 동안 연결 유지 신호를 보내 읽기 타임아웃이 끝나지 않으므로, 요청을 따로 돌리고 전체 시간으로 끊는다
-# ponytail: 끊긴 요청은 서버가 답할 때까지 그 스레드에서 계속 돈다 (스트리밍으로 바꾸면 바로 닫을 수 있음)
-_REQUESTS = ThreadPoolExecutor(max_workers=16)
 
 REFUSED = "이 질문에는 답할 수 없어요. FC온라인 랭커 데이터에 관한 질문으로 다시 물어봐 주세요."
 
@@ -60,6 +56,7 @@ class ToolChat:
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치
+        self.unbacked: list[str] = []  # 이 대화의 답들에 그렇게 남은 수치 (다음 답의 근거로 쓰지 않는다)
         self._ends_at = float("inf")
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
 
@@ -96,6 +93,7 @@ class ToolChat:
         finally:
             self.thoughts = False
         self.history.append((question, turn.text))
+        self.unbacked += self.unverified
         return turn
 
     def _left(self) -> float:
@@ -106,7 +104,8 @@ class ToolChat:
 
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         messages = self._start(question)
-        known: list[Any] = [x for turn in self.history for x in turn]  # 앞선 질문(팀 블록)·답에 나온 수치는 다시 써도 된다
+        # 앞선 질문(팀 블록)·답에 나온 수치는 다시 써도 된다 — 그 답에서 끝내 확인되지 않은 수치만 빼고
+        known: list[Any] = [x for q, a in self.history for x in (q, without(a, self.unbacked))]
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()
         evidence: list[str] = []
@@ -230,7 +229,7 @@ class ClaudeChat(ToolChat):
 
 
 class OpenAIChat(ToolChat):
-    """OpenAI-compatible /chat/completions (one request per round, not streamed — for comparing models)."""
+    """OpenAI-compatible /chat/completions, streamed (one request per round): answer text is yielded as it arrives."""
 
     DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -249,44 +248,65 @@ class OpenAIChat(ToolChat):
 
     def _round(self, messages: list[dict[str, Any]], final: bool) -> Generator[str, None, Reply]:
         left = self._left()
-        future = _REQUESTS.submit(
-            self.http.post, f"{self.base_url}/chat/completions", headers={"Authorization": f"Bearer {self.api_key}"}, timeout=left,
-            json={"model": self.model, "messages": messages, "tools": self.tools, "tool_choice": "none" if final else "auto", **self.extra},
-        )  # fmt: skip
+        body = {"model": self.model, "messages": messages, "tools": self.tools, "tool_choice": "none" if final else "auto",
+                "stream": True, "stream_options": {"include_usage": True}, **self.extra}  # fmt: skip
+        text, reasoning, finish = "", "", None
+        calls: dict[int, dict[str, Any]] = {}  # 도구 호출은 조각으로 온다: index → 모은 호출
+        usage: dict[str, Any] = {}
         try:
-            res = future.result(timeout=left)
-        except FutureTimeout:
+            with self.http.stream("POST", f"{self.base_url}/chat/completions", headers={"Authorization": f"Bearer {self.api_key}"},
+                                  timeout=left, json=body) as res:  # fmt: skip
+                if res.status_code >= 400:
+                    res.read()  # 오류 본문을 예외에 담으려면 먼저 읽어야 한다
+                res.raise_for_status()
+                for line in res.iter_lines():
+                    # OpenRouter는 처리하는 동안 연결 유지 줄(": OPENROUTER PROCESSING")을 보내 읽기 타임아웃이 끝나지 않는다 → 줄마다 전체 시간을 본다
+                    if self.now() >= self._ends_at:
+                        raise AnswerTimeout(f"{self.model} 응답 없음")
+                    if not line.startswith("data:") or (payload := line[5:].strip()) == "[DONE]":
+                        continue
+                    data = json.loads(payload)
+                    if "error" in data:  # 200으로 시작한 뒤에도 error를 담아 보내기도 한다
+                        raise RuntimeError(f"{self.model}: {data['error']}")
+                    self.last_model = data.get("model") or self.last_model or self.model
+                    self.last_provider = data.get("provider") or self.last_provider
+                    usage = data.get("usage") or usage  # 마지막 조각에 온다
+                    for choice in data.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        finish = choice.get("finish_reason") or finish
+                        reasoning += delta.get("reasoning") or ""  # OpenRouter는 생각을 켠 모델의 추론을 reasoning에 준다
+                        for part in delta.get("tool_calls") or []:
+                            call = calls.setdefault(part.get("index", 0), {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                            call["id"] = part.get("id") or call["id"]
+                            fn = part.get("function") or {}
+                            call["function"]["name"] += fn.get("name") or ""
+                            call["function"]["arguments"] += fn.get("arguments") or ""
+                        if piece := delta.get("content"):
+                            if reasoning and self.thoughts and not text:
+                                yield Thought(reasoning)
+                            text += piece
+                            yield piece  # 도구를 부르기 전에 쓴 글이면 _ask가 RESET으로 지운다
+        except httpx.TimeoutException:
             raise AnswerTimeout(f"{self.model} 응답 없음") from None
-        res.raise_for_status()
-        data = res.json()
-        if "error" in data:  # OpenRouter는 200에 error를 담기도 한다
-            raise RuntimeError(f"{self.model}: {data['error']}")
-        self.last_model = data.get("model", self.model)
-        self.last_provider = data.get("provider")
-        usage = data.get("usage") or {}
+        if reasoning and self.thoughts and not text:
+            yield Thought(reasoning)
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
         self.billed.setdefault(self.model, Counter()).update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))
-        if reasoning := (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"):
-            self.tokens.update(reasoning=reasoning)
+        if thought := (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"):
+            self.tokens.update(reasoning=thought)
         if cached := (usage.get("prompt_tokens_details") or {}).get("cached_tokens"):  # 입력 중 캐시에서 읽은 부분
             self.tokens.update(cached=cached)
-        choice = data["choices"][0]
-        msg = choice["message"]
+        tool_calls = [calls[i] for i in sorted(calls)]
         uses = []
-        for call in msg.get("tool_calls") or []:
+        for call in tool_calls:
             try:
-                args = json.loads(call["function"].get("arguments") or "{}")
+                args = json.loads(call["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
-                args = {"_invalid_arguments": call["function"].get("arguments")}  # 도구가 오류로 돌려준다
+                args = {"_invalid_arguments": call["function"]["arguments"]}  # 도구가 오류로 돌려준다
             uses.append((call["id"], call["function"]["name"], args))
-        text = msg.get("content") or ""
-        if self.thoughts and msg.get("reasoning"):  # OpenRouter는 생각을 켠 모델의 추론을 reasoning에 준다
-            yield Thought(msg["reasoning"])
-        if text and not uses:
-            yield text
-        stop = {"stop": "end", "tool_calls": "tool", "length": "max_tokens", "content_filter": "refusal"}.get(choice.get("finish_reason"), "end")
-        keep = {k: msg[k] for k in ("role", "content", "tool_calls") if msg.get(k) is not None}
-        return Reply(text=text, uses=uses, stop=stop, message={"role": "assistant", **keep})
+        stop = {"stop": "end", "tool_calls": "tool", "length": "max_tokens", "content_filter": "refusal"}.get(finish, "end")
+        message = {"role": "assistant", **({"content": text} if text else {}), **({"tool_calls": tool_calls} if tool_calls else {})}
+        return Reply(text=text, uses=uses, stop=stop, message=message)
 
     def _tool_results(self, results: list[tuple[str, str, bool]]) -> list[dict[str, Any]]:
         return [{"role": "tool", "tool_call_id": call_id, "content": text} for call_id, text, _ in results]

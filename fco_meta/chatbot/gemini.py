@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .numbers import RECHECK_AT, unsupported_numbers
+from .numbers import RECHECK_AT, unsupported_numbers, without
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
@@ -348,6 +348,7 @@ class GeminiChat:
         self.tokens: Counter[str] = Counter()  # 입력·출력·생각 토큰 합 (비용 비교용)
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output, 생각은 output에) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치 (다시 쓰기 뒤에도 남은 것)
+        self.unbacked: list[str] = []  # 이 대화의 답들에 그렇게 남은 수치 (다음 답의 근거로 쓰지 않는다)
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
         self._fallbacks: list[str] | None = None  # 이 질문만의 대체 모델 순서 (ask_stream)
         self._think = False  # 이 질문만 생각 깊이 HIGH (/model … --r). 아니면 모델이 정한다
@@ -504,7 +505,9 @@ class GeminiChat:
         self.model, self._escalate, self.thoughts, self._fallback = model or usual, escalate_to, thoughts, fallback
         self._fallbacks, self._think = fallbacks, think
         try:
-            return (yield from self._ask(question))
+            turn = yield from self._ask(question)
+            self.unbacked += self.unverified
+            return turn
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
             raise
@@ -621,7 +624,9 @@ class GeminiChat:
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         types = _types()
         # 앞선 대화의 답에 나온 수치는 이번 답에 다시 써도 된다 (수치 검증용)
-        known: list[Any] = [p.text for c in self.contents for p in c.parts or [] if p.text]
+        known: list[Any] = [
+            without(p.text, self.unbacked) if c.role == "model" else p.text for c in self.contents for p in c.parts or [] if p.text
+        ]  # 앞선 답에서 끝내 확인되지 않은 수치는 근거로 쓰지 않는다
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
