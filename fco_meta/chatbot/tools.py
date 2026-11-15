@@ -288,6 +288,22 @@ def _card_floor(slot_options: list[tuple[str, list[dict[str, Any]]]]) -> list[tu
     return out
 
 
+def _pin_includes(slot_options: list[tuple[str, list[dict[str, Any]]]], must: list[str]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Each player the user asked for gets one slot that holds only his cards (the slot where his best card scores most),
+    so the rest is chosen around him. Otherwise _choose's one-swap search drops him rather than cheapen two other slots
+    ("호나우두 26FSL 넣어줘" 50억: 비싼 키퍼를 그대로 두고 호나우두를 뺐다)."""
+    out, taken = list(slot_options), set()
+    for name in must:
+        tag = f"include:{name}"
+        best = max(((max(_score(o) for o in opts if tag in o["tags"]), -i) for i, (_, opts) in enumerate(out)
+                    if i not in taken and any(tag in o["tags"] for o in opts)), default=None)  # fmt: skip
+        if best:
+            i = -best[1]  # 같으면 앞 자리
+            taken.add(i)
+            out[i] = (out[i][0], [o for o in out[i][1] if tag in o["tags"]])
+    return out
+
+
 def _fits(combo: list[dict[str, Any] | None], limits: dict[str, int], reqs: dict[str, int]) -> bool:
     """Every slot filled, every limit and requirement (include, chemistry, season) met."""
     return (all(combo) and all(sum(c[k] or 0 for c in combo) <= v for k, v in limits.items())
@@ -1573,6 +1589,7 @@ class Toolbox:
         budget = "price" in sq.limits
         if budget:  # 누구를·어느 시즌 카드를 쓸지는 랭커 사용률이, 강화는 예산이 정한다
             sq.slot_options = self._budget_grades(sq.slot_options, knobs)
+        sq.slot_options = _pin_includes(sq.slot_options, sq.must)  # 넣을 선수는 한 자리를 그 선수로 고정하고 나머지를 맞춘다
         chosen, loose = _choose_floored(sq.slot_options, sq.limits, sq.reqs)
         if not loose:  # 하한 안에서 맞췄으면 예산 넘기기·강화 올리기도 그 카드들 안에서
             sq.slot_options = _card_floor(sq.slot_options)
@@ -1585,7 +1602,7 @@ class Toolbox:
             chosen = self._better_cards(sq, chosen, knobs)  # 다 11강인데도 남으면 더 좋은 카드로
             chosen = self._top_grades(sq, chosen, knobs)  # 그래도 남으면 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 12·13강
         out = self._squad_result(sq, chosen, stretched=bool(wider))
-        if budget and spend is not False and (stuck := self._not_raised(sq, chosen, knobs)):
+        if budget and spend is not False and out["budget"]["within_budget"] and (stuck := self._not_raised(sq, chosen, knobs)):
             out["budget"]["not_raised"] = stuck  # 돈이 남았는데 11강 아래인 카드: 다음 강화가 남은 돈보다 비싸다
         if top := [f"{role} {c['entry']['name']} {c['card']['most_used_grade']}강 (랭커 {c['top_grade_rankers']}명이 그 강화로 씀)"
                    for (role, _), c in zip(sq.slot_options, chosen) if c and c.get("top_grade_rankers")]:  # fmt: skip
@@ -1594,10 +1611,15 @@ class Toolbox:
         if budget:
             out.update(self._grade_changes(sq, chosen))
             if wider:
-                out["budget"].update(over_by=format_bp(out["total_price_bp"] - sq.limits["price"]),
-                                     within_budget_instead=self._swaps(sq, wider, within),
-                                     stretched="의도한 결과: 훨씬 많이 쓰이는 카드라 예산을 10% 안에서 넘김. 이대로 답하고 예산 안 구성은"
-                                               " within_budget_instead로 안내 (예산에 맞추려고 다시 부르지 않음)")  # fmt: skip
+                if all(within) and all(sum(c[k] or 0 for c in within) <= v for k, v in sq.limits.items()):
+                    out["budget"].update(over_by=format_bp(out["total_price_bp"] - sq.limits["price"]),
+                                         within_budget_instead=self._swaps(sq, wider, within),
+                                         stretched="의도한 결과: 훨씬 많이 쓰이는 카드라 예산을 10% 안에서 넘김. 이대로 답하고 예산 안 구성은"
+                                                   " within_budget_instead로 안내 (예산에 맞추려고 다시 부르지 않음)")  # fmt: skip
+                else:  # 넣을 선수만으로도 예산이 모자라는 등 예산 안 구성이 없다
+                    out["budget"].update(over_by=format_bp(out["total_price_bp"] - sq.limits["price"]),
+                                         stretched="예산 안에서는 조건(넣을 선수 등)을 맞출 수 없어 가장 싸게 맞춘 구성이 예산을 넘음."
+                                                   " 넘는 금액(over_by)을 알리고, 예산을 올리거나 넣을 선수를 줄이자고 제안할 것")  # fmt: skip
         if gaps := self._salary_vs_rankers(sq, chosen):
             out["salary_vs_rankers"] = gaps
         if loose and (rare := [f"{c['entry']['name']} {(c['card']['season'] or '').split(' (')[0]}" for c in chosen
@@ -2553,8 +2575,7 @@ class Toolbox:
             for name, player in got.items():
                 if player is None:
                     card = f" {sq.must_season[name].upper()} 카드" if name in sq.must_season else ""
-                    notes.append(f"'{name}'{card}를 넣지 못함 (이 팀컬러·포메이션 랭커들이 쓴 기록이 없거나, 그 시즌 카드가 없거나, "
-                                 "소속·급여·예산 조건에 맞는 카드가 없음)")
+                    notes.append(f"'{name}'{card}를 넣지 못함 (그 선수·시즌 카드가 없거나, 이 팀컬러 소속 카드가 없거나, 자리가 겹침)")
         if chem:
             need = reqs["chem"]
             if sq.derived:

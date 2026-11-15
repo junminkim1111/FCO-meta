@@ -189,6 +189,7 @@ class _Session:
         self.team: Team | None = None  # @닉네임으로 붙인 팀: 다음 질문 하나가 가져간다 (멘션처럼)
         self.last: str | None = None  # 마지막 질문 (팀 블록 없이, Jev가 이어지는 질문인지 볼 때)
         self.squad: dict[str, Any] | None = None  # 마지막으로 짠 스쿼드의 recommend_squad 인자 (기록엔 답 글만 남아 다음 질문에 붙인다)
+        self.before: dict[str, Any] | None = None  # 그 앞에 짠 스쿼드의 인자 ("다시 돌려놔")
         self.lineup: list[dict[str, Any]] | None = None  # 마지막으로 답한 스쿼드의 선발 (다시 짜면 바뀐 자리를 도구 결과에 붙인다)
         self.turn_lineup: list[dict[str, Any]] | None = None  # 이번 질문에서 짠 선발 (답을 마치면 lineup이 된다)
 
@@ -199,6 +200,8 @@ class _Session:
         self.turn_lineup = None  # 실패한 앞 질문의 선발은 버린다
         if self.squad:  # "WG 말고 UC로" 같은 이어지는 바람이 앞 조건(예산 등)을 잃지 않게
             message += f"\n\n(앞서 짠 스쿼드의 recommend_squad 인자: {json.dumps(self.squad, ensure_ascii=False)})"
+            if self.before:
+                message = message[:-1] + f"; 그 앞 스쿼드의 인자(되돌려 달라면 이것): {json.dumps(self.before, ensure_ascii=False)})"
         return (f"{team.for_model()}\n\n{message}" if team else message), team
 
     def bot(self, key: str, make: Callable[[], Any]) -> Any:
@@ -212,7 +215,9 @@ class _Session:
 
     def answered(self, key: str | None, question: str, answer: str, plain: str | None = None, calls: Iterable[tuple[str, Any]] = ()) -> None:
         self.history.append((question, answer))
-        self.squad = next((args for name, args in reversed(list(calls)) if name == "recommend_squad"), self.squad)
+        squad = next((args for name, args in reversed(list(calls)) if name == "recommend_squad"), self.squad)
+        if squad != self.squad:
+            self.before, self.squad = self.squad, squad
         if self.turn_lineup is not None:
             self.lineup, self.turn_lineup = self.turn_lineup, None
         self.last = plain or question
