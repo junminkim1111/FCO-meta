@@ -40,6 +40,8 @@ def match_id_time(match_id: str) -> datetime | None:
         return None
 
 
+MAX_LIST_PAGES = 5  # 경기 목록을 이어 받는 최대 쪽수 (쪽당 API 1회, list_limit 10이면 50경기)
+
 STOP_HINTS = {
     "budget": "이 DB에 기록된 오늘 호출 예산 소진 — 다음 날 같은 명령으로 이어서 수집",
     "rate_limit": (
@@ -230,6 +232,21 @@ class SquadCollector:
                 self.store.forget_lookup(t.nickname)
                 raise
             self.store.save_match_list(ouid, OFFICIAL_MATCH, match_ids, fetched_at=self._now())
+
+        # 목록이 꽉 찼는데 가장 오래된 경기도 스냅샷 이후에 시작했다 → 스냅샷 이전 경기는 다음 페이지에 있다
+        # ponytail: MAX_LIST_PAGES쪽까지만 (스냅샷 뒤 그보다 많이 뛴 랭커는 여전히 no_match_before_snapshot). 모자라면 상수를 올린다
+        full = len(match_ids) >= self.list_limit
+        for _ in range(MAX_LIST_PAGES - 1):
+            oldest = match_id_time(match_ids[-1]) if full else None
+            if oldest is None or oldest < as_of:
+                break
+            page = self.api.user_matches(ouid, OFFICIAL_MATCH, offset=len(match_ids), limit=self.list_limit)
+            new = [m for m in page if m not in match_ids]  # 그 사이 새 경기가 생기면 앞 페이지와 겹친다
+            if not new:
+                break
+            match_ids = match_ids + new
+            self.store.save_match_list(ouid, OFFICIAL_MATCH, match_ids, fetched_at=self._now())
+            full = len(page) == self.list_limit
 
         chosen: list[tuple[int, str, str, str | None, bool, bool]] = []
         base_sig = None
