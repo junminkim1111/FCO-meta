@@ -241,7 +241,7 @@
   .rate.feed button { padding: 2px 10px; border-radius: 8px; background: none; border: 1px solid var(--line); color: var(--text); font-size: 12px; }
   /* 짜는 중 로딩: FCLM 로고를 흐리게 깔고 그 위로 빛이 지나간다. 빈 경기장이면 가운데 크게, 선수가 있으면 오른쪽 위에 작게 */
   .sq-loader { display: none; position: absolute; z-index: 2; aspect-ratio: 452 / 96; pointer-events: none; }
-  #squad-panel.building .sq-loader { display: block; }
+  #squad-panel.working .sq-loader { display: block; } /* 도구가 도는 동안만. 선수가 올라오면 내리고 테두리 빛만 남긴다 */
   .sq-loader { right: 10px; top: 10px; width: 64px; } .pitch:has(.empty-pitch) .sq-loader { right: auto; top: 50%; left: 50%; width: 32%; transform: translate(-50%, -50%); }
   .sq-loader::before, .sq-loader::after { content: ""; position: absolute; inset: 0; -webkit-mask: url(/static/fclm-logo.png) center / contain no-repeat; mask: url(/static/fclm-logo.png) center / contain no-repeat; }
   .sq-loader::before { background: rgba(255, 255, 255, .55); }
@@ -962,7 +962,7 @@ async function send(text) {
           if (ours) showSquad(ev, { status: "스쿼드를 다듬고 있어요...", prev: mine });
           mine = built = ev;
         }
-        if (ev.type === "delta" && !answer && mine && shownSquad === mine) squadStatus("설명을 쓰고 있어요...");
+        if (ev.type === "delta" && !answer && mine && shownSquad === mine) squadStatus("설명을 쓰고 있어요...", false);
         if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
         else if (ev.type === "done") { answerId = ev.id || null; squad = !!ev.squad; } // 끝까지 받은 답에만 온다 (좋아요·아쉬워요가 이 id로 간다)
         else if (ev.type === "delta") grow(ev.text);
@@ -1055,7 +1055,7 @@ function showSquad(sq, { status = null, prev = null } = {}) {
   }
   panel.replaceChildren(el("div", { class: "fd-head" }, el("h2", { text: "추천 스쿼드" }), close),
                         tiles, field);
-  squadStatus(status);
+  squadStatus(status, !sq.players.length); // 선수가 올라왔으면 로고는 내린다
 }
 // 중계 화면 선수 교체처럼: 나가는 선수(▼ 빨강)는 흐려지며 내려가고, 들어오는 선수(▲ 초록)가 그 자리로 들어온다
 function substitute(field, subs) {
@@ -1074,11 +1074,13 @@ function substitute(field, subs) {
     setTimeout(() => node.classList.remove("sub-in"), 4500);
   });
 }
-// 짜는 중 표시: 경기장의 로고 로딩 (진행 문구는 화면에 쓰지 않고 스크린리더에만). null이면 뗀다
-function squadStatus(text) {
+// 짜는 중 표시 (진행 문구는 화면에 쓰지 않고 스크린리더에만). null이면 뗀다.
+// working: 도구가 도는 중이라 경기장에 로고 로딩도 띄운다 (false = 스쿼드는 다 짰고 설명을 쓰는 중: 테두리 빛만)
+function squadStatus(text, working = true) {
   const box = $("squad-panel").querySelector(".sq-loader");
   if (box) box.ariaLabel = text || "";
   $("squad-panel").classList.toggle("building", !!text); // 짜는 동안 칸 테두리·바탕을 강조색으로
+  $("squad-panel").classList.toggle("working", !!text && working);
 }
 function syncSquadButtons(...buttons) {
   for (const b of buttons) b.textContent = shownSquad === b.squad ? "스쿼드 접기" : "스쿼드 열기";
