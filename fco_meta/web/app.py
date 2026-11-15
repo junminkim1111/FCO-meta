@@ -189,11 +189,14 @@ class _Session:
         self.team: Team | None = None  # @닉네임으로 붙인 팀: 다음 질문 하나가 가져간다 (멘션처럼)
         self.last: str | None = None  # 마지막 질문 (팀 블록 없이, Jev가 이어지는 질문인지 볼 때)
         self.squad: dict[str, Any] | None = None  # 마지막으로 짠 스쿼드의 recommend_squad 인자 (기록엔 답 글만 남아 다음 질문에 붙인다)
+        self.lineup: list[dict[str, Any]] | None = None  # 마지막으로 답한 스쿼드의 선발 (다시 짜면 바뀐 자리를 도구 결과에 붙인다)
+        self.turn_lineup: list[dict[str, Any]] | None = None  # 이번 질문에서 짠 선발 (답을 마치면 lineup이 된다)
 
     def take(self, message: str) -> tuple[str, Team | None]:
         """What the model gets for this question: the attached team ahead of it, used up by this question
         (its block stays in the history, so follow-ups still know the team)."""
         team, self.team = self.team, None
+        self.turn_lineup = None  # 실패한 앞 질문의 선발은 버린다
         if self.squad:  # "WG 말고 UC로" 같은 이어지는 바람이 앞 조건(예산 등)을 잃지 않게
             message += f"\n\n(앞서 짠 스쿼드의 recommend_squad 인자: {json.dumps(self.squad, ensure_ascii=False)})"
         return (f"{team.for_model()}\n\n{message}" if team else message), team
@@ -210,6 +213,8 @@ class _Session:
     def answered(self, key: str | None, question: str, answer: str, plain: str | None = None, calls: Iterable[tuple[str, Any]] = ()) -> None:
         self.history.append((question, answer))
         self.squad = next((args for name, args in reversed(list(calls)) if name == "recommend_squad"), self.squad)
+        if self.turn_lineup is not None:
+            self.lineup, self.turn_lineup = self.turn_lineup, None
         self.last = plain or question
         if key in self.bots:  # 답한 chat은 이 턴을 이미 안다
             self.bots[key][1] = len(self.history)
@@ -508,12 +513,13 @@ def create_app(
                 session = sessions[session_id] = _Session()
             return session
 
-    def make_bot(key: str) -> Callable[[], Any]:
+    def make_bot(key: str, session: _Session | None = None) -> Callable[[], Any]:
+        tools = _SessionTools(gemini_tools, session) if session else gemini_tools
         if key == "gemini":
-            return lambda: _gemini_chat(gemini_tools, gemini_model)
+            return lambda: _gemini_chat(tools, gemini_model)
         if key in LUNA_LABEL:
-            return lambda: _luna_chat(gemini_tools, reasoning=key == "luna_r")
-        return lambda: _deepseek_chat(gemini_tools, reasoning=key == "deep_r")
+            return lambda: _luna_chat(tools, reasoning=key == "luna_r")
+        return lambda: _deepseek_chat(tools, reasoning=key == "deep_r")
 
     @app.post("/api/chat")
     def chat(req: ChatRequest, request: Request) -> StreamingResponse:
@@ -605,7 +611,7 @@ def create_app(
                 if req.trace:
                     yield _event(type="trace", kind="route", text=why)
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
-                bot = session.bot(key, make_bot(key))
+                bot = session.bot(key, make_bot(key, session))
                 if key == "gemini" and req.mode == "gemini":  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
                     options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
                 if key == "gemini" and req.think:  # think: Gemini가 가장 깊게 생각
@@ -869,6 +875,55 @@ class _LockedTools:
 
     def evidence(self, name: str, result: dict[str, Any]) -> str | None:
         return self.toolbox.evidence(name, result)
+
+
+class _SessionTools(_LockedTools):
+    """One conversation's tools: a squad result also says which slots changed from the squad answered before
+    ("벤제마 UC로" → the tool also swapped a CB to fit the salary cap — the answer should say so)."""
+
+    def __init__(self, inner: _LockedTools, session: _Session):
+        super().__init__(inner.toolbox, inner.lock)
+        self.session = session
+
+    def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        content, is_error = super().run(name, tool_input)
+        if is_error or name not in SQUAD_TOOLS:
+            return content, is_error
+        result = json.loads(content)
+        if lineup := result.get("lineup"):
+            if changes := _lineup_changes(self.session.lineup, lineup):
+                result["changed_from_previous"] = {
+                    "slots": changes,
+                    "note": "앞서 답한 스쿼드와 비교해 바뀐 자리. 사용자가 바꾸라고 한 자리 말고도 바뀐 자리가 있으면 답에 한 줄씩 알릴 것"
+                            " (급여·예산을 맞추려고 바뀐 것이면 그렇다고)",
+                }  # fmt: skip
+                content = json.dumps(result, ensure_ascii=False)
+            self.session.turn_lineup = lineup
+        return content, is_error
+
+
+def _lineup_changes(before: list[dict[str, Any]] | None, after: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Per role, the cards that left and came in (same layout only): [{role, from, to}] with season and salary."""
+    def card(e: dict[str, Any]) -> tuple[str, str]:
+        c = e.get("card") or {}
+        return (e.get("player") or "").replace("★", "").strip(), str(e.get("season") or c.get("season") or "").split(" (")[0]
+
+    def label(e: dict[str, Any]) -> str:
+        salary = (e.get("card") or {}).get("salary", e.get("salary"))
+        return " ".join(card(e)) + (f" (급여 {salary})" if salary is not None else "")
+
+    filled = lambda xs: [e for e in xs or [] if e.get("player")]  # noqa: E731
+    before, after = filled(before), filled(after)
+    if not before or sorted(e["role"] for e in before) != sorted(e["role"] for e in after):
+        return []  # 앞 스쿼드가 없거나 포메이션(자리 구성)이 다르면 자리별로 비교하지 않는다
+    out = []
+    for role in dict.fromkeys(e["role"] for e in after):
+        old = [e for e in before if e["role"] == role]
+        new = [e for e in after if e["role"] == role]
+        gone = [e for e in old if card(e) not in {card(x) for x in new}]
+        came = [e for e in new if card(e) not in {card(x) for x in old}]
+        out += [{"role": role, "from": label(a), "to": label(b)} for a, b in zip(gone, came)]
+    return out
 
 
 COMPARE_PANES = {"gemini": GEMINI_LABEL, "luna": LUNA_LABEL["luna"], "deep": DEEP_LABEL["deep"]}

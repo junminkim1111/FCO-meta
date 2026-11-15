@@ -2938,13 +2938,14 @@ class Toolbox:
                 "avg_squad_value": format_bp(int(value)) if value is not None else None, "best_rank": best,
             }  # fmt: skip
             forms = query_rankers(self.conn, "formation", team_color_id=tc_id, limit=5)
-            out["formations"] = [{"formation": r["key"], "rankers": r["rankers"], "share": r["share"]} for r in forms["rows"]]
+            out["formations"] = [{"formation": r["key"], "rankers": r["rankers"], "share": r["share"], "season_win_rate": r["season_win_rate"],
+                                  "season_games": r["season_games"], "avg_elo": r["avg_elo"]} for r in forms["rows"]]  # fmt: skip
             out["rank_bands"] = self._rank_bands(everyone["covered"], team_color_id=tc_id)
         out["top_ranker_squad"] = top_ranker_squad(self.conn, team_color_id=tc_id)
         out["best_eleven"] = best_eleven(self.conn, team_color_id=tc_id)
         out["definitions"] = {
             "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 팀컬러 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
-            "formations": "그 팀컬러 랭커들이 랭킹 화면에서 쓰는 포메이션",
+            "formations": "그 팀컬러 랭커들이 랭킹 화면에서 쓰는 포메이션. season_win_rate = 그 포메이션 랭커들의 시즌 승/무/패 합산(season_games 경기), avg_elo = 그 랭커들의 평균 ELO",
             "top_ranker_squad": "스쿼드 수집 랭커 중 이 팀컬러의 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외, squad_value = 선발 최신 시세 합, unpriced = 시세 몰라 뺀 선수 수)",
             "best_eleven": "이 팀컬러 랭커들의 스쿼드(포메이션 무관)에서 가장 흔한 배치의 자리마다 가장 많이 쓰인 시즌 카드",
         }
