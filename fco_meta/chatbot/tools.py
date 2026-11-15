@@ -2212,6 +2212,26 @@ class Toolbox:
         return {**card, "most_used_grade": price["grade"] if price else max(card["most_used_grade"] or 0, ADD_TRAIT_GRADE),
                 "price_at_most_used_grade": price}  # fmt: skip
 
+    def _unused_options(self, name: str, season: str | None, grade: int, fixed: bool, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
+        """Options for a player to include beyond the cards rankers used in that slot: his collected cards (of `season`)
+        at `grade` that have a price, higher OVR scored a little higher (no ranker usage, so ranker cards that fit win)."""
+        row = self.conn.execute(
+            "SELECT pid, name FROM card WHERE REPLACE(name, ' ', '') LIKE ? GROUP BY pid ORDER BY COUNT(*) DESC LIMIT 1", (f"%{name}%",)
+        ).fetchone()  # ponytail: 이름이 겹치면 카드가 가장 많은 선수 — 동명이인이 문제되면 시즌·국적으로 가른다
+        if row is None:
+            return []
+        entry = {"name": row["name"], "pid": row["pid"], "rankers": 0, "usage_rate": 0.0, "cards": []}
+        ovr = dict(self.conn.execute("SELECT spid, ovr FROM card WHERE pid = ?", (row["pid"],)).fetchall())
+        options = []
+        for c in self._owned_cards(row["pid"], season or "", fits):
+            price = self._price(c["sp_id"], grade)
+            if price is None:
+                continue
+            card = {**c, "most_used_grade": grade, "price_at_most_used_grade": price}
+            options.append({"entry": entry, "card": card, "price": price["price_bp"], "salary": c["salary"],
+                            "tags": {f"include:{name}"}, **({"fixed_grade": True} if fixed else {}), "score": (ovr.get(c["sp_id"]) or 0) * 1e-6})  # fmt: skip
+        return options
+
     def _owned_cards(self, pid: int, season: str, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
         """A card the user owns that rankers did not use there: looked up among all collected cards of the player."""
         cards = []
@@ -2398,6 +2418,16 @@ class Toolbox:
                     o = {"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags,
                          **({"fixed_grade": True} if fixed else {})}
                     options.append({**o, "score": _card_usage(o)})
+            # 넣을 선수는 랭커가 이 자리에 쓴 카드가 없거나 한도에 안 맞아도 그 선수의 다른 카드로 넣는다 ("호날두를 톱에" 5억):
+            # 자리를 정했으면 그 자리, 아니면 랭커가 그 선수를 쓴 자리에. 사용률이 없어 랭커가 쓴 카드가 맞으면 그쪽이 먼저
+            for name in must:
+                mine = [o for o in options if f"include:{name}" in o["tags"]]
+                if any(o.get("owned") for o in mine) or not (pinned.get(name) == role or (name not in pinned and mine)):
+                    continue
+                grade = wanted_grade.get(name) or knobs.get("min_grade") or 8
+                have = {o["card"]["sp_id"] for o in mine}
+                options += [o for o in self._unused_options(name, wanted_season.get(name), grade, name in wanted_grade,
+                                                            fits if not season_rule else None) if o["card"]["sp_id"] not in have]  # fmt: skip
             self._score_options(role, options, knobs)
             slot_options += [(role, options)] * n
         if first is None or not first.sample_size:
@@ -2513,6 +2543,13 @@ class Toolbox:
                 }  # fmt: skip
             elif sq.include_clubs == []:
                 notes.append("넣을 선수들이 함께 뛴 클럽·같은 국적 중 랭커 데이터가 있는 팀컬러가 없어 전체 랭커 기준으로 짬")
+            if unused := [f'{c["entry"]["name"]} {c["card"]["season"]}' for c in chosen  # 시즌을 정한 카드도 랭커가 안 썼으면 (rankers 0)
+                       if c and not c.get("owned") and not c["card"]["rankers"] and any(t.startswith("include:") for t in c["tags"])]:
+                out["include_without_ranker_data"] = {
+                    "players": unused,
+                    "note": "사용자가 원해 넣었지만 이 팀컬러·포메이션 랭커들이 그 자리에 이 카드를 쓴 기록이 없음 (사용률 없음, 랭커가 쓴 카드가 없거나 한도에 안 맞아 시세가 있는 다른 카드로 넣음)."
+                            " 거절하지 말고 넣은 스쿼드를 보여 주며 기록이 없다고 한 번만 말할 것",
+                }  # fmt: skip
             for name, player in got.items():
                 if player is None:
                     card = f" {sq.must_season[name].upper()} 카드" if name in sq.must_season else ""

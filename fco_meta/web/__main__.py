@@ -59,8 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_log = ChatLog()  # 기록은 이 프로세스 메모리에만
     app = create_app(args.db, backend=backend, gemini_model=args.model, chat_log=chat_log)
     threading.Thread(target=app.state.warm, daemon=True).start()  # 첫 화면 조회를 미리 (요청은 그동안에도 받는다)
-    uvicorn.run(app, host=args.host, port=args.port)
-    chat_log.flush()  # 서버가 꺼질 때(Render가 잠재울 때 포함) 남은 기록을 올린다
+    uvicorn.run(app, host=args.host, port=args.port)  # 꺼질 때 남은 기록은 앱의 lifespan이 올린다
     return 0
 
 

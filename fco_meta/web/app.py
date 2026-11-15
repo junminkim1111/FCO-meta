@@ -14,7 +14,7 @@ import time
 import uuid
 from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Iterable
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -427,7 +427,14 @@ def create_app(
     compares: OrderedDict[str, dict[str, Any]] = OrderedDict()  # compare_id → 질문·칸별 답 (답 고르기용, 최근 것만)
     squads: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출 (최근 것만)
 
-    app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        # 서버가 꺼질 때(배포·Render가 잠재울 때) 남은 기록을 올린다. uvicorn.run이 끝난 뒤에 하면 uvicorn이 SIGTERM을
+        # 다시 일으켜 프로세스가 먼저 끝나 버린다 (2026-11-15 배포 사이에 한 대화의 기록이 사라짐)
+        chat_log.flush()
+
+    app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
     app.state.conn = conn
     app.state.chat_log = chat_log
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
