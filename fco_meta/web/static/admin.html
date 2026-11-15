@@ -95,6 +95,7 @@
   td.q { min-width: 260px; max-width: 520px; }
   td.q .text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   td.q .sub { color: var(--busy); font-size: 12px; margin-top: 2px; }
+  td.q .more { color: var(--muted); font-size: 12px; margin-top: 2px; }
   td.model { white-space: nowrap; color: var(--muted); font-size: 12.5px; }
   tbody tr.open-able { cursor: pointer; } tbody tr.open-able:hover > td { background: var(--hover); }
   tbody tr.sel > td { background: var(--surface-2); }
@@ -124,6 +125,9 @@
   .chip { display: inline-flex; gap: 5px; align-items: baseline; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; background: var(--surface-2); }
   .chip b { font-weight: 400; color: var(--muted); }
   .chip span { font-family: var(--mono); }
+  .turn { display: grid; gap: 14px; } .turn + .turn { border-top: 1px solid var(--line); padding-top: 20px; }
+  .turn-no { margin: 0 !important; font-family: var(--mono); }
+  .trace-box > summary { cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
   .dr h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
   .note { font-size: 12.5px; color: var(--muted); margin: 0; }
   .note.warn { color: var(--busy); }
@@ -385,15 +389,16 @@ function traceTable(records, compact = false) {
   const saved = savedIds();
   return table(head, records.map((r) => {
     const q = el("td", { class: "q" }, el("div", { class: "text", text: r.q || "" }),
+      r.turns ? el("div", { class: "more", text: `+ 질문 ${r.turns.length - 1}개 더` }) : null,
       r.error ? el("div", { class: "sub", text: r.error }) : null,
       r.unverified ? el("div", { class: "sub", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null);
     const cells = compact ? [el("td", { class: "t", text: when(r.t) }), q, el("td", { class: "model", text: modelOf(r) })]
       : [el("td", { class: "t", text: when(r.t) }), el("td", {}, status(r.outcome)), q, el("td", { class: "model", text: modelOf(r) }),
          el("td", { class: "n", text: sec(r.ms) }), el("td", { class: "n", text: r.tokens ? num(r.tokens) : "" }), el("td", { class: "n", text: r.cost != null ? usd(r.cost) : "" }),
          el("td", { class: "n" }, r.vote ? el("span", { class: "vote-" + r.vote, text: VOTE[r.vote], title: r.vote === "up" ? "좋아요" : "싫어요" }) : null,
-           saved.has(r.id) ? el("span", { class: "faint", text: " 저장됨" }) : null)];
+           (r.turns || [r]).every((x) => saved.has(x.id)) ? el("span", { class: "faint", text: " 저장됨" }) : null)];
     const tr = el("tr", {}, ...cells);
-    if (hasDetail(r) || r.outcome === "compare") {
+    if ((r.turns || [r]).some((x) => hasDetail(x) || x.outcome === "compare")) {
       tr.classList.add("open-able");
       tr.tabIndex = 0;
       tr.addEventListener("click", () => openDrawer(r, tr));
@@ -412,8 +417,27 @@ function renderTraces() {
     return b;
   }));
   const q = query.trim().toLowerCase();
-  const shown = data.recent.filter((r) => (filter === "all" || r.outcome === filter || (filter === "unverified" && r.unverified)) && (!q || (r.q || "").toLowerCase().includes(q)));
+  const match = (r) => (filter === "all" || r.outcome === filter || (filter === "unverified" && r.unverified)) && (!q || (r.q || "").toLowerCase().includes(q));
+  const shown = conversations(data.recent).filter((c) => (c.turns || [c]).some(match)); // 한 질문이라도 맞으면 그 대화 전체
   $("traces").replaceChildren(shown.length ? traceTable(shown) : empty("해당하는 질문이 없습니다."));
+}
+
+// 한 채팅창(세션)의 질문들을 한 줄로: 첫 질문 · 질문 수 · 시간·토큰·비용 합. 세션 없는 기록(질문 수 제한)은 따로
+function conversations(records) {
+  const groups = new Map();
+  for (const r of [...records].reverse()) { // 오래된 것부터 → 대화 안 질문 순서
+    const key = r.session || r.id || r.t;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const sum = (turns, k) => (turns.some((x) => x[k] != null) ? turns.reduce((s, x) => s + (x[k] || 0), 0) : undefined);
+  return [...groups.values()].map((turns) => (turns.length === 1 ? turns[0] : {
+    ...turns[turns.length - 1], t: turns[0].t, q: turns[0].q, turns,
+    model: [...new Set(turns.map((x) => x.model).filter(Boolean))].join(", "),
+    ms: sum(turns, "ms"), tokens: sum(turns, "tokens"), cost: sum(turns, "cost"),
+    error: turns.find((x) => x.error)?.error, unverified: turns.flatMap((x) => x.unverified || []).join(", ") ? turns.flatMap((x) => x.unverified || []) : undefined,
+    vote: turns.some((x) => x.vote === "down") ? "down" : turns.some((x) => x.vote === "up") ? "up" : undefined,
+  })).sort((a, b) => (a.t < b.t ? 1 : -1));
 }
 
 function renderFeedback() {
@@ -457,102 +481,125 @@ function renderErrors() {
 /* 오른쪽 trace 창 */
 const traceText = (t) => (t.kind === "tool" ? `${t.name} ${JSON.stringify(t.args || {})}` : t.kind === "result" ? `${t.name}${t.ok ? "" : " (오류)"} ${t.text}` : t.text || "");
 
-// AI 에이전트에 붙여 넣을 글: 질문 / 답변(trace 포함)
+// AI 에이전트에 붙여 넣을 글: 질문 / 답변(trace 포함). 대화면 질문마다 이어 붙인다
 function copyText(r, d) {
   const meta = [r.t, LABEL[r.outcome] || r.outcome, r.model, MODE[r.mode], r.route, sec(r.ms), r.tools?.length ? "도구 " + r.tools.join(", ") : null,
                 r.vote ? "피드백 " + VOTE[r.vote] : null, r.error ? "오류 " + r.error : null].filter(Boolean).join(" · ");
-  if (r.outcome === "compare") {
-    const panes = Object.entries(r.panes || {}).map(([k, p]) => `## ${p.label || k} (${p.model || "?"}, ${sec(p.ms)}${r.chosen === k ? ", 사용자가 고름" : ""})\n${p.answer || p.error || "(답 없음)"}`);
-    return `질문: ${r.q}\n\n답변:\n[메타] ${meta}\n\n${panes.join("\n\n")}`;
+  if (d?.compare) {
+    const c = d.compare;
+    const panes = Object.entries(c.panes || {}).map(([k, p]) => `## ${p.label || k} (${p.model || "?"}, ${sec(p.ms)}${c.chosen === k ? ", 사용자가 고름" : ""})\n${p.answer || p.error || "(답 없음)"}`);
+    return `질문: ${r.q}\n\n답변:\n[메타] ${meta}\n\n${panes.join("\n\n") || "(답이 남아 있지 않음)"}`;
   }
+  if (d?.error) return `질문: ${r.q}\n\n답변: (${d.error})\n[메타] ${meta}`;
   const trace = (d?.trace || []).map((t) => `+${t.at}s [${TRACE_LABEL[t.kind] || t.kind}] ${traceText(t)}`).join("\n");
   return `질문: ${r.q}\n\n답변(trace 포함):\n[메타] ${meta}\n[trace]\n${trace || "(없음)"}\n\n[답변]\n${d?.answer || "(답이 끝나기 전에 멈춤)"}`;
+}
+function copyAll() {
+  const turns = current.turns;
+  if (turns.length === 1) return copyText(turns[0].r, turns[0].d);
+  return `대화 (한 채팅창의 질문 ${turns.length}개, 순서대로)\n\n` + turns.map((x, i) => `### ${i + 1}번째 질문\n` + copyText(x.r, x.d)).join("\n\n---\n\n");
 }
 
 const chip = (k, v, cls) => (v ? el("span", { class: "chip" }, el("b", { text: k }), el("span", { class: cls || "", text: v })) : null);
 
+// 질문 하나의 trace·답변: 저장한 것, 7일 안의 것은 서버에서, 비교는 그 세 칸
+async function loadDetail(r) {
+  if (r.outcome === "compare") return { compare: (data.compares || []).find((x) => x.compare_id === r.compare_id) || null };
+  const saved = data.saved.find((x) => x.id === r.id);
+  if (saved) return { trace: saved.trace, answer: saved.answer, saved: true };
+  if (!hasDetail(r)) return { error: "7일이 지나 지워진 기록입니다." };
+  const res = await api("/api/admin/detail?id=" + encodeURIComponent(r.id)).catch(() => null);
+  if (!res?.ok) return { error: (await res?.json().catch(() => ({})))?.detail || "불러오지 못했습니다." };
+  return res.json();
+}
+
 async function openDrawer(r, tr) {
   document.querySelectorAll("tr.sel").forEach((n) => n.classList.remove("sel"));
   tr?.classList.add("sel");
-  current = { r, d: null };
-  const body = $("dr-body"), save = $("dr-save");
-  $("dr-id").textContent = `${r.t.slice(0, 19).replace("T", " ")} · ${r.id || r.compare_id || ""}`;
-  save.hidden = r.outcome === "compare";
-  save.disabled = true; save.textContent = "저장";
+  const cur = current = { turns: (r.turns || [r]).map((x) => ({ r: x, d: null })) };
+  const many = cur.turns.length > 1, body = $("dr-body"), save = $("dr-save");
+  $("dr-id").textContent = many ? `대화 · 질문 ${cur.turns.length}개 · 세션 ${r.session}` : `${r.t.slice(0, 19).replace("T", " ")} · ${r.id || r.compare_id || ""}`;
+  save.hidden = false; save.disabled = true; save.textContent = "저장";
   $("dr-copy").disabled = true;
-  body.replaceChildren(...[el("p", { class: "dr-q", text: r.q }),
+  body.replaceChildren(el("div", { class: "logo-loader", role: "status", ariaLabel: "불러오는 중", style: "width:72px" }));
+  if (!$("drawer").open) $("drawer").showModal();
+  const [{ renderMarkdown }] = await Promise.all([md, ...cur.turns.map(async (x) => { x.d = await loadDetail(x.r); })]);
+  if (current !== cur) return; // 그사이 다른 줄을 열었다
+  const mdBox = (text) => { const n = el("div", { class: "md" }); renderMarkdown(n, text); return n; };
+  body.replaceChildren(...cur.turns.map((x, i) => turnBlock(x.r, x.d, many ? i + 1 : 0, mdBox)));
+  $("dr-copy").disabled = false;
+  const savable = cur.turns.filter((x) => x.d.trace);
+  save.hidden = !savable.length;
+  if (savable.length) setSaveButton(savable.every((x) => x.d.saved));
+}
+
+// 질문 하나: (대화면 몇 번째인지) 질문 · 칩 · trace · 답변
+function turnBlock(r, d, n, mdBox) {
+  const parts = [
+    n ? el("h3", { class: "turn-no", text: `${n}번째 질문 · ${when(r.t)}` }) : null,
+    el("p", { class: "dr-q", text: r.q }),
     el("div", { class: "chips" }, chip("상태", LABEL[r.outcome] || r.outcome, r.outcome), chip("모델", modelOf(r)), chip("모드", MODE[r.mode]), chip("경로", r.route),
       chip("시간", sec(r.ms)), chip("토큰", r.tokens && num(r.tokens)), chip("비용", r.cost != null && usd(r.cost)), chip("도구", r.tools?.join(", ")),
-      chip("피드백", r.vote && VOTE[r.vote]), chip("팀", r.team), chip("세션", r.session)),
+      chip("피드백", r.vote && VOTE[r.vote]), chip("팀", r.team), chip("세션", !n && r.session)),
     r.error ? el("p", { class: "note warn", text: "오류: " + r.error }) : null,
     r.unverified ? el("p", { class: "note warn", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null,
-    el("div", { class: "logo-loader", role: "status", ariaLabel: "불러오는 중", style: "width:72px" })].filter(Boolean));
-  if (!$("drawer").open) $("drawer").showModal();
-  const { renderMarkdown } = await md;
-  const mdBox = (text) => { const n = el("div", { class: "md" }); renderMarkdown(n, text); return n; };
-
-  if (r.outcome === "compare") {
-    const c = (data.compares || []).find((x) => x.compare_id === r.compare_id) || r;
-    current.r = c;
-    body.lastChild.replaceWith(c.panes ? el("div", {}, el("h3", { text: "세 모델의 답" }), el("div", { class: "panes" }, ...Object.entries(c.panes).map(([k, p]) =>
+  ];
+  if (d.compare !== undefined) {
+    const c = d.compare;
+    parts.push(c?.panes ? el("div", {}, el("h3", { text: "세 모델의 답" }), el("div", { class: "panes" }, ...Object.entries(c.panes).map(([k, p]) =>
       el("div", { class: "pane" + (c.chosen === k ? " chosen" : "") },
         el("h4", {}, document.createTextNode(p.label || k), c.chosen === k ? el("span", { class: "compare", text: "고른 답" }) : null),
         el("div", { class: "meta", text: [p.model, sec(p.ms), p.tokens && `토큰 ${num(p.tokens)}`, p.cost != null && usd(p.cost), p.tools?.length ? "도구 " + p.tools.join(", ") : "도구 없음"].filter(Boolean).join(" · ") }),
         p.answer ? mdBox(p.answer) : el("p", { class: "note warn", text: p.error || "답 없음" })))))
       : el("p", { class: "note", text: "이 비교의 답은 최근 50건에만 남습니다." }));
-    $("dr-copy").disabled = !c.panes;
-    return;
+  } else if (d.error) {
+    parts.push(el("p", { class: "note", text: d.error }));
+  } else {
+    const trace = d.trace || [], total = Math.max(r.ms ? r.ms / 1000 : 0, ...trace.map((t) => t.at), 0.1);
+    const steps = trace.map((t, i) => {
+      const end = trace[i + 1]?.at ?? total, text = traceText(t);
+      const long = text.length > 240 || t.kind === "thought";
+      const content = t.kind === "tool" ? el("div", { class: "txt" }, el("b", { text: t.name + " " }), el("code", { text: JSON.stringify(t.args || {}) }))
+        : long ? el("details", { class: "txt" }, el("summary", { text: text.slice(0, 120).replace(/\s+/g, " ") + (text.length > 120 ? "…" : "") }), el("div", { text }))
+        : el("div", { class: "txt", text });
+      return el("div", { class: "step" }, el("span", { class: "at", text: `+${t.at}s` }),
+        el("span", { class: "kind " + t.kind, text: (TRACE_LABEL[t.kind] || t.kind) + (t.kind === "result" && !t.ok ? " ✕" : "") }), content,
+        el("div", { class: "wf", title: `${t.at}s → ${end}s` }, el("span", { style: `left:${(t.at / total) * 100}%;width:${((end - t.at) / total) * 100}%` })));
+    });
+    // 대화에서는 trace를 접어 두고 답만 펼친다 (질문 하나면 펼침)
+    parts.push(el("details", { class: "trace-box", open: !n }, el("summary", { text: `Trace · ${trace.length}단계` }),
+                  steps.length ? el("div", { class: "steps" }, ...steps) : el("p", { class: "note", text: "trace 없음" })),
+               el("div", {}, el("h3", { text: "답변" }), el("div", { class: "answer" }, d.answer ? mdBox(d.answer) : el("p", { class: "note", text: "답이 끝나기 전에 멈춘 질문입니다." }))));
   }
-
-  const saved = data.saved.find((x) => x.id === r.id);
-  let d = saved && { trace: saved.trace, answer: saved.answer, saved: true };
-  if (!d) {
-    const res = await api("/api/admin/detail?id=" + encodeURIComponent(r.id));
-    if (current.r !== r) return; // 그사이 다른 줄을 열었다
-    if (!res.ok) { body.lastChild.replaceWith(el("p", { class: "note", text: (await res.json().catch(() => ({}))).detail || "불러오지 못했습니다." })); return; }
-    d = await res.json();
-  }
-  current.d = d;
-  $("dr-copy").disabled = false;
-  setSaveButton(d.saved);
-
-  const trace = d.trace || [], total = Math.max(r.ms ? r.ms / 1000 : 0, ...trace.map((t) => t.at), 0.1);
-  const steps = trace.map((t, i) => {
-    const end = trace[i + 1]?.at ?? total, text = traceText(t);
-    const long = text.length > 240 || t.kind === "thought";
-    const content = t.kind === "tool" ? el("div", { class: "txt" }, el("b", { text: t.name + " " }), el("code", { text: JSON.stringify(t.args || {}) }))
-      : long ? el("details", { class: "txt" }, el("summary", { text: text.slice(0, 120).replace(/\s+/g, " ") + (text.length > 120 ? "…" : "") }), el("div", { text }))
-      : el("div", { class: "txt", text });
-    return el("div", { class: "step" }, el("span", { class: "at", text: `+${t.at}s` }),
-      el("span", { class: "kind " + t.kind, text: (TRACE_LABEL[t.kind] || t.kind) + (t.kind === "result" && !t.ok ? " ✕" : "") }), content,
-      el("div", { class: "wf", title: `${t.at}s → ${end}s` }, el("span", { style: `left:${(t.at / total) * 100}%;width:${((end - t.at) / total) * 100}%` })));
-  });
-  body.lastChild.replaceWith(el("div", {}, el("h3", { text: `Trace · ${trace.length}단계` }), steps.length ? el("div", { class: "steps" }, ...steps) : el("p", { class: "note", text: "trace 없음" })));
-  body.append(el("div", {}, el("h3", { text: "답변" }), el("div", { class: "answer" }, d.answer ? mdBox(d.answer) : el("p", { class: "note", text: "답이 끝나기 전에 멈춘 질문입니다." }))));
+  return el("section", { class: "turn" }, ...parts.filter(Boolean));
 }
 
 function setSaveButton(isSaved) {
-  const b = $("dr-save");
+  const b = $("dr-save"), many = current.turns.length > 1;
   b.disabled = false;
-  b.textContent = isSaved ? "저장 취소" : "저장";
+  b.textContent = isSaved ? "저장 취소" : many ? "대화 저장" : "저장";
   b.classList.toggle("primary", !isSaved);
-  b.title = isSaved ? "영구 저장을 풉니다 (7일이 지난 기록이면 지워집니다)" : "7일이 지나도 지워지지 않게 영구 저장";
+  b.title = isSaved ? "영구 저장을 풉니다 (7일이 지난 기록이면 지워집니다)" : "7일이 지나도 지워지지 않게 영구 저장" + (many ? " (이 대화의 질문 모두)" : "");
 }
 
+// 저장·저장 취소: 대화면 그 안의 질문 모두
 $("dr-save").addEventListener("click", async () => {
-  const { r, d } = current, b = $("dr-save");
-  if (!d) return;
-  if (d.saved && !confirm(`저장을 취소할까요? 7일이 지난 질문이면 trace와 답변을 다시 볼 수 없습니다.`)) return;
+  const cur = current, b = $("dr-save"), targets = cur.turns.filter((x) => x.d?.trace);
+  if (!targets.length) return;
+  const saving = !targets.every((x) => x.d.saved);
+  if (!saving && !confirm(`저장을 취소할까요? 7일이 지난 질문이면 trace와 답변을 다시 볼 수 없습니다.`)) return;
   b.disabled = true;
-  const res = await api("/api/admin/saved/" + r.id, { method: d.saved ? "DELETE" : "POST" });
-  if (!res.ok) { b.disabled = false; return toast("실패했습니다. 다시 시도하세요."); }
-  d.saved = !d.saved;
-  setSaveButton(d.saved);
-  toast(d.saved ? "영구 저장했습니다." : "저장을 취소했습니다.");
+  let failed = 0;
+  for (const x of targets.filter((x) => x.d.saved !== saving)) {
+    const res = await api("/api/admin/saved/" + x.r.id, { method: saving ? "POST" : "DELETE" }).catch(() => null);
+    if (res?.ok) x.d.saved = saving; else failed++;
+  }
+  if (current === cur) setSaveButton(targets.every((x) => x.d.saved));
+  toast(failed ? `${failed}개는 실패했습니다. 다시 시도하세요.` : saving ? "영구 저장했습니다." : "저장을 취소했습니다.");
   await load();
 });
 $("dr-copy").addEventListener("click", async () => {
-  const text = copyText(current.r, current.d);
+  const text = copyAll();
   try { await navigator.clipboard.writeText(text); return toast("복사했습니다."); } catch {}
   // 클립보드 API를 못 쓰는 곳(http, 일부 임베드)에서는 예전 방식으로 (모달 안에 붙여야 선택된다)
   const ta = el("textarea", { value: text, style: "position:fixed;opacity:0" });
