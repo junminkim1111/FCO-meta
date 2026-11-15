@@ -493,6 +493,9 @@
 <script type="module">
 import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
+// 답 끝의 "다음 질문: …" 줄은 답에서 빼고 입력창에 흐리게 채운다 (Tab으로 그대로 보낸다) → [본문, 다음 질문 또는 null]
+const NEXT_Q = /\n[ \t>*_#-]*다음 질문\s*[:：][ \t*_]*([^\n]*?)[ \t*_]*$/;
+const splitNext = (text) => { const m = text.match(NEXT_Q); return m ? [text.slice(0, m.index), m[1].replace(/^["“]|["”]$/g, "").trim() || null] : [text, null]; };
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
 const $ = (id) => document.getElementById(id);
 const beam = mountBeam($("msg-beam"));
@@ -905,7 +908,7 @@ async function send(text) {
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
-    renderMarkdown(bubble, answer.slice(0, shown));
+    renderMarkdown(bubble, splitNext(answer.slice(0, shown))[0]);
     if (stick) log.scrollTop = log.scrollHeight;
     else $("jump").hidden = false;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
@@ -993,6 +996,7 @@ async function send(text) {
   }
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
+  if (!ctrl.signal.aborted) $("msg").placeholder = splitNext(answer)[1] || DEFAULT_HINT; // 다음 질문이 없으면 기본 안내 (Tab은 채우지 않음)
   if (used) bubble.after(el("div", { class: "applied", text: modelText(used) }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
   if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId, built));
@@ -1357,7 +1361,7 @@ function makeSelectable(p, question, all) {
       closeCompare();
       say("me", question);
       const bubble = el("div", { class: "msg bot" });
-      renderMarkdown(bubble, p.text);
+      renderMarkdown(bubble, splitNext(p.text)[0]);
       $("log").append(bubble);
       $("log").scrollTop = $("log").scrollHeight;
     }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280);
@@ -1409,7 +1413,7 @@ async function sendCompare(text) {
         if (p.trace && (ev.type === "trace" || ev.type === "tool")) addTrace(p.trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
         if (p.trace && ev.type === "delta" && !p.text) addTrace(p.trace, { kind: "first", text: "답이 나오기 시작" });
         if (p.trace && ev.type === "done") addTrace(p.trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
-        if (ev.type === "delta") { p.text += ev.text; renderMarkdown(p.answer, p.text); }
+        if (ev.type === "delta") { p.text += ev.text; renderMarkdown(p.answer, splitNext(p.text)[0]); }
         else if (ev.type === "reset") { p.text = ""; p.answer.replaceChildren(el("span", { class: "shimmer", text: THINKING })); }
         else if (ev.type === "tool" && !p.text) p.answer.replaceChildren(el("span", { class: "shimmer", text: TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING }));
         else if (ev.type === "done") { p.stat.textContent = `${((performance.now() - started) / 1000).toFixed(1)}초`; p.ok = !ev.error; }

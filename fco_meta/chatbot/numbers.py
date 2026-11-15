@@ -120,8 +120,8 @@ def unsupported_numbers(answer: str, results: list[Any], question: str = "") -> 
     _amounts([*results, question], money_set, rate_set)
     money, pcts = sorted(money_set), sorted(rate_set)
     text = "\n".join(line for line in answer.splitlines() if not line.startswith("[근거]"))
-    # 끝의 다음 질문 제안("100억으로 다시 짜줘")은 사실 주장이 아니다. 제목 오타("이어서 무어볼 만한 질분")도 있어 '이어서'로 시작하는 줄부터
-    text = re.split(r"^[#*\s]*이어서", text, flags=re.M)[0]
+    # 끝의 다음 질문 제안("다음 질문: 100억으로 다시 짜줘")은 사실 주장이 아니다. 제목 오타("이어서 무어볼 만한 질분")도 있어 '이어서'로 시작하는 줄부터
+    text = re.split(r"^[#*\s]*(?:이어서|다음 질문)", text, flags=re.M)[0]
     missing = []
     for m in _PERCENT_RE.finditer(text):
         v = abs(float(m.group(1).replace(",", "")))
