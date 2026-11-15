@@ -239,10 +239,10 @@
   @media (hover: hover) { .rate button:hover { background: var(--panel-strong); color: var(--text); opacity: 1; } }
   .rate.gone { opacity: 0; }
   .rate.feed button { padding: 2px 10px; border-radius: 8px; background: none; border: 1px solid var(--line); color: var(--text); font-size: 12px; }
-  /* 짜는 중 로딩: FCLM 로고를 흐리게 깔고 그 위로 빛이 지나간다. 빈 경기장이면 가운데 크게, 선수가 있으면 오른쪽 위에 작게 */
+  /* 짜는 중 로딩: FCLM 로고를 흐리게 깔고 그 위로 빛이 지나간다. 경기장 가운데 (선수가 있는 스쿼드를 다시 짤 때도) */
   .sq-loader { display: none; position: absolute; z-index: 2; aspect-ratio: 452 / 96; pointer-events: none; }
   #squad-panel.working .sq-loader { display: block; } /* 도구가 도는 동안만. 선수가 올라오면 내리고 테두리 빛만 남긴다 */
-  .sq-loader { right: 10px; top: 10px; width: 64px; } .pitch:has(.empty-pitch) .sq-loader { right: auto; top: 50%; left: 50%; width: 32%; transform: translate(-50%, -50%); }
+  .sq-loader { top: 50%; left: 50%; width: 32%; transform: translate(-50%, -50%); }
   .sq-loader::before, .sq-loader::after { content: ""; position: absolute; inset: 0; -webkit-mask: url(/static/fclm-logo.png) center / contain no-repeat; mask: url(/static/fclm-logo.png) center / contain no-repeat; }
   .sq-loader::before { background: rgba(255, 255, 255, .55); }
   @media (prefers-reduced-motion: no-preference) {
