@@ -108,6 +108,9 @@ STRETCH_GAIN = 0.03  # 예산을 넘길 만한 점수(사용률 합) 차이  # p
 SALARY_GAP = 2  # 자리 평균 급여가 랭커 평균과 이만큼 다르면 결과에 알린다
 BUDGET_MIN_GRADE = 8  # 예산에 맞추느라 강화를 낮춰도 이 아래로는 안 내린다 (8강 미만은 요즘 쓰지 않음)
 SQUAD_MAX_GRADE = 11  # 스쿼드 추천은 11강까지: 12·13강은 돈이 있어도 사기 어려운 카드라 넣지 않는다 (가진 카드는 그대로)
+TOP_GRADE = 13  # 다 11강인데도 예산이 남으면 12·13강도 — 랭커 스쿼드에 그 강화로 있는 카드만 (없으면 매물이 없을 수 있다)
+# 12·13강으로 올려 보는 자리 순서: 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 (돈이 남는 동안 한 자리씩)
+TOP_GRADE_ORDER = (("GK",), ("RB", "LB", "RWB", "LWB"), ("RW", "LW", "RM", "LM", "RAM", "LAM"), ("DM", "CDM"))
 # 신규특성(금특·신특): 8강(금카) 이상이면 어떤 카드든 하나를 더 달 수 있다. 줄임말 → 카드 상세의 특성 이름
 NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
@@ -1361,9 +1364,9 @@ class Toolbox:
                 "max_price_bp": max_price_bp, "max_price": format_bp(max_price_bp) if max_price_bp is not None else None,
                 "max_salary": max_salary,
             }  # fmt: skip
+        out["definitions"]["new_traits"] = "카드가 원래 가진 신규특성 (카드 상세 기준, 상세 미수집 카드는 이 칸이 없음, 빈 목록 = 없음)"
         if wanted:
             out["traits"] = {"wanted": wanted, "can_add_trait": bool(can_add_trait)}
-            out["definitions"]["new_traits"] = "카드가 원래 가진 신규특성 (카드 상세 기준, 상세 미수집 카드는 빠짐)"
             if can_add_trait:
                 out["definitions"]["added_trait"] = (
                     f"{ADD_TRAIT_GRADE}강 이상에서 새로 달 특성. price_for_traits는 그 강화(가장 많이 쓴 강화와 {ADD_TRAIT_GRADE} 중 큰 쪽)의 시세"
@@ -1407,15 +1410,20 @@ class Toolbox:
                 "most_used_grade": typical_grade,
                 "price_at_most_used_grade": self._price(s.sp_id, typical_grade) if typical_grade else None,
                 "salary": self._salary(s.sp_id),
+                **({"new_traits": traits} if (traits := self._new_traits(s.sp_id)) is not None else {}),  # 추천 표의 신규특성 칸
             })  # fmt: skip
         return cards
 
+    def _new_traits(self, sp_id: int) -> list[str] | None:
+        """The card's own new traits (금특·신특), or None when its details are not collected."""
+        row = self.conn.execute("SELECT traits FROM card_detail WHERE spid = ?", (sp_id,)).fetchone()
+        return None if row is None else [t for t in json.loads(row["traits"]) if t in NEW_TRAITS]
+
     def _with_traits(self, card: dict[str, Any], wanted: list[str], can_add: bool) -> bool:
         """Keep a card that has the wanted new traits — or, with can_add, lacks one that 8강+ can add (then priced at 8강+)."""
-        row = self.conn.execute("SELECT traits FROM card_detail WHERE spid = ?", (card["sp_id"],)).fetchone()
-        if row is None:
+        own = self._new_traits(card["sp_id"])
+        if own is None:
             return False
-        own = [t for t in json.loads(row["traits"]) if t in NEW_TRAITS]
         missing = [t for t in wanted if t not in own]
         if len(missing) > (1 if can_add else 0):
             return False
@@ -1557,7 +1565,13 @@ class Toolbox:
             chosen = wider
         if budget and spend is not False:  # 예산이 남으면 그대로 두지 않는다
             chosen = self._spend(sq, chosen, knobs)
+            chosen = self._better_cards(sq, chosen, knobs)  # 다 11강인데도 남으면 더 좋은 카드로
+            chosen = self._top_grades(sq, chosen, knobs)  # 그래도 남으면 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 12·13강
         out = self._squad_result(sq, chosen, stretched=bool(wider))
+        if top := [f"{role} {c['entry']['name']} {c['card']['most_used_grade']}강 (랭커 {c['top_grade_rankers']}명이 그 강화로 씀)"
+                   for (role, _), c in zip(sq.slot_options, chosen) if c and c.get("top_grade_rankers")]:  # fmt: skip
+            out["top_grades"] = {"cards": top, "note": "11강까지 올리고도 예산이 남아, 랭커 스쿼드에 실제로 있는 12·13강으로 올림."
+                                                        " 매물이 적을 수 있다고 한 줄로 알릴 것"}
         if budget:
             out.update(self._grade_changes(sq, chosen))
             if wider:
@@ -1730,6 +1744,104 @@ class Toolbox:
             _, i, price = best
             chosen[i] = {**chosen[i], "price": price["price_bp"],
                          "card": {**chosen[i]["card"], "most_used_grade": price["grade"], "price_at_most_used_grade": price}}  # fmt: skip
+
+    def _free_slots(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[int]:
+        """Slots the leftover budget may change: priced, not owned, not saved (only the invest slots when given)."""
+        invest, save = knobs.get("invest", set()), knobs.get("save", set())
+        return [i for i, ((role, _), c) in enumerate(zip(sq.slot_options, chosen))
+                if c and c["price"] is not None and not c.get("owned") and role not in save and (not invest or role in invest)]  # fmt: skip
+
+    def _better_cards(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[dict[str, Any] | None]:
+        """Money left after _spend with every card at SQUAD_MAX_GRADE → swap a slot to another card rankers use there
+        with a higher OVR at SQUAD_MAX_GRADE, the most OVR per BP first, while every limit and requirement (include,
+        chemistry, team color) still holds."""
+        chosen, cache = list(chosen), {}
+
+        def variants(o: dict[str, Any], role: str) -> list[tuple[dict[str, Any], int]]:
+            """[(option at SQUAD_MAX_GRADE, its OVR)], or [] without a price or OVR."""
+            key = (o["card"]["sp_id"], role)
+            if key not in cache:
+                price = self._price(o["card"]["sp_id"], SQUAD_MAX_GRADE)
+                ovr = self._ovr(o["card"]["sp_id"], role, SQUAD_MAX_GRADE) if price else None
+                cache[key] = [] if ovr is None else [({**o, "price": price["price_bp"], "card": {
+                    **o["card"], "most_used_grade": SQUAD_MAX_GRADE, "price_at_most_used_grade": price}}, ovr)]  # fmt: skip
+            return cache[key]
+
+        slots = self._free_slots(sq, chosen, knobs)
+        maxed = lambda c: (c["card"]["most_used_grade"] or 0) >= SQUAD_MAX_GRADE or self._price(  # noqa: E731
+            c["card"]["sp_id"], (c["card"]["most_used_grade"] or 0) + 1) is None
+        if not all(maxed(chosen[i]) for i in slots):  # 아직 강화를 올릴 카드가 있으면(돈이 모자라 멈춤) 카드를 바꾸지 않는다
+            return chosen
+        while True:
+            left = sq.limits["price"] - sum(c["price"] or 0 for c in chosen if c)
+            best = None
+            for i in slots:
+                role, options = sq.slot_options[i]
+                now = chosen[i]
+                now_ovr = self._ovr(now["card"]["sp_id"], role, now["card"]["most_used_grade"] or 0) or 0
+                others = {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i}
+                for o in options:
+                    if o["entry"]["pid"] in others or o["card"]["sp_id"] == now["card"]["sp_id"]:
+                        continue
+                    for new, ovr in variants(o, role):
+                        if ovr <= now_ovr or new["price"] - now["price"] > left:
+                            continue
+                        if not _fits(chosen[:i] + [new] + chosen[i + 1:], sq.limits, sq.reqs):
+                            continue
+                        value = (ovr - now_ovr) / max(new["price"] - now["price"], 1)
+                        if best is None or value > best[0]:
+                            best = (value, i, new)
+            if best is None:
+                return chosen
+            chosen[best[1]] = best[2]
+
+    def _top_grades(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[dict[str, Any] | None]:
+        """Still money left → one slot at a time in TOP_GRADE_ORDER (then the rest): its card, or another card rankers
+        use there, at 13강 if some ranker starts it at 13강 and it fits (else 12강), the highest OVR; then the next slot."""
+        chosen = list(chosen)
+        free = self._free_slots(sq, chosen, knobs)
+        seen = self._ranker_top_grades()
+        rank = {role: n for n, group in enumerate(TOP_GRADE_ORDER) for role in group}
+        for i in sorted(free, key=lambda i: rank.get(sq.slot_options[i][0], len(TOP_GRADE_ORDER))):
+            role, options = sq.slot_options[i]
+            now = chosen[i]
+            left = sq.limits["price"] - sum(x["price"] or 0 for x in chosen if x)
+            if left <= 0:
+                break
+            now_ovr = self._ovr(now["card"]["sp_id"], role, now["card"]["most_used_grade"] or 0) or 0
+            others = {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i}
+            for grade in range(TOP_GRADE, SQUAD_MAX_GRADE, -1):  # 13강을 먼저, 없으면 12강
+                best, best_ovr = None, now_ovr
+                for o in [now, *options]:
+                    if o is not now and (o["entry"]["pid"] in others or o["card"]["sp_id"] == now["card"]["sp_id"]):
+                        continue
+                    owners = seen.get((o["card"]["sp_id"], grade))
+                    price = self._price(o["card"]["sp_id"], grade) if owners else None
+                    ovr = self._ovr(o["card"]["sp_id"], role, grade) if price else None
+                    if not price or ovr is None or ovr <= best_ovr or price["price_bp"] - now["price"] > left:
+                        continue
+                    new = {**o, "price": price["price_bp"], "top_grade_rankers": owners,
+                           "card": {**o["card"], "most_used_grade": grade, "price_at_most_used_grade": price}}  # fmt: skip
+                    if _fits(chosen[:i] + [new] + chosen[i + 1:], sq.limits, sq.reqs):
+                        best, best_ovr = new, ovr
+                if best:
+                    chosen[i] = best
+                    break
+        return chosen
+
+    def _ranker_top_grades(self) -> dict[tuple[int, int], int]:
+        """(sp_id, grade) → rankers who start that card at that 12·13강 in the latest squad snapshot — a 12·13강 card
+        some ranker owns is one that can be bought. Cached per snapshot (one query, ~0.05초 over 10,000 squads)."""
+        latest = self.conn.execute("SELECT MAX(data_as_of) FROM ranker_squad").fetchone()[0]
+        if getattr(self, "_top_cache", (None,))[0] != latest:
+            rows = self.conn.execute(
+                "SELECT p.sp_id, p.sp_grade, COUNT(DISTINCT p.ouid) FROM match_player p"
+                " JOIN ranker_squad s ON s.match_id = p.match_id AND s.ouid = p.ouid AND s.data_as_of = ?"
+                " WHERE p.sp_grade > ? AND p.starter = 1 GROUP BY 1, 2",
+                (latest, SQUAD_MAX_GRADE),
+            ).fetchall()
+            self._top_cache = (latest, {(sp, g): n for sp, g, n in rows})
+        return self._top_cache[1]
 
     @staticmethod
     def _grade_changes(sq: _Squad, chosen: list[dict[str, Any] | None]) -> dict[str, list[dict[str, Any]]]:
