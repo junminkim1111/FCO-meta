@@ -1769,6 +1769,28 @@ class Toolbox:
             chosen[i] = {**chosen[i], "price": price["price_bp"],
                          "card": {**chosen[i]["card"], "most_used_grade": price["grade"], "price_at_most_used_grade": price}}  # fmt: skip
 
+    @staticmethod
+    def _owned_fixes(slot_options, chosen: list[dict[str, Any] | None], limits: dict[str, int]) -> list[dict[str, Any]]:
+        """Over a limit only because owned cards are kept: single swaps of one owned card for a card rankers use in that
+        slot that bring every limit back, the most used first (at most 3)."""
+        total = lambda combo, k: sum(c[k] or 0 for c in combo if c)  # noqa: E731
+        out = []
+        for i, ((role, options), now) in enumerate(zip(slot_options, chosen)):
+            if not now or not now.get("owned"):
+                continue
+            others = {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i}
+            for o in options:
+                if o.get("owned") or o["entry"]["pid"] in others:
+                    continue
+                combo = chosen[:i] + [o] + chosen[i + 1:]
+                if all(total(combo, k) <= v for k, v in limits.items()):
+                    season = lambda c: (c["card"]["season"] or "").split(" (")[0]  # noqa: E731
+                    out.append({"role": role, "from": f"{now['entry']['name']} {season(now)} (급여 {now['salary']})",
+                                "to": f"{o['entry']['name']} {season(o)} (급여 {o['salary']})", "usage_rate": _card_usage(o),
+                                "price": (o["card"].get("price_at_most_used_grade") or {}).get("price"),
+                                "total_salary_after": total(combo, "salary")})  # fmt: skip
+        return sorted(out, key=lambda f: -f["usage_rate"])[:3]
+
     def _free_slots(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[int]:
         """Slots the leftover budget may change: priced, not owned, not saved (only the invest slots when given)."""
         invest, save = knobs.get("invest", set()), knobs.get("save", set())
@@ -2517,7 +2539,15 @@ class Toolbox:
                 "salary_cap": None if slots else SALARY_CAP,
                 "within_budget": within,
             }
-            if not within and not checking and not stretched:  # stretched: 일부러 조금 넘긴 스쿼드 (recommend_squad)
+            fixes = self._owned_fixes(slot_options, chosen, limits) if not within else None
+            if fixes:  # 가진 카드를 그대로 두어 넘었다: 어느 자리를 바꾸면 맞는지 도구가 찾아 준다
+                out["over_limit_fixes"] = {
+                    "over": {k: (format_bp(total(k) - v) if k == "price" else total(k) - v) for k, v in limits.items() if total(k) > v},
+                    "fixes": fixes,
+                    "note": "가진 카드를 그대로 두면 한도를 넘음. 넘었다고만 하지 말고 fixes(가진 카드 한 자리를 그 자리 랭커 픽으로 바꾸면 한도 안)를"
+                            " 해결안으로 바로 제시할 것",
+                }  # fmt: skip
+            elif not within and not checking and not stretched:  # stretched: 일부러 조금 넘긴 스쿼드 (recommend_squad)
                 notes.append("후보를 가장 싸게 바꿔도 예산·급여 한도를 넘음")
             out["leftover"] = {"price": format_bp(limits["price"] - total("price")) if "price" in limits else None,
                                "salary": limits["salary"] - total("salary") if "salary" in limits else None}  # fmt: skip
