@@ -57,7 +57,7 @@ FC온라인 랭커 데이터로 선수 추천과 스쿼드 구성을 돕는 AI �
 
 | 명령어 | 하는 일 |
 |---|---|
-| `/model` | 모델 선택창: Gemini 3.5 Flash · GPT-6 Luna · DeepSeek V4.1 Flash와 think(생각 켬, Gemini는 생각 깊이 최대). 새로고침이나 `/cancel` 전까지 계속 적용. 고르지 않으면 DeepSeek V4.1 Flash |
+| `/model` | 모델 선택창: Gemini 3.5 Flash · GPT-6 Luna · DeepSeek V4.1 Flash와 think(생각 켬, Gemini는 생각 깊이 최대). 새로고침이나 `/cancel` 전까지 계속 적용. 고르지 않으면 GPT-6 Luna |
 | `/compare` | 다음 질문을 Gemini·GPT·DeepSeek(생각 끔)이 이름을 가린 채 답하고, 고른 답으로 대화를 이어 감 (1시간 2번) |
 | `/trace` | 모델 선택·생각·도구 호출과 결과를 답 위에 표시 |
 | `/cancel` | 켜 둔 명령어를 모두 끔 |

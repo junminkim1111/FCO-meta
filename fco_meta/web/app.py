@@ -376,7 +376,7 @@ class TeamRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    # auto(/model 없이: DeepSeek 생각 끔, OpenRouter 키가 없으면 키워드로 고른 Gemini) · gemini(모델 선택창의 Gemini 3.5 Flash, 안 되면
+    # auto(/model 없이: GPT-6 Luna 생각 끔, OpenRouter 키가 없으면 키워드로 고른 Gemini) · gemini(모델 선택창의 Gemini 3.5 Flash, 안 되면
     # 다른 Gemini) · deep(DeepSeek 생각 끔) · deep_r(DeepSeek + think) · luna(GPT-6 Luna 생각 끔) · luna_r(GPT-6 Luna + think)
     mode: Literal["auto", "gemini", "deep", "deep_r", "luna", "luna_r"] = "auto"
     think: bool = False  # Gemini + think: 생각 깊이 HIGH (기본은 모델이 정함). gpt·deepseek의 think는 mode luna_r·deep_r
@@ -567,7 +567,7 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode in ("auto", "gemini"):  # auto: DeepSeek (키가 없는 서버만 키워드로 Flash-Lite·3.5 Flash). gemini: 3.5 Flash
+                if req.mode in ("auto", "gemini"):  # auto: GPT-6 Luna (키가 없는 서버만 키워드로 Flash-Lite·3.5 Flash). gemini: 3.5 Flash
                     cached = answers.get(req.message) if req.mode == "auto" and first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
@@ -582,9 +582,10 @@ def create_app(
                     if req.mode == "gemini":  # 모델 선택창의 Gemini 3.5 Flash (안 되면 다른 Flash 먼저, 그다음 Lite)
                         entry["mode"] = req.mode
                         options, why = {"model": FLASH_MODEL}, f"/model gemini → {GEMINI_LABEL} (안 되면 다른 Gemini 모델)"
-                    elif _deepseek_ready():  # 기본은 DeepSeek 생각 끔 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
-                        key, options = "deep", {"deadline": LONG_DEADLINE}
-                        why = f"{route.describe() if route else 'Jev 없음'} → {DEEP_LABEL[key]}"
+                    elif _deepseek_ready():  # 기본은 GPT-6 Luna 생각 끔 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
+                        # 2026-11-15 DeepSeek과 같은 하네스로 비교: 품질은 비슷하고 비용은 약 2.5분의 1 (DeepSeek은 한글이 안 깨지는 제공사가 비싸다)
+                        key, options = "luna", {"deadline": LONG_DEADLINE}
+                        why = f"{route.describe() if route else 'Jev 없음'} → {LUNA_LABEL[key]}"
                     entry["route"] = why
                 else:  # deep·luna (OpenRouter)
                     if not _deepseek_ready():
