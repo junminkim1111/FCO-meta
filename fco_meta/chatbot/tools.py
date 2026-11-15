@@ -108,6 +108,7 @@ STRETCH_GAIN = 0.03  # 예산을 넘길 만한 점수(사용률 합) 차이  # p
 SALARY_GAP = 2  # 자리 평균 급여가 랭커 평균과 이만큼 다르면 결과에 알린다
 BUDGET_MIN_GRADE = 8  # 예산에 맞추느라 강화를 낮춰도 이 아래로는 안 내린다 (8강 미만은 요즘 쓰지 않음)
 SQUAD_MAX_GRADE = 11  # 스쿼드 추천은 11강까지: 12·13강은 돈이 있어도 사기 어려운 카드라 넣지 않는다 (가진 카드는 그대로)
+SPARE_SHARE = 0.10  # 11강을 못 채운 카드가 있어도(다음 강화가 너무 비쌈) 예산의 이만큼 이상 남으면 다른 자리를 더 좋게
 TOP_GRADE = 13  # 다 11강인데도 예산이 남으면 12·13강도 — 랭커 스쿼드에 그 강화로 있는 카드만 (없으면 매물이 없을 수 있다)
 # 12·13강으로 올려 보는 자리 순서: 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 (돈이 남는 동안 한 자리씩)
 TOP_GRADE_ORDER = (("GK",), ("RB", "LB", "RWB", "LWB"), ("RW", "LW", "RM", "LM", "RAM", "LAM"), ("DM", "CDM"))
@@ -468,7 +469,8 @@ TOOLS: list[dict[str, Any]] = [
         "name": "list_available_data",
         "description": (
             "집계가 끝난 팀컬러×포메이션 조합과 표본 수, 기준 시각을 돌려준다. "
-            "추천할 수 있는 범위를 확인하거나 데이터가 없는 조합을 물었을 때 사용한다."
+            "사용자가 데이터 범위·시점을 물었거나, 다른 도구가 데이터 없음·오류를 돌려줬을 때만 쓴다 "
+            "(정상 결과의 표본·범위를 확인하려고 부르지 않는다 — 그 결과에 ranking_scope·sample_size가 있다)."
         ),
         "input_schema": _schema({}, []),
     },
@@ -567,7 +569,7 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "꼭 넣을 선수 이름, 쉼표로 (예: '슈케르', '라이스,사카'). 랭커들이 그 선수를 쓴 자리에 넣고 나머지를 한도 안에서 "
                     "다시 고른다. 자리를 정해 달라면 '이름:자리' (예: '호날두:ST', 자리는 GK·CB·ST 같은 역할), 시즌을 정해 달라면 '이름:시즌' "
-                    "(예: '반페르시:UC', 둘 다면 '반페르시:ST:UC'). 결과의 include로 들어갔는지 확인",
+                    "(예: '반페르시:UC', 둘 다면 '반페르시:ST:UC'), 강화를 정해 달라면 '이름:11강' (예: '음바페:PTG:11강'). 결과의 include로 들어갔는지 확인",
                 },
             },
             [],
@@ -1568,6 +1570,8 @@ class Toolbox:
             chosen = self._better_cards(sq, chosen, knobs)  # 다 11강인데도 남으면 더 좋은 카드로
             chosen = self._top_grades(sq, chosen, knobs)  # 그래도 남으면 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 12·13강
         out = self._squad_result(sq, chosen, stretched=bool(wider))
+        if budget and spend is not False and (stuck := self._not_raised(sq, chosen, knobs)):
+            out["budget"]["not_raised"] = stuck  # 돈이 남았는데 11강 아래인 카드: 다음 강화가 남은 돈보다 비싸다
         if top := [f"{role} {c['entry']['name']} {c['card']['most_used_grade']}강 (랭커 {c['top_grade_rankers']}명이 그 강화로 씀)"
                    for (role, _), c in zip(sq.slot_options, chosen) if c and c.get("top_grade_rankers")]:  # fmt: skip
             out["top_grades"] = {"cards": top, "note": "11강까지 올리고도 예산이 남아, 랭커 스쿼드에 실제로 있는 12·13강으로 올림."
@@ -1648,7 +1652,7 @@ class Toolbox:
         def low(o: dict[str, Any]) -> dict[str, Any]:
             grade = o["card"]["most_used_grade"] or 0
             floor = max(lowest, ADD_TRAIT_GRADE) if o["card"].get("added_trait") else lowest
-            price = None if o.get("owned") or grade <= floor else self._price(o["card"]["sp_id"], floor)
+            price = None if o.get("owned") or o.get("fixed_grade") or grade <= floor else self._price(o["card"]["sp_id"], floor)
             if price is None:
                 return {**o, "ranker_grade": grade}
             return {**o, "ranker_grade": grade, "price": price["price_bp"],
@@ -1725,7 +1729,8 @@ class Toolbox:
         invest, save = knobs.get("invest", set()), knobs.get("save", set())
         slots = [
             i for i, ((role, _), c) in enumerate(zip(sq.slot_options, chosen))
-            if c and c["price"] is not None and not c.get("owned") and role not in save and (not invest or role in invest)
+            if c and c["price"] is not None and not c.get("owned") and not c.get("fixed_grade") and role not in save
+            and (not invest or role in invest)
         ]  # fmt: skip
         slots.sort(key=lambda i: -_score(chosen[i]))
         while True:
@@ -1749,7 +1754,30 @@ class Toolbox:
         """Slots the leftover budget may change: priced, not owned, not saved (only the invest slots when given)."""
         invest, save = knobs.get("invest", set()), knobs.get("save", set())
         return [i for i, ((role, _), c) in enumerate(zip(sq.slot_options, chosen))
-                if c and c["price"] is not None and not c.get("owned") and role not in save and (not invest or role in invest)]  # fmt: skip
+                if c and c["price"] is not None and not c.get("owned") and not c.get("fixed_grade") and role not in save
+                and (not invest or role in invest)]  # fmt: skip
+
+    def _spare(self, sq: _Squad, chosen: list[dict[str, Any] | None], slots: list[int]) -> bool:
+        """Whether the leftover budget may go past 11강 (better cards, 12·13강): every card is at 11강 (or has no higher
+        price), or SPARE_SHARE of the budget is still left (a card's next grade costs far too much, e.g. 72억 → 440억)."""
+        left = sq.limits["price"] - sum(c["price"] or 0 for c in chosen if c)
+        if left >= sq.limits["price"] * SPARE_SHARE:
+            return True
+        return all((chosen[i]["card"]["most_used_grade"] or 0) >= SQUAD_MAX_GRADE
+                   or self._price(chosen[i]["card"]["sp_id"], (chosen[i]["card"]["most_used_grade"] or 0) + 1) is None for i in slots)
+
+    def _not_raised(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[dict[str, str]]:
+        """Cards left below 11강 although money is left: their next grade costs more than what is left."""
+        left = sq.limits["price"] - sum(c["price"] or 0 for c in chosen if c)
+        out = []
+        for i in self._free_slots(sq, chosen, knobs):
+            c = chosen[i]
+            grade = c["card"]["most_used_grade"] or 0
+            nxt = self._price(c["card"]["sp_id"], grade + 1) if grade < SQUAD_MAX_GRADE else None
+            if nxt and nxt["price_bp"] - c["price"] > left:
+                out.append({"role": sq.slot_options[i][0], "card": f"{c['entry']['name']} {(c['card'].get('season') or '').split(' (')[0]} {grade}강",
+                            "next": f"{grade + 1}강 {format_bp(nxt['price_bp'])} (+{format_bp(nxt['price_bp'] - c['price'])}, 남은 돈 {format_bp(left)})"})  # fmt: skip
+        return out
 
     def _better_cards(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[dict[str, Any] | None]:
         """Money left after _spend with every card at SQUAD_MAX_GRADE → swap a slot to another card rankers use there
@@ -1768,9 +1796,7 @@ class Toolbox:
             return cache[key]
 
         slots = self._free_slots(sq, chosen, knobs)
-        maxed = lambda c: (c["card"]["most_used_grade"] or 0) >= SQUAD_MAX_GRADE or self._price(  # noqa: E731
-            c["card"]["sp_id"], (c["card"]["most_used_grade"] or 0) + 1) is None
-        if not all(maxed(chosen[i]) for i in slots):  # 아직 강화를 올릴 카드가 있으면(돈이 모자라 멈춤) 카드를 바꾸지 않는다
+        if not self._spare(sq, chosen, slots):  # 예산이 빠듯해 강화를 다 못 올렸으면 카드를 바꾸지 않는다
             return chosen
         while True:
             left = sq.limits["price"] - sum(c["price"] or 0 for c in chosen if c)
@@ -1783,8 +1809,8 @@ class Toolbox:
                 for o in options:
                     if o["entry"]["pid"] in others or o["card"]["sp_id"] == now["card"]["sp_id"]:
                         continue
-                    for new, ovr in variants(o, role):
-                        if ovr <= now_ovr or new["price"] - now["price"] > left:
+                    for new, ovr in variants(o, role):  # 남은 돈을 쓰는 단계: 더 비싸고 OVR 높은 카드로만 (싼 카드로 바꾸면 사용률만 떨어진다)
+                        if ovr <= now_ovr or not 0 < new["price"] - now["price"] <= left:
                             continue
                         if not _fits(chosen[:i] + [new] + chosen[i + 1:], sq.limits, sq.reqs):
                             continue
@@ -1800,6 +1826,8 @@ class Toolbox:
         use there, at 13강 if some ranker starts it at 13강 and it fits (else 12강), the highest OVR; then the next slot."""
         chosen = list(chosen)
         free = self._free_slots(sq, chosen, knobs)
+        if not self._spare(sq, chosen, free):
+            return chosen
         seen = self._ranker_top_grades()
         rank = {role: n for n, group in enumerate(TOP_GRADE_ORDER) for role in group}
         for i in sorted(free, key=lambda i: rank.get(sq.slot_options[i][0], len(TOP_GRADE_ORDER))):
@@ -2182,8 +2210,9 @@ class Toolbox:
         result as it is). `names` (띄어쓰기 없는 이름): players to look up beyond the usual top candidates (check_squad)."""
         names = [n for n in names if n]
         chem = self._chemistry(chemistry) if chemistry else None
-        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시). 뒤에 ':자리'면 그 자리에만, ':시즌'이면 그 시즌 카드로 ('반페르시:ST:UC')
-        must, pinned, wanted_season = [], {}, {}
+        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시). 뒤에 ':자리'면 그 자리에만, ':시즌'이면 그 시즌 카드로, ':11강'이면 그 강화로
+        # ('반페르시:ST:UC', '음바페:PTG:11강')
+        must, pinned, wanted_season, wanted_grade = [], {}, {}, {}
         for n in re.split(r"[,/+]", include or ""):
             name, *rest = n.split(":")
             if name := "".join(name.split()):
@@ -2191,6 +2220,8 @@ class Toolbox:
                 for part in filter(None, ("".join(x.split()) for x in rest)):
                     if part.upper() in ROLES:
                         pinned[name] = part.upper()
+                    elif m := re.fullmatch(r"(\d{1,2})(?:강|카)?", part):
+                        wanted_grade[name] = int(m[1])
                     else:
                         wanted_season[name] = part.casefold()
         knobs = knobs or {}
@@ -2306,12 +2337,16 @@ class Toolbox:
                     g = knobs["min_grade"]
                     cards = [c if (c["most_used_grade"] or 0) >= g else
                              {**c, "most_used_grade": g, "price_at_most_used_grade": self._price(c["sp_id"], g)} for c in cards]  # fmt: skip
+                fixed = next((wanted_grade[n] for n in must if f"include:{n}" in wanted and n in wanted_grade), None)
+                if fixed:  # "음바페 11카": 그 강화로 고정 (예산 맞추기·남은 예산 쓰기가 바꾸지 않는다)
+                    cards = [{**c, "most_used_grade": fixed, "price_at_most_used_grade": self._price(c["sp_id"], fixed)} for c in cards]
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
                 for card in cards if limits else cards[:1]:
                     tags = {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(card["sp_id"]))) if ok} | wanted
                     # 추천 단위는 시즌 카드: 랭커들이 이 자리에 그 카드를 쓴 비율 (신특·체감 같은 메타가 사용 수에 담긴다)
-                    o = {"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags}
+                    o = {"entry": entry, "card": card, "price": _price_bp(card), "salary": card["salary"], "tags": tags,
+                         **({"fixed_grade": True} if fixed else {})}
                     options.append({**o, "score": _card_usage(o)})
             self._score_options(role, options, knobs)
             slot_options += [(role, options)] * n
