@@ -1115,6 +1115,21 @@ class Toolbox:
             return f"{tc.name}({CATEGORY_LABELS[tc.category]})"
         return tc.name
 
+    def _season_known(self, text: str) -> bool:
+        """Whether `text` names a season (its code or full name, spaces and case ignored: 'PTG', '25ucl', 'Winning Streak')."""
+        key = "".join(text.split()).casefold()
+        if not hasattr(self, "_season_keys"):
+            self._season_keys = [
+                ("".join(code.split()).casefold(), "".join(rest.rstrip(")").split()).casefold())
+                for (name,) in self.conn.execute("SELECT class_name FROM meta_season") for code, _, rest in [name.partition(" (")]
+            ]  # fmt: skip
+        return any(key in code or key == long for code, long in self._season_keys)
+
+    def _player_known(self, name: str) -> bool:
+        """Whether any card's name holds `name` (spaces ignored)."""
+        key = "".join(name.split())
+        return self.conn.execute("SELECT 1 FROM meta_spid WHERE REPLACE(name, ' ', '') LIKE ? LIMIT 1", (f"%{key}%",)).fetchone() is not None
+
     def _roles(self, value: str) -> tuple[str, ...]:
         roles = resolve_roles(str(value))
         if roles is None:
@@ -1605,6 +1620,8 @@ class Toolbox:
         knobs: dict[str, Any] = {}
         if exclude:
             knobs["exclude"] = names(exclude)
+            if unknown := [n for n in knobs["exclude"] if not self._player_known(n)]:
+                raise ToolError(f"exclude의 선수를 찾지 못함: {', '.join(unknown)} (이름 확인 — 오타면 고쳐서, 아니면 빼고 다시 호출)")
         if owned:  # "손흥민:UC:10, 박지성" → 이름·시즌·강화
             specs = []
             for part in owned.split(","):
@@ -1612,6 +1629,8 @@ class Toolbox:
                 if not bits[0]:
                     continue
                 grade = re.sub(r"\D", "", bits[2]) if len(bits) > 2 else ""
+                if len(bits) > 1 and bits[1] and not self._season_known(bits[1]):
+                    raise ToolError(f"owned의 '{bits[1]}'는 알 수 없는 시즌. 형식: '이름:시즌:강화' (예: '손흥민:UC:10')")
                 specs.append({"name": "".join(bits[0].split()), "season": "".join(bits[1].split()).casefold() if len(bits) > 1 and bits[1] else None,
                               "grade": int(grade) if grade else None})  # fmt: skip
             knobs["owned"] = specs
@@ -2222,8 +2241,13 @@ class Toolbox:
                         pinned[name] = part.upper()
                     elif m := re.fullmatch(r"(\d{1,2})(?:강|카)?", part):
                         wanted_grade[name] = int(m[1])
-                    else:
+                    elif self._season_known(part):
                         wanted_season[name] = part.casefold()
+                    else:  # 모르는 값을 시즌으로 받아 조용히 빼지 않는다 ("음바페:11"이 "11 시즌 카드 없음"이 되던 일)
+                        raise ToolError(
+                            f"include의 '{part}'는 자리·시즌·강화 중 무엇인지 알 수 없음. 형식: '이름', '이름:자리', '이름:시즌', '이름:11강'"
+                            " (예: '음바페:ST:PTG:11강'). 사용자의 바람이 이 형식으로 안 되면 억지로 넣지 말고 답에서 반영하지 못했다고 말할 것"
+                        )
         knobs = knobs or {}
         owned = knobs.get("owned", [])
         include_clubs = None
