@@ -6,7 +6,6 @@ import hmac
 import json
 import logging
 import os
-import queue
 import re
 import sqlite3
 import threading
@@ -42,15 +41,14 @@ MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
 KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
-DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(/model 없을 때), /model deepseek, /compare (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
-LUNA_MODEL = "openai/gpt-6-luna"  # /model gpt, /compare (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)
-LONG_DEADLINE = 300.0  # /model deepseek·gpt·/compare의 질문당 대기 상한(초). 일반 질문은 120초
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(/model 없을 때), /model deepseek (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
+LUNA_MODEL = "openai/gpt-6-luna"  # /model gpt (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)
+LONG_DEADLINE = 300.0  # /model deepseek·gpt의 질문당 대기 상한(초). 일반 질문은 120초
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
 # 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
 # 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
 PRICES = {"deepseek": (0.30, 1.20), "luna": (0.10, 0.50), "flash-lite": (0.30, 2.50), "flash": (1.50, 9.00)}  # 앞에서부터: deepseek-v4.1-flash가 "flash"로 잡히지 않게
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
-COMPARE_PER_HOUR = 2  # /compare는 비싸서 IP당 1시간에 이만큼
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
@@ -58,7 +56,7 @@ SQUAD_TOOLS = ("recommend_squad", "check_squad")
 HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
 DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
 LUNA_LABEL = {"luna": "GPT-6 Luna 생각 끔", "luna_r": "GPT-6 Luna 생각 켬"}
-GEMINI_LABEL = "Gemini 3.5 Flash"  # /model gemini·/compare의 Gemini (Jev 판단 없이 이 모델)
+GEMINI_LABEL = "Gemini 3.5 Flash"  # /model gemini의 Gemini (Jev 판단 없이 이 모델)
 
 
 def gemini_fallbacks(models: Iterable[str]) -> list[str]:
@@ -250,8 +248,8 @@ class _TraceLog:
 
 
 def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any):
-    """ask_stream events → NDJSON lines (trace adds the model's thoughts, tool results and hand-offs; `keep` records
-    them all for the admin page either way); returns the turn."""
+    """ask_stream events → NDJSON lines (trace adds one line per tool call and result, names only; `keep` records
+    everything — args, results, thoughts, hand-offs — for the admin page either way); returns the turn."""
     keep = keep or _TraceLog()
     started = False
     while True:
@@ -265,6 +263,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
         elif isinstance(piece, ToolCall):
             keep.add("tool", name=piece.name, args=piece.args)
             yield _event(type="tool", name=piece.name, args=piece.args, **extra)
+            if trace:
+                yield _event(type="trace", kind="tool", name=piece.name, **extra)
         elif isinstance(piece, Recheck):  # 수치를 다시 쓰는 중 (화면에는 진행 문구)
             yield _event(type="tool", name="check_numbers", args={}, **extra)
             line = {"kind": "recheck", "text": "결과에 없는 수치: " + ", ".join(piece.numbers)}
@@ -289,8 +289,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             yield _event(type="delta", text=piece, **extra)
         if line:
             keep.add(**line)
-            if trace:
-                yield _event(type="trace", **line, **extra)
+            if trace and line["kind"] == "result":  # 사용자에게는 이름·성공 여부만 (인자·결과·생각은 /admin에만)
+                yield _event(type="trace", kind="result", name=line["name"], ok=line["ok"], **extra)
 
 
 def _squad_call(lines: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
@@ -372,11 +372,6 @@ class AnswerCache:
                 self.items.popitem(last=False)
 
 
-class CompareChoice(BaseModel):
-    compare_id: str = Field(min_length=1, max_length=64)
-    pane: Literal["gemini", "luna", "deep"]
-
-
 class Feedback(BaseModel):
     id: str = Field(pattern=r"^[0-9a-f]{12}$")  # 답과 함께 받은 그 질문의 기록 id
     vote: Literal["up", "down"]
@@ -432,12 +427,10 @@ def create_app(
     # 화면 조회(포메이션·팀컬러 정보 등)도 DB가 바뀔 때까지 결과를 재사용한다 (Render 무료 CPU에선 한 번에 수 초)
     pages = AnswerCache(db_path, size=300)
     sessions: OrderedDict[str, _Session] = OrderedDict()
-    compare_limit = HourlyLimit(COMPARE_PER_HOUR)
     team_limit = HourlyLimit(TEAM_PER_HOUR)
     feedback_limit = HourlyLimit(FEEDBACK_PER_HOUR)
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
     team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
-    compares: OrderedDict[str, dict[str, Any]] = OrderedDict()  # compare_id → 질문·칸별 답 (답 고르기용, 최근 것만)
     squads: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출 (최근 것만)
 
     @asynccontextmanager
@@ -588,8 +581,6 @@ def create_app(
                     entry.update(outcome="blocked", route=f"{route.scope} ({route.describe()})")
                     keep.add("route", text=f"{route.describe()} → 거절 문구 (모델 호출 없음)")
                     keep.answer = REFUSAL
-                    if req.trace:
-                        yield _event(type="trace", kind="route", text=f"{route.describe()} → 거절 문구 (모델 호출 없음)")
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
@@ -629,8 +620,6 @@ def create_app(
                     why += " · think: 생각 깊게 (HIGH)"
                     entry["route"] = why
                 keep.add("route", text=why)
-                if req.trace:
-                    yield _event(type="trace", kind="route", text=why)
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key, session))
                 if key == "gemini" and req.mode == "gemini":  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
@@ -669,99 +658,6 @@ def create_app(
                     while len(squads) > MAX_SESSIONS:
                         squads.popitem(last=False)
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"], squad=bool(squad))
-
-        return StreamingResponse(events(), media_type="application/x-ndjson")
-
-    @app.post("/api/compare")
-    def compare(req: ChatRequest, request: Request) -> StreamingResponse:
-        """/compare: 같은 질문을 Gemini 3.5 Flash·GPT-6 Luna·DeepSeek이 생각 끔으로 동시에 답한다. 이벤트는 /api/chat과 같고 pane으로 구분하며,
-        칸마다 done이 온 뒤 마지막에 all_done. 대화의 앞선 질문·답은 맥락으로 주되 이 비교 답은 대화에 남기지 않는다."""
-        who = _visitor(request)
-        if backend != "gemini":
-            raise HTTPException(status_code=400, detail="비교는 AI 모델이 켜져 있을 때만 쓸 수 있어요.")
-        if not compare_limit.check(who):
-            chat_log.record(q=req.message, outcome="limited", error="compare")
-            raise HTTPException(status_code=429, detail=f"비교는 1시간에 {COMPARE_PER_HOUR}번까지 쓸 수 있어요. 잠시 후 다시 해 주세요.")
-        if refused := limit.check(who):
-            chat_log.record(q=req.message, outcome="limited", error=refused)
-            raise HTTPException(status_code=429, detail=refused)
-        session_id = req.session_id or uuid.uuid4().hex
-        history = list(session_for(session_id).history)
-        ask, _ = session_for(session_id).take(req.message)
-        route = _jev_route(req.message, session_for(session_id).last)
-        if route and route.blocked:  # 범위 밖·공격은 세 모델 모두 부르지 않는다
-            chat_log.record(q=req.message, outcome="blocked", route=f"{route.scope} ({route.describe()})")
-            lines_ = [_event(type="start", session_id=session_id, compare_id=None, panes=list(COMPARE_PANES)),
-                      *(_event(type=t, pane=p, **kw) for p in COMPARE_PANES for t, kw in (("delta", {"text": REFUSAL}), ("done", {"tool_calls": []}))),
-                      _event(type="all_done", blocked=True)]  # fmt: skip
-            return StreamingResponse(iter(lines_), media_type="application/x-ndjson")
-        compare_id = uuid.uuid4().hex[:12]
-        lines: queue.Queue[str | None] = queue.Queue()
-        results: dict[str, dict[str, Any]] = {}  # 칸별 모델·걸린 시간·도구·답 (관리자 기록용)
-        started_all = time.monotonic()
-
-        def finish() -> None:
-            """마지막 칸이 끝나면: 답 고르기용으로 두고 관리자 기록에 남긴다 (사용자가 비교 창을 닫았어도)."""
-            panes = {p: {k: v for k, v in results[p].items() if k != "finished"} for p in COMPARE_PANES}
-            with lock:
-                compares[compare_id] = {"q": req.message, "session_id": session_id, "panes": panes}
-                while len(compares) > MAX_SESSIONS:
-                    compares.popitem(last=False)
-            chat_log.record(q=req.message, outcome="compare", session=session_id[:8], compare_id=compare_id, panes=panes,
-                            ms=round((time.monotonic() - started_all) * 1000),
-                            cost=round(sum(p.get("cost", 0) for p in panes.values()), 5))  # fmt: skip
-
-        def run(pane: str) -> None:
-            # ponytail: 사용자가 창을 닫아도 세 칸은 끝까지 답한다 (스레드를 멈출 방법이 없음 — 비교는 시간당 2번이라 둠)
-            started, bot = time.monotonic(), None
-            result = results[pane] = {"label": COMPARE_PANES[pane]}
-            try:
-                if pane != "gemini" and not _deepseek_ready():
-                    raise RuntimeError("OPENROUTER_API_KEY 없음")
-                bot = make_bot(pane)()
-                for q, a in history:
-                    bot.remember(q, a)
-                options = {"model": FLASH_MODEL} if pane == "gemini" else {}
-                turn = yield_into(lines, bot.ask_stream(ask, deadline=LONG_DEADLINE, thoughts=req.trace, **options), pane)
-                tools = [n for n, _ in turn.tool_calls]
-                result.update(answer=turn.text, tools=tools, finish=turn.finish_reason)
-                lines.put(_event(type="done", pane=pane, model=bot.last_model, tool_calls=tools))
-            except Exception as exc:
-                log.exception("compare %s failed: %s", pane, describe_error(exc))
-                result.update(answer=None, error=describe_error(exc))
-                lines.put(_event(type="reset", pane=pane))
-                lines.put(_event(type="delta", pane=pane, text=BUSY_MESSAGE))
-                lines.put(_event(type="done", pane=pane, tool_calls=[], error="unavailable"))
-            finally:
-                result.update(model=getattr(bot, "last_model", None), ms=round((time.monotonic() - started) * 1000),
-                              **_cost(_billed([bot] if bot else [])))  # fmt: skip
-                with lock:
-                    result["finished"] = True
-                    last = all(results.get(p, {}).get("finished") for p in COMPARE_PANES)
-                if last:
-                    finish()
-                lines.put(None)
-
-        def yield_into(out: queue.Queue, stream: Any, pane: str) -> Any:
-            relay = _relay(stream, req.trace, pane=pane)
-            while True:
-                try:
-                    out.put(next(relay))
-                except StopIteration as stop:
-                    return stop.value
-
-        def events():
-            yield _event(type="start", session_id=session_id, compare_id=compare_id, panes=list(COMPARE_PANES))
-            for pane in COMPARE_PANES:
-                threading.Thread(target=run, args=(pane,), daemon=True).start()
-            finished = 0
-            while finished < len(COMPARE_PANES):
-                line = lines.get()
-                if line is None:
-                    finished += 1
-                else:
-                    yield line
-            yield _event(type="all_done")
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
 
@@ -819,18 +715,6 @@ def create_app(
             raise HTTPException(status_code=429, detail="잠시 후 다시 눌러 주세요.")
         chat_log.record(outcome="feedback", ref=req.id, vote=req.vote)
         return {"ok": True}
-
-    @app.post("/api/compare/choice")
-    def compare_choice(choice: CompareChoice) -> dict[str, Any]:
-        """비교에서 고른 답: 그 질문과 답을 대화에 남겨 이어지는 질문의 맥락으로 쓰고, 관리자 기록에 고른 칸을 남긴다."""
-        with lock:
-            found = compares.get(choice.compare_id)
-        answer = found and found["panes"].get(choice.pane, {}).get("answer")
-        if not answer:
-            raise HTTPException(status_code=404, detail="고를 수 있는 답이 없습니다.")
-        session_for(found["session_id"]).answered(None, found["q"], answer)
-        chat_log.record(q=found["q"], outcome="compare_pick", compare_id=choice.compare_id, pane=choice.pane)
-        return {"ok": True, "pane": choice.pane, "label": COMPARE_PANES[choice.pane]}
 
     # --- 관리자: 답변 기록 (ADMIN_KEY가 없으면 없는 페이지, 5회 틀린 IP는 막힘) ---
     @app.get("/guide", include_in_schema=False)
@@ -957,7 +841,6 @@ def _lineup_changes(before: list[dict[str, Any]] | None, after: list[dict[str, A
     return out
 
 
-COMPARE_PANES = {"gemini": GEMINI_LABEL, "luna": LUNA_LABEL["luna"], "deep": DEEP_LABEL["deep"]}
 
 
 def _gemini_chat(toolbox: Toolbox | _LockedTools, model: str | None):

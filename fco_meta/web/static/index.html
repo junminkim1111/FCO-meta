@@ -31,7 +31,7 @@
     --on-text: #0b0b0d; --strong: #fff; --error: #ff8a8a; --field: rgba(0, 0, 0, .35); --tip-bg: #16161a; --code-bg: #0f0f12;
     --pitch-1: #11151c; --pitch-2: #0e1218; --pitch-line: rgba(255, 255, 255, .16);
     --pitch-name: var(--text); --ph-bg: #1a1d24; --name-shadow: 0 1px 3px rgba(0, 0, 0, .9); --logo-a: #c7d2fe; --logo-b: #7dd3fc;
-    --radius: 16px; --pick: #4ade80; /* /compare에서 고를 답 테두리 */
+    --radius: 16px; --pick: #4ade80; /* 선택창 적용 버튼 */
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; } /* 모바일 회색 탭 상자 대신 :active 반응 */
   body { margin: 0; color: var(--text); min-height: 100vh; background: var(--bg);
@@ -228,7 +228,7 @@
                      border-radius: 10px; padding: 8px 12px; }
   .admin-row button { padding: 8px 14px; }
   .admin-note { color: var(--error); font-size: 13px; margin-top: 6px; }
-  /* 명령어 안내 (/model, /compare …) */
+  /* 명령어 안내 (/model, /trace …) */
   .msg.note { color: var(--muted); font-size: 13px; }
   .msg.note.done::before { content: "✓ "; color: var(--accent); } /* 명령어가 적용됨 */
   /* 답 아래 좋아요·아쉬워요 (가끔만): 고르면 고마움 인사로 바뀌고 잠시 뒤 사라진다 */
@@ -288,22 +288,16 @@
   #squad-panel .fd-head button { margin-left: auto; padding: 2px 10px; background: none; border: 1px solid var(--line); color: var(--muted); }
   .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); text-decoration: none; }
   @media (hover: hover) { .rate.feed a:hover { background: var(--panel-strong); } }
-  .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model·/compare) */
-  /* 세 칸이 다 끝나면: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면 고르기 창 */
-  .pane.selectable { cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .25s; }
-  .pane.selectable.marked { border-color: var(--pick); box-shadow: 0 0 0 1px var(--pick); }
-  .pane.selectable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .pane.gone { opacity: 0; }
-  #pick-dialog, #model-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
-  #pick-dialog::backdrop, #model-dialog::backdrop { background: rgba(0, 0, 0, .55); }
-  #pick-dialog, #pick-dialog::backdrop, #model-dialog, #model-dialog::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
-  #pick-dialog:not([open]), #pick-dialog:not([open])::backdrop, #model-dialog:not([open]), #model-dialog:not([open])::backdrop { opacity: 0; transform: scale(.96); }
-  @starting-style { #pick-dialog[open], #pick-dialog[open]::backdrop, #model-dialog[open], #model-dialog[open]::backdrop { opacity: 0; transform: scale(.96); } }
-  #pick-dialog::backdrop, #model-dialog::backdrop { transform: none !important; }
-  #pick-dialog p { margin: 0 0 14px; font-size: 14px; }
-  #pick-dialog .row, #model-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
-  #pick-dialog button, #model-dialog button { padding: 6px 14px; }
-  #pick-dialog .yes, #model-dialog .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
+  .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model) */
+  #model-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
+  #model-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  #model-dialog, #model-dialog::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
+  #model-dialog:not([open]), #model-dialog:not([open])::backdrop { opacity: 0; transform: scale(.96); }
+  @starting-style { #model-dialog[open], #model-dialog[open]::backdrop { opacity: 0; transform: scale(.96); } }
+  #model-dialog::backdrop { transform: none !important; }
+  #model-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+  #model-dialog button { padding: 6px 14px; }
+  #model-dialog .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
   /* /model: 모델 선택창 (고른 줄은 강조색 테두리) */
   #model-dialog { width: calc(100% - 32px); max-width: 380px; }
   #model-dialog h3 { margin: 0 0 12px; font-size: 15px; }
@@ -315,35 +309,13 @@
   #model-dialog .opt img { width: 20px; height: 20px; flex: none; }
   #model-dialog .opt b { font-size: 14px; font-weight: 600; }
   #model-dialog .opt .tag { margin-left: auto; padding: 1px 7px; border: 1px solid var(--line-strong); border-radius: 6px; font-size: 11px; color: var(--muted); }
-  #model-dialog #model-think { display: block; margin: 0 0 16px; padding: 5px 14px; border-radius: 999px; color: var(--muted); background: none; border: 1px solid var(--line); }
-  #model-dialog #model-think[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: rgba(165, 180, 252, .08); }
-  #compare-note { display: none; color: var(--muted); font-size: 13px; font-weight: 400; }
-  #chat.comparing #compare-note { display: inline; }
-  #chat.comparing #chat-title > .stat { display: none; }
-  /* /trace: 모델 선택·생각·도구 결과를 답 위에 */
+  /* /trace: 호출한 도구 이름을 답 위에 */
   .trace { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
            display: flex; flex-direction: column; gap: 4px; } /* 글이 늘면 칸도 같이 커진다 */
   .trace .tr { white-space: pre-wrap; word-break: break-word; }
   .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
   .trace .tr .at { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; } /* 질문을 보낸 뒤 몇 초째 */
-  .trace .tr.done b { color: var(--pick); }
-  .trace .tr.thought span { color: var(--text); opacity: .75; }
-  /* /compare: 챗봇 칸이 화면 전체로 커지고 세 모델이 나란히 답한다 */
-  #chat.comparing { position: fixed; inset: 12px; z-index: 20; height: auto; min-height: 0; background: var(--bg); }
-  #chat { view-transition-name: chat; }
-  ::view-transition-group(chat) { animation-duration: .35s; animation-timing-function: cubic-bezier(.23, 1, .32, 1); }
-  #chat.comparing #log { display: none; }
-  #compare-close { display: none; margin-left: auto; padding: 4px 12px; font-size: 13px; }
-  #chat.comparing #compare-close { display: inline-block; }
   #chat-title { display: flex; align-items: baseline; gap: 8px; }
-  #compare { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  #compare[hidden] { display: none; } /* 위의 display: grid가 hidden을 덮어 비교 칸이 숨은 채로 아래 절반을 차지하던 문제 */
-  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
-  .pane h3 { margin: 0; color: var(--text); display: flex; justify-content: space-between; gap: 8px; }
-  .pane h3 .stat { font-size: 12px; }
-  .pane .body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-  @media (max-width: 860px) { #chat.comparing { inset: 0; border-radius: 0; } #compare { grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; overflow-y: auto; }
-                              .pane .body { overflow: visible; } }
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--strong) 50%, var(--muted) 60%, var(--muted) 100%);
              background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -419,7 +391,7 @@
   #cmd-menu, #team-box, #jump { transform-origin: bottom left; transition: opacity .15s ease-out, transform .15s ease-out, display .15s allow-discrete; }
   #cmd-menu[hidden], #team-box[hidden], #jump[hidden] { opacity: 0; transform: scale(.96) translateY(4px); }
   @starting-style { #cmd-menu:not([hidden]), #team-box:not([hidden]), #jump:not([hidden]) { opacity: 0; transform: scale(.96) translateY(4px); } }
-  @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #pick-dialog, #model-dialog { transform: none !important; } }
+  @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #model-dialog { transform: none !important; } }
   /* 위로 올려 읽는 동안 새 답이 오면 입력창 위 가운데에 '↓ 새 답' */
   #jump { position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 5; translate: -50% 0; transform-origin: bottom center;
           padding: 5px 12px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--tip-bg);
@@ -450,14 +422,10 @@
   <div class="side">
   <a class="guide-link" href="/guide">FCLM이 처음이라면?</a>
   <section id="chat" aria-labelledby="chat-title">
-    <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span><span id="compare-note">해당 질문, 답변과 선택은 모델 개선을 위해 쓰일 수 있습니다.</span><button type="button" id="compare-close">비교 닫기</button></h2>
+    <h2 id="chat-title">FCLM <span class="stat">FC Online 랭커 데이터 기반 AI</span></h2>
     <div id="log" aria-live="polite"></div>
-    <div id="compare" hidden></div>
-    <dialog id="pick-dialog"><form method="dialog"><p>이 답변을 선택할까요? 다른 답변은 사라지고 이 답변으로 대화를 이어 갑니다.</p>
-      <div class="row"><button value="no">취소</button><button value="yes" class="yes">선택</button></div></form></dialog>
     <dialog id="model-dialog" aria-labelledby="model-title"><form method="dialog"><h3 id="model-title">답할 모델</h3>
       <fieldset id="model-opts" aria-labelledby="model-title"></fieldset>
-      <button type="button" id="model-think" aria-pressed="false">think</button>
       <div class="row"><button type="button" id="model-cancel">취소</button><button value="yes" class="yes">적용</button></div></form></dialog>
     <form id="chat-form">
       <div id="team-box" hidden><div class="field"><input id="team-name" maxlength="30" autocomplete="off" placeholder="구단주명" aria-label="팀을 불러올 구단주명">
@@ -848,33 +816,23 @@ const TOOL_STATUS = {
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
   escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
-// 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침이나 /cancel 전까지), /trace = 생각 표시, /compare = 다음 질문을 셋이 비교
-let model = null, traceOn = false, compareArmed = false; // { key: "gpt", think: true }, null이면 기본 (GPT-6 Luna, think 끔)
-// 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]
-const MODELS = { gpt: ["luna", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
+// 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침이나 /cancel 전까지), /trace = 도구 호출 표시
+let model = null, traceOn = false; // { key: "gpt" }, null이면 기본 (GPT-6 Luna)
+// 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. gpt·deepseek은 생각 켬 (2026-11-16부터 기본)
+const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep_r", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
 const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
-const modelText = (m) => `model: ${MODELS[m.key][1]}${m.think ? " (think)" : ""}`;
-// 서버에 보낼 mode·think: gpt·deepseek의 think는 mode(luna_r·deep_r), Gemini의 think는 생각 깊이 HIGH
-function modelRequest(m) {
-  if (!m) return { mode: "auto", think: false };
-  const mode = MODELS[m.key][0];
-  return mode === "gemini" ? { mode, think: m.think } : { mode: m.think ? `${mode}_r` : mode, think: false };
-}
-const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
-                      first: "첫 글자", done: "완료" };
-// 생각 표시 줄 하나 (이어서 오는 생각 조각은 한 줄로 붙인다)
-// 줄마다 질문을 보낸 뒤 몇 초째인지(+1.2초)를 붙인다 → 도구·모델 단계별로 걸린 시간을 볼 수 있다
+const modelText = (m) => `model: ${MODELS[m.key][1]}`;
+const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
+const TRACE_LABEL = { tool: "도구 호출", result: "도구 결과" };
+// /trace 한 줄: 도구 이름만. 질문을 보낸 뒤 몇 초째인지(+1.2초)를 붙인다
 function addTrace(box, ev) {
-  const last = box.lastElementChild;
-  if (ev.kind === "thought" && last?.classList.contains("thought")) { last.lastChild.textContent += ev.text; return; }
-  const text = ev.kind === "tool" ? `${ev.name} ${JSON.stringify(ev.args || {})}`
-             : ev.kind === "result" ? `${ev.name}${ev.ok ? "" : " (오류)"} ${ev.text}` : ev.text || "";
+  const text = ev.kind === "tool" ? `${ev.name}()` : `${ev.name}() 결과 확인${ev.ok ? "" : " (오류)"}`; // 인자·결과는 /admin에만
   const at = `+${((performance.now() - box.started) / 1000).toFixed(1)}초`;
   box.append(el("div", { class: "tr " + ev.kind }, el("span", { class: "at", text: at }), el("b", { text: TRACE_LABEL[ev.kind] || ev.kind }), el("span", { text })));
   box.scrollTop = box.scrollHeight;
 }
 function traceBox() {
-  const box = el("div", { class: "trace", ariaLabel: "모델의 생각" });
+  const box = el("div", { class: "trace", ariaLabel: "호출한 도구" });
   box.started = performance.now();
   return box;
 }
@@ -914,7 +872,7 @@ async function send(text) {
   const ctrl = new AbortController();
   setBusy(ctrl);
   const question = mention(say("me", text));
-  const used = model, { mode, think } = modelRequest(used); // 답 도중에 모델을 바꿔도 이 답의 표시는 그대로
+  const used = model, mode = modeOf(used); // 답 도중에 모델을 바꿔도 이 답의 표시는 그대로
   const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace);
   const bubble = el("div");
@@ -953,7 +911,7 @@ async function send(text) {
   };
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: headers(), signal: ctrl.signal,
-                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, think, trace: !!trace }) });
+                                           body: JSON.stringify({ message: text, session_id: sessionId, mode, trace: !!trace }) });
     if (!res.ok) throw await failure(res);
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let rest = "";
@@ -964,9 +922,7 @@ async function send(text) {
       rest = lines.pop();
       for (const line of lines) {
         const ev = JSON.parse(line);
-        if (trace && (ev.type === "trace" || ev.type === "tool")) addTrace(trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
-        if (trace && ev.type === "delta" && !answer) addTrace(trace, { kind: "first", text: "답이 나오기 시작" });
-        if (trace && ev.type === "done") addTrace(trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
+        if (trace && ev.type === "trace") addTrace(trace, ev); // 서버가 보낸 도구 호출·결과 확인 줄만
         // 왼쪽 스쿼드 칸: 스쿼드 도구가 돌기 시작하면 빈 경기장부터 열고, 짤 때마다 선수를 채운다
         // (사용자가 닫았거나 다른 스쿼드를 보는 중이면 그대로 둔다)
         const ours = !mine || shownSquad === mine;
@@ -1130,8 +1086,7 @@ function rateRow(id) {
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [
   ["/model", "답할 모델 고르기 (새로고침 전까지)"],
-  ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
-  ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"],
+  ["/trace", "호출한 도구 이름을 답 위에 보여 줌"],
   ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
   ["/help", "명령어 안내 (새 탭)"],
 ];
@@ -1232,11 +1187,11 @@ async function loadTeam() {
     $("team-hint").className = "hint err"; $("team-hint").textContent = "연결하지 못했어요.";
   } finally { $("team-ok").disabled = false; }
 }
-// 질문 말풍선 앞에 파란 @닉네임. 팀은 그 질문이 가져가므로 입력창에서는 뗀다 (keep: 비교 세 칸 중 앞의 둘은 아직 떼지 않음)
-function mention(bubble, keep = false) {
+// 질문 말풍선 앞에 파란 @닉네임. 팀은 그 질문이 가져가므로 입력창에서는 뗀다
+function mention(bubble) {
   if (team) {
     bubble.prepend(el("span", { class: "mention", text: `${team.mention} ` }));
-    if (!keep) { team = null; showTeam(); }
+    team = null; showTeam();
   }
   return bubble;
 }
@@ -1285,23 +1240,21 @@ function adminPrompt() {
 }
 const note = (text) => say("bot note done", text); // 명령어가 적용됐다는 안내
 $("model-cancel").addEventListener("click", () => $("model-dialog").close("no")); // 제출 버튼이 아니어야 창 안의 Enter가 '적용'이 된다
-$("model-think").addEventListener("click", (ev) => { const b = ev.currentTarget; b.ariaPressed = String(b.ariaPressed !== "true"); });
 // /model이나 명령어 목록에서 /model을 고르면 뜨는 선택창. 지금 설정이 골라져 있다
 async function pickModel() {
-  const dialog = $("model-dialog"), now = model || { key: DEFAULT_MODEL, think: false }; // 고르지 않았으면 기본 GPT-6 Luna
+  const dialog = $("model-dialog"), now = model || { key: DEFAULT_MODEL }; // 고르지 않았으면 기본 GPT-6 Luna
   $("model-opts").replaceChildren(...Object.entries(MODELS).map(([key, [, name, logo]]) => el("label", { class: "opt" },
     el("input", { type: "radio", name: "model", value: key, checked: key === now.key }),
     el("img", { src: `/static/vendor/lobehub-icons/${logo}.svg`, alt: "", width: 20, height: 20 }), el("b", { text: name }),
     key === DEFAULT_MODEL ? el("span", { class: "tag", text: "기본" }) : null)));
-  $("model-think").ariaPressed = String(now.think);
   dialog.returnValue = "";
   dialog.showModal();
   dialog.querySelector("input[name=model]:checked").focus(); // 처음 포커스는 고른 줄에 (아니면 맨 위 줄에 가서 두 줄이 강조돼 보인다)
   await new Promise((done) => dialog.addEventListener("close", done, { once: true }));
   $("msg").focus();
   if (dialog.returnValue !== "yes") return;
-  const picked = { key: dialog.querySelector("input[name=model]:checked").value, think: $("model-think").ariaPressed === "true" };
-  model = picked.key === DEFAULT_MODEL && !picked.think ? null : picked; // 기본과 같으면 기본으로 (첫 질문 답 캐시도 쓴다)
+  const picked = { key: dialog.querySelector("input[name=model]:checked").value };
+  model = picked.key === DEFAULT_MODEL ? null : picked; // 기본과 같으면 기본으로 (첫 질문 답 캐시도 쓴다)
   note(modelText(picked));
 }
 // "/"로 시작하면 모델에 보내지 않는다: 아는 명령어면 실행, 아니면 invalid command.
@@ -1312,15 +1265,13 @@ function command(text) {
   if (cmd === "/admin" && !flags.length) return adminPrompt();
   if (cmd === "/trace" && !flags.length) {
     traceOn = true; // 이 페이지에서 새로고침하기 전까지
-    return note("/trace 적용: 지금부터 모델의 생각·도구 결과를 답 위에 함께 보여 줍니다. 새로고침하거나 /cancel로 끕니다.");
+    return note("/trace 적용: 지금부터 호출한 도구 이름을 답 위에 함께 보여 줍니다. 새로고침하거나 /cancel로 끕니다.");
   }
   if (cmd === "/model" && !flags.length) return pickModel(); // 모델 선택창
   if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
-    const off = [model && modelText(model), traceOn && "/trace(생각 표시)",
-                 team && `${team.mention}(팀)`,
-                 $("chat").classList.contains("comparing") && "/compare"].filter(Boolean);
+    const off = [model && modelText(model), traceOn && "/trace(도구 표시)",
+                 team && `${team.mention}(팀)`].filter(Boolean);
     model = null; traceOn = false; dropTeam();
-    if ($("chat").classList.contains("comparing")) closeCompare();
     return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
   }
   if (cmd === "/help" && !flags.length) { // 가이드의 명령어 페이지를 새 탭에 (Enter로 보낸 직후라 팝업 차단에 걸리지 않는다)
@@ -1329,35 +1280,10 @@ function command(text) {
     note("/help: 새 탭이 막혀 열지 못했습니다. ").append(el("a", { href: "/guide/commands", target: "_blank", rel: "noopener", text: "명령어 안내 열기" }));
     return;
   }
-  if (cmd === "/compare" && !flags.length) {
-    note("/compare 적용: 다음 질문을 세 AI 모델이 이름을 가린 채 동시에 답합니다. 마음에 드는 답을 누르고 한 번 더 눌러 고르면 그 답으로 대화를 이어 갑니다. (1시간에 2번)");
-    return openCompare();
-  }
   $("log").append(el("div", { class: "msg bot note" }, el("em", { text: "invalid command." })));
   $("log").scrollTop = $("log").scrollHeight;
 }
 
-// 모델 이름은 가리고 칸 순서도 비교마다 섞는다 (어느 모델인지는 /admin 기록에만)
-const PANE_KEYS = ["gemini", "luna", "deep"];
-const shuffled = () => PANE_KEYS.map((k) => [Math.random(), k]).sort((a, b) => a[0] - b[0]).map(([, k]) => k);
-// 챗봇 칸이 그 자리에서 전체 화면으로 커지고 닫으면 그 자리로 줄어든다 (지원하지 않거나 동작 줄이기면 바로)
-const morph = (change) => {
-  if (!document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return change();
-  document.startViewTransition(change).ready.catch(() => {}); // 숨은 탭 등에서 전환만 건너뛰면 바뀐 화면은 그대로 적용된다
-};
-function openCompare() {
-  compareArmed = true;
-  morph(() => { $("chat").classList.add("comparing"); $("compare").hidden = false; });
-  $("compare").replaceChildren(...["A", "B", "C"].map((letter) => el("section", { class: "pane" }, el("h3", { text: `답변 ${letter}` }),
-    el("div", { class: "body" }, el("p", { class: "caption", text: "질문을 입력하면 세 모델이 동시에 답합니다. (1시간에 2번)" })))));
-  $("msg").focus();
-}
-function closeCompare() {
-  if (inflight && !compareArmed) inflight.abort();
-  compareArmed = false;
-  morph(() => { $("chat").classList.remove("comparing"); $("compare").hidden = true; });
-}
-$("compare-close").addEventListener("click", closeCompare);
 // '…': 답이 써지는 중에 위로 올려 읽으면 뜬다. 누르면 맨 아래로, 맨 아래 가까이 내려오면 저절로 사라진다
 $("jump").addEventListener("click", () => {
   const log = $("log");
@@ -1368,101 +1294,12 @@ $("log").addEventListener("scroll", () => {
   if (log.scrollHeight - log.scrollTop - log.clientHeight < 40) $("jump").hidden = true;
 }, { passive: true });
 
-// /compare 다음 질문: 세 칸이 같은 질문에 동시에 답한다 (/api/compare, 이벤트마다 pane)
-let compareId = null;
-// 비교에서 고른 답: 한 번 누르면 초록 테두리, 같은 칸을 한 번 더 누르면(키보드는 Enter 두 번) 확인 창. 고르면 다른 답은 사라지고,
-// 서버가 그 질문·답을 대화에 남기며(이어지는 질문의 맥락) 화면은 일반 채팅에서 답한 것처럼 돌아간다
-function makeSelectable(p, question, all) {
-  p.section.classList.add("selectable");
-  p.section.tabIndex = 0;
-  p.section.setAttribute("aria-label", `${p.title} — 누르면 표시, 한 번 더 누르면 이 답을 고릅니다`);
-  const ask = async () => {
-    if (!$("chat").classList.contains("comparing")) return;
-    const dialog = $("pick-dialog");
-    dialog.returnValue = "";
-    dialog.showModal();
-    await new Promise((done) => dialog.addEventListener("close", done, { once: true }));
-    if (dialog.returnValue !== "yes") return;
-    const res = await fetch("/api/compare/choice", { method: "POST", headers: { "Content-Type": "application/json" },
-                                                     body: JSON.stringify({ compare_id: compareId, pane: p.key }) }).catch(() => null);
-    if (!res || !res.ok) { p.answer.prepend(el("p", { class: "admin-note", text: "고르지 못했어요. 다시 두 번 눌러 주세요." })); return; }
-    for (const other of all) if (other !== p) other.section.classList.add("gone");
-    setTimeout(() => {
-      closeCompare();
-      const q = say("me", question);
-      const bubble = el("div", { class: "msg bot" });
-      renderMarkdown(bubble, splitNext(p.text)[0]);
-      $("log").append(bubble);
-      pinQuestion(q);
-    }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280);
-  };
-  const press = () => {
-    if (!p.section.classList.contains("marked")) { // 처음 누르면 이 칸만 초록 테두리
-      for (const other of all) other.section.classList.remove("marked");
-      p.section.classList.add("marked");
-      return;
-    }
-    ask();
-  };
-  p.section.addEventListener("click", (ev) => { if (!getSelection().toString()) press(); }); // 글을 끌어 고른 건 누름으로 치지 않는다
-  p.section.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === p.section) press(); });
-}
-async function sendCompare(text) {
-  compareArmed = false;
-  const ctrl = new AbortController();
-  setBusy(ctrl);
-  const panes = {}, started = performance.now();
-  $("compare").replaceChildren(...shuffled().map((key, i) => {
-    const title = `답변 ${"ABC"[i]}`, stat = el("span", { class: "stat", text: "" }), body = el("div", { class: "body" });
-    const trace = traceOn ? traceBox() : null, answer = el("div", { class: "msg bot" });
-    body.append(mention(el("div", { class: "msg me", text }), i < 2), ...(trace ? [trace] : []), answer);
-    answer.append(el("span", { class: "shimmer", text: THINKING }));
-    const section = el("section", { class: "pane" }, el("h3", {}, el("span", { text: title }), stat), body);
-    panes[key] = { key, title, section, stat, body, trace, answer, text: "" };
-    return section;
-  }));
-  try {
-    const res = await fetch("/api/compare", { method: "POST", headers: headers(), signal: ctrl.signal,
-                                              body: JSON.stringify({ message: text, session_id: sessionId, trace: traceOn }) });
-    if (!res.ok) throw await failure(res);
-    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-    let rest = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const lines = (rest + value).split("\n");
-      rest = lines.pop();
-      for (const line of lines) {
-        const ev = JSON.parse(line), p = panes[ev.pane];
-        if (ev.type === "start") { sessionId = ev.session_id ?? sessionId; compareId = ev.compare_id; }
-        if (ev.type === "all_done") { // 세 칸이 다 끝나면 고를 수 있다
-          const all = Object.values(panes);
-          for (const q of all) if (q.ok && q.text) makeSelectable(q, text, all);
-        }
-        if (!p) continue;
-        if (p.trace && (ev.type === "trace" || ev.type === "tool")) addTrace(p.trace, ev.type === "tool" ? { kind: "tool", ...ev } : ev);
-        if (p.trace && ev.type === "delta" && !p.text) addTrace(p.trace, { kind: "first", text: "답이 나오기 시작" });
-        if (p.trace && ev.type === "done") addTrace(p.trace, { kind: "done", text: ev.model ? `모델 ${ev.model}` : "" });
-        if (ev.type === "delta") { p.text += ev.text; renderMarkdown(p.answer, splitNext(p.text)[0]); }
-        else if (ev.type === "reset") { p.text = ""; p.answer.replaceChildren(el("span", { class: "shimmer", text: THINKING })); }
-        else if (ev.type === "tool" && !p.text) p.answer.replaceChildren(el("span", { class: "shimmer", text: TOOL_STATUS[ev.name]?.(ev.args || {}) || THINKING }));
-        else if (ev.type === "done") { p.stat.textContent = `${((performance.now() - started) / 1000).toFixed(1)}초`; p.ok = !ev.error; }
-      }
-    }
-  } catch (e) {
-    if (!ctrl.signal.aborted) for (const p of Object.values(panes)) if (!p.text) p.answer.textContent = (e.status === 429 ? "" : "오류: ") + e.message;
-  }
-  setBusy(null);
-}
-
 $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
   if (!text || inflight) return; // 답을 기다리는 중에는 입력한 글을 그대로 둔다
   $("msg").value = "";
   if (text.startsWith("/")) return command(text);
-  if (compareArmed) return sendCompare(text);
-  if ($("chat").classList.contains("comparing")) closeCompare(); // 비교를 본 뒤 다음 질문은 원래 채팅으로
   send(text);
 });
 fetch("/static/examples.txt").then((r) => r.text()).then((t) => {

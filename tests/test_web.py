@@ -416,8 +416,6 @@ class Recorder:
 
 
 def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):  # noqa: F811
-    import json
-
     import fco_meta.web.app as web_app
 
     asked, bots = [], {}
@@ -442,10 +440,9 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     assert bots["lunaTrue"].remembered == [("업그레이드 추천", "deepTrue 답")]  # 다른 모델이 답한 턴도 이어서 안다
     assert "deepTrue 답" in res.text
 
-    # 생각 표시(/trace)는 비밀번호 없이. 경로에는 DeepSeek이 안 될 때 받을 Gemini도
+    # /trace는 도구 이름만: 모델 선택·생각은 사용자에게 보내지 않는다 (/admin 기록에만)
     res = client.post("/api/chat", json={"message": "볼란치", "trace": True})
-    traces = [json.loads(line) for line in res.text.splitlines() if '"trace"' in line]
-    assert [t["kind"] for t in traces] == ["route", "thought"] and "GPT-6 Luna" in traces[0]["text"] and "Flash-Lite" not in traces[0]["text"]
+    assert not [line for line in res.text.splitlines() if '"trace"' in line]
 
     # 서버에 OpenRouter 키가 없으면 예전처럼 Gemini: 일반 → Flash-Lite(두 번째 도구부터 3.5 Flash), 스쿼드 말 → 처음부터 3.5 Flash
     monkeypatch.delenv("OPENROUTER_API_KEY")
@@ -468,62 +465,6 @@ def test_heavy_words():
     assert heavy_word("아스널 볼란치 추천해줘") is None and heavy_word("짜증나") is None
 
 
-def test_compare_answers_in_three_panes_twice_an_hour(db, tmp_path, monkeypatch):  # noqa: F811
-    import json
-
-    import fco_meta.web.app as web_app
-
-    asked = []
-    monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Recorder(f"luna{reasoning}", asked))
-    monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder(f"deep{reasoning}", asked))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
-    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: Recorder("gemini", asked))
-    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
-
-    res = client.post("/api/compare", json={"message": "리버풀 짜줘"})
-    events = [json.loads(line) for line in res.text.splitlines()]
-    answers = {e["pane"]: e["text"] for e in events if e["type"] == "delta"}
-    assert answers == {"gemini": "gemini 답", "luna": "lunaFalse 답", "deep": "deepFalse 답"}  # 세 모델 모두 생각 끔
-    assert events[-1]["type"] == "all_done" and sum(e["type"] == "done" for e in events) == 3
-    long = {"deadline": web_app.LONG_DEADLINE}
-    assert {n: o for n, _, o in asked} == {"gemini": {**long, "model": web_app.FLASH_MODEL},  # 스쿼드 질문이라 Gemini는 3.5 Flash
-                                           "lunaFalse": long, "deepFalse": long}
-    assert client.post("/api/compare", json={"message": "2"}).status_code == 200
-    third = client.post("/api/compare", json={"message": "3"})
-    assert third.status_code == 429 and "1시간에 2번" in third.json()["detail"]
-
-
-def test_compare_choice_continues_the_chat_and_shows_on_the_admin_page(db, tmp_path, monkeypatch):  # noqa: F811
-    import json
-
-    import fco_meta.web.app as web_app
-
-    asked = []
-    monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Recorder(f"luna{reasoning}", asked))
-    monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder(f"deep{reasoning}", asked))
-    gemini = Recorder("gemini", asked)
-    monkeypatch.setattr(web_app, "_gemini_chat", lambda tools, model: gemini)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
-    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", admin_key="secret"))
-
-    events = [json.loads(line) for line in client.post("/api/compare", json={"message": "리버풀 짜줘"}).text.splitlines()]
-    start = events[0]
-    res = client.post("/api/compare/choice", json={"compare_id": start["compare_id"], "pane": "luna"})
-    assert res.json() == {"ok": True, "pane": "luna", "label": web_app.LUNA_LABEL["luna"]}
-    monkeypatch.setattr(web_app, "_deepseek_ready", lambda: False)  # 이어 묻는 질문은 Gemini가 (DeepSeek이 기본이 아니게)
-    ask(client, "그럼 더 싸게", session_id=start["session_id"])  # 고른 답이 대화의 맥락이 된다
-    assert gemini.remembered == [("리버풀 짜줘", "lunaFalse 답")]
-    assert client.post("/api/compare/choice", json={"compare_id": "nope", "pane": "gemini"}).status_code == 404
-
-    summary = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
-    (c,) = summary["compares"]
-    assert c["q"] == "리버풀 짜줘" and c["chosen"] == "luna" and summary["by_outcome"]["compare"] == 1
-    assert {p: (v["answer"], v["model"]) for p, v in c["panes"].items()} == {
-        "gemini": ("gemini 답", "gemini"), "luna": ("lunaFalse 답", "lunaFalse"), "deep": ("deepFalse 답", "deepFalse"),
-    }  # fmt: skip
-    assert all(v["ms"] >= 0 for v in c["panes"].values())
-
-
 class FakeJev:
     """Jev's Decisions answer by question: {question: scope}."""
 
@@ -541,6 +482,8 @@ class FakeJev:
             "scope": {"type": "choice", "choice": scope, "probabilities": scopes, "confidence": 0.9},
         }}  # fmt: skip
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
+
+
 
 
 def test_jev_blocks_out_of_scope_and_picks_the_model(db, tmp_path, monkeypatch):  # noqa: F811
@@ -789,10 +732,11 @@ def test_model_luna_uses_gpt6_luna_with_or_without_thinking(db, tmp_path, monkey
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
     log = ChatLog()
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini", chat_log=log))
-    res = client.post("/api/chat", json={"message": "아스널 볼란치", "mode": "luna", "trace": True})  # /model gpt
-    assert asked[-1][0] == "lunaFalse" and log.pending[-1]["mode"] == "luna" and "/model gpt → GPT-6 Luna 생각 끔" in res.text
-    res = client.post("/api/chat", json={"message": "리버풀 짜줘", "mode": "luna_r", "trace": True})  # GPT-6 Luna + think
-    assert asked[-1][0] == "lunaTrue" and "/model gpt → GPT-6 Luna 생각 켬" in res.text
+    client.post("/api/chat", json={"message": "아스널 볼란치", "mode": "luna", "trace": True})  # /model gpt
+    route = lambda: log.details_pending[-1]["trace"][0]["text"]  # noqa: E731  (모델 선택은 /admin 기록에만)
+    assert asked[-1][0] == "lunaFalse" and log.pending[-1]["mode"] == "luna" and "/model gpt → GPT-6 Luna 생각 끔" == route()
+    client.post("/api/chat", json={"message": "리버풀 짜줘", "mode": "luna_r", "trace": True})  # GPT-6 Luna + think
+    assert asked[-1][0] == "lunaTrue" and "/model gpt → GPT-6 Luna 생각 켬" == route()
     client.post("/api/chat", json={"message": "레알 짜줘"})  # 명령어 없으면 기본 Luna (생각 켬)
     assert asked[-1][0] == "lunaTrue"
 
@@ -899,3 +843,26 @@ def test_checked_lineup_and_conditions_survive_follow_up():
     question, _ = s.take("이 선수 강화는?")
     assert '"most_used_grade": 9' in question and '"max_total_price_bp": "10억"' in question
     assert s.squad == {"max_total_price_bp": "10억", "team_color": "아스널"}
+
+
+def test_user_trace_shows_tool_names_only_and_admin_keeps_everything():
+    import json
+
+    import fco_meta.web.app as web_app
+    from fco_meta.chatbot.gemini import GeminiTurn, Thought, ToolCall, ToolResult
+
+    def stream():
+        yield Thought("아스널 DM을 찾자")
+        yield ToolCall("recommend_squad", {"team_color": "아스널"})
+        yield ToolResult("recommend_squad", True, "라이스 …", {"lineup": []})
+        yield "답"
+        return GeminiTurn("답", [], "STOP")
+
+    keep = web_app._TraceLog()
+    lines = [json.loads(line) for line in web_app._relay(stream(), True, keep)]
+    assert [{k: v for k, v in e.items() if k != "type"} for e in lines if e["type"] == "trace"] == [
+        {"kind": "tool", "name": "recommend_squad"}, {"kind": "result", "name": "recommend_squad", "ok": True},
+    ]  # fmt: skip
+    assert [(x["kind"], x.get("args") or x.get("text")) for x in keep.lines[:3]] == [
+        ("thought", "아스널 DM을 찾자"), ("tool", {"team_color": "아스널"}), ("result", "라이스 …"),
+    ]  # fmt: skip

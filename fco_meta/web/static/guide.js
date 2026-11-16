@@ -265,8 +265,8 @@ const SCENES = {
     const form = t.q(".m-form"), txt = t.q(".m-input .txt");
     await t.wait(400);
     await t.type(txt, "/");
-    const items = [["/model", "답할 모델 고르기 (새로고침 전까지)"], ["/compare", "다음 질문을 세 AI 모델이 이름을 가린 채 답하고 하나를 고름"],
-                   ["/trace", "모델 선택·생각·도구 결과를 답 위에 보여 줌"], ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"], ["/help", "명령어 안내 (새 탭)"]];
+    const items = [["/model", "답할 모델 고르기 (새로고침 전까지)"],
+                   ["/trace", "호출한 도구 이름을 답 위에 보여 줌"], ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"], ["/help", "명령어 안내 (새 탭)"]];
     let menu = t.put(form, `<ul class="m-menu">${items.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
     const select = (i) => menu.querySelectorAll("li").forEach((li, j) => li.classList.toggle("on", i === j));
     await t.wait(500);
