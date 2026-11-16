@@ -119,6 +119,8 @@ NEW_TRAITS = {
     "프레데터": [], "레이저 슈터": ["레이저"], "커맨더": [], "2개의 심장": ["두심", "두개의심장", "2심"],
     "와일드 태클러": ["와태"], "GK 빠른 반응": ["빠른반응"], "GK 공중볼 장악": ["공중볼장악"], "GK 데드아이": ["데드아이"],
 }  # fmt: skip
+# prefer의 자리가 포메이션에 없으면 같은 쪽의 이 자리로 (4-2-2-2의 윙은 RM·LM, 4-2-3-1은 RAM·LAM)
+PREFER_FAMILIES = (("RW", "RM", "RAM"), ("LW", "LM", "LAM"), ("RB", "RWB"), ("LB", "LWB"))
 TRAIT_NAMES = {"".join(k.split()): k for k in NEW_TRAITS} | {a: k for k, v in NEW_TRAITS.items() for a in v}
 ADD_TRAIT_GRADE = 8
 MAX_TEAM_COLOR_NAMES = 40
@@ -372,6 +374,7 @@ class _Squad:
     slot_options: list[tuple[str, list[dict[str, Any]]]]
     first: Any  # 첫 자리의 top_players 결과 (표본·기준 시각)
     must_season: dict[str, str] = field(default_factory=dict)  # 넣을 선수 중 시즌을 정한 선수 (이름 → 시즌)
+    setup_notes: list[str] = field(default_factory=list)  # 인자를 그대로 반영하지 못한 것 (결과의 note에)
     must_roles: dict[str, dict[str, int]] = field(default_factory=dict)  # 넣을 선수를 랭커들이 쓴 자리 (이름 → 역할 → 랭커 수)
 
 
@@ -815,7 +818,8 @@ _KNOBS = {
     "invest": {"type": "string", "description": "돈을 먼저 쓸 자리 (예: 'ST,RW,LW', '공격수', 'CB,LB,RB'). "
                "예산이 모자라면 이 자리는 덜 낮추고, 남으면 이 자리만 올린다"},
     "prefer": {"type": "string", "description": "자리별로 원하는 능력치 '자리:능력치', 쉼표로 (예: 'ST:키', 'RW:속력,LW:속력'). "
-               "그 자리는 이 능력치가 높은 선수 우선 (사용률도 일부 반영)"},
+               "그 자리는 이 능력치가 높은 선수 우선 (사용률도 일부 반영). 자리는 그 포메이션의 자리로 (4-2-2-2의 윙은 RM·LM, 4-2-3-1은 RAM·LAM; "
+               "RW·LW로 줘도 같은 쪽 자리로 옮김). 결과 lineup의 preferred_stat이 그 능력치 값(1강 기준)"},
     "traits": {"type": "string", "description": "자리별 신규특성 조건 '자리들:특성들', 묶음이 여럿이면 ; (예: 'RAM,LAM,ST:라인 브레이커,트릭스터', "
                "'CB:파이터'). 자리를 빼면 모든 자리. 그 자리는 조건에 맞는 카드만"},
     "can_add_trait": {"type": "boolean", "description": "traits를 '달 수 있는' 카드까지 (원래 가진 카드 + 하나가 모자라 8강 이상에서 "
@@ -2286,6 +2290,7 @@ class Toolbox:
                 v = values[o["card"]["sp_id"]]
                 level = (v - low) / (high - low) if v is not None and high > low else 0.0
                 o["score"] = 0.7 * level + 0.3 * _card_usage(o) / top_usage  # ponytail: 고정 가중치 0.7/0.3
+                o["preferred_stat"] = {stat: v if v is not None else "미수집"}  # 답의 표에 그 능력치 열로 (1강 기준)
         if role in knobs.get("invest", ()):
             for o in options:
                 o["score"] = 2 * _score(o)
@@ -2358,6 +2363,17 @@ class Toolbox:
                     "team_color": tc_name, "formation": formation, "lineup": [],
                     "note": f"{formation}으로 실제 경기한 스쿼드가 수집되지 않아 포지션 구성을 알 수 없음",
                 }  # fmt: skip
+        setup_notes = []
+        if pref := knobs.get("prefer"):  # "RW:크로스"인데 4-2-2-2면 RM에: 같은 쪽 자리로 옮기고, 없는 자리는 알린다 (조용히 버리지 않는다)
+            moved = {r: stat for r, stat in pref.items() if r in layout}
+            for r, stat in pref.items():
+                if r not in layout:
+                    twin = next((t for family in PREFER_FAMILIES if r in family for t in family if t in layout), None)
+                    if twin:
+                        moved.setdefault(twin, stat)
+                    else:
+                        setup_notes.append(f"prefer의 {r}는 이 포메이션에 없는 자리라 반영하지 않음 (자리: {', '.join(layout)})")
+            knobs = {**knobs, "prefer": moved}
         reqs = {"chem": min(lv["players"] for lv in chem["levels"])} if chem else {}  # 케미: 첫 단계 발동 인원
         reqs.update({f"include:{name}": 1 for name in must})  # 꼭 넣을 선수: 이름이 맞는 선수 한 명씩
         if season_rule:
@@ -2464,6 +2480,7 @@ class Toolbox:
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
             include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
             strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first, must_season=wanted_season,
+            setup_notes=setup_notes,
             must_roles={name: {role: max(o["entry"]["rankers"] for o in mine) for role, opts in dict(slot_options).items()
                                if (mine := [o for o in opts if name in "".join((o["entry"]["name"] or "").split())])} for name in must},
         )  # fmt: skip
@@ -2491,6 +2508,7 @@ class Toolbox:
                 no_salary.append(e["name"])
             lineup.append({
                 **({"owned": True} if c.get("owned") else {}),
+                **({"preferred_stat": c["preferred_stat"]} if "preferred_stat" in c else {}),
                 "role": role, "player": e["name"], "pid": e["pid"], "season": card["season"], "rankers": card["rankers"], "usage_rate": _card_usage(c),
                 "ovr": self._ovr(card["sp_id"], role, _grade(card)),
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
@@ -2538,7 +2556,7 @@ class Toolbox:
                              "시즌 단일 8명+ +3), 강화 팀케미(백금 +5·금 +4·은 +3, 그 등급 이상 8명+)로 모든 능력치에 더해지는 값",
             },
         }
-        notes = []
+        notes = list(sq.setup_notes)
         if unpriced:
             out["unpriced_players"] = unpriced
             notes.append(f"시세 미수집 {len(unpriced)}명은 총액에서 빠짐")
