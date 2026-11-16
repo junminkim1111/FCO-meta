@@ -818,8 +818,8 @@ const TOOL_STATUS = {
 };
 // 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침이나 /cancel 전까지), /trace = 도구 호출 표시
 let model = null, traceOn = false; // { key: "gpt" }, null이면 기본 (GPT-6 Luna)
-// 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. gpt·deepseek은 생각 켬 (2026-11-16부터 기본)
-const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep_r", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
+// 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. gpt는 생각 켬, deepseek은 생각 끔 (2026-11-16: DeepSeek은 켬이 14% 비싸고 39% 느린데 도구·답은 같음)
+const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
 const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
