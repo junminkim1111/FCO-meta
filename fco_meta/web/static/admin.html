@@ -128,6 +128,8 @@
   .chip span { font-family: var(--mono); }
   .turn { display: grid; gap: 14px; } .turn + .turn { border-top: 1px solid var(--line); padding-top: 20px; }
   .turn-no { margin: 0 !important; font-family: var(--mono); }
+  .turn-head { display: flex; align-items: center; gap: 6px; } .turn-head .turn-no { margin-right: auto !important; }
+  .turn-head .btn { height: 26px; padding: 0 9px; font-size: 12px; }
   .trace-box > summary { cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
   .dr h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
   .note { font-size: 12.5px; color: var(--muted); margin: 0; }
@@ -529,17 +531,17 @@ async function openDrawer(r, tr) {
   if (current !== cur) return; // 그사이 다른 줄을 열었다
   const mdBox = (text) => { const n = el("div", { class: "md" }); renderMarkdown(n, text); return n; };
   body.classList.remove("loading");
-  body.replaceChildren(...cur.turns.map((x, i) => turnBlock(x.r, x.d, many ? i + 1 : 0, mdBox)));
+  body.replaceChildren(...cur.turns.map((x, i) => turnBlock(x.r, x.d, many ? i + 1 : 0, mdBox, many ? turnButtons(x) : [])));
   $("dr-copy").disabled = false;
   const savable = cur.turns.filter((x) => x.d.trace);
   save.hidden = !savable.length;
-  if (savable.length) setSaveButton(savable.every((x) => x.d.saved));
+  syncSave(cur);
 }
 
 // 질문 하나: (대화면 몇 번째인지) 질문 · 칩 · trace · 답변
-function turnBlock(r, d, n, mdBox) {
+function turnBlock(r, d, n, mdBox, buttons) {
   const parts = [
-    n ? el("h3", { class: "turn-no", text: `${n}번째 질문 · ${when(r.t)}` }) : null,
+    n ? el("div", { class: "turn-head" }, el("h3", { class: "turn-no", text: `${n}번째 질문 · ${when(r.t)}` }), ...buttons) : null,
     el("p", { class: "dr-q", text: r.q }),
     el("div", { class: "chips" }, chip("상태", LABEL[r.outcome] || r.outcome, r.outcome), chip("모델", modelOf(r)), chip("모드", MODE[r.mode]), chip("경로", r.route),
       chip("시간", sec(r.ms)), chip("토큰", r.tokens && num(r.tokens)), chip("비용", r.cost != null && usd(r.cost)), chip("도구", r.tools?.join(", ")),
@@ -577,6 +579,27 @@ function turnBlock(r, d, n, mdBox) {
   return el("section", { class: "turn" }, ...parts.filter(Boolean));
 }
 
+// 대화 안 질문 하나만 복사·저장
+function turnButtons(x) {
+  const copy = el("button", { class: "btn", type: "button", text: "복사", title: "이 질문의 trace·답변만 복사" });
+  copy.addEventListener("click", () => copyOut(copyText(x.r, x.d)));
+  if (!x.d.trace) return [copy];
+  x.save = el("button", { class: "btn", type: "button" });
+  x.save.addEventListener("click", async () => {
+    const cur = current;
+    x.save.disabled = true;
+    await toggleSave([x]);
+    if (current === cur) syncSave(cur);
+    await load();
+  });
+  return [copy, x.save];
+}
+// 헤더 저장 버튼과 질문별 저장 버튼의 글자를 지금 저장 상태에 맞춘다
+function syncSave(cur) {
+  const targets = cur.turns.filter((x) => x.d?.trace);
+  if (targets.length) setSaveButton(targets.every((x) => x.d.saved));
+  for (const x of targets) if (x.save) { x.save.disabled = false; x.save.textContent = x.d.saved ? "저장 취소" : "저장"; }
+}
 function setSaveButton(isSaved) {
   const b = $("dr-save"), many = current.turns.length > 1;
   b.disabled = false;
@@ -585,24 +608,27 @@ function setSaveButton(isSaved) {
   b.title = isSaved ? "영구 저장을 풉니다 (7일이 지난 기록이면 지워집니다)" : "7일이 지나도 지워지지 않게 영구 저장" + (many ? " (이 대화의 질문 모두)" : "");
 }
 
-// 저장·저장 취소: 대화면 그 안의 질문 모두
-$("dr-save").addEventListener("click", async () => {
-  const cur = current, b = $("dr-save"), targets = cur.turns.filter((x) => x.d?.trace);
-  if (!targets.length) return;
+// 저장·저장 취소: 헤더 버튼은 대화의 질문 모두, 질문별 버튼은 그 질문만
+async function toggleSave(targets) {
   const saving = !targets.every((x) => x.d.saved);
   if (!saving && !confirm(`저장을 취소할까요? 7일이 지난 질문이면 trace와 답변을 다시 볼 수 없습니다.`)) return;
-  b.disabled = true;
   let failed = 0;
   for (const x of targets.filter((x) => x.d.saved !== saving)) {
     const res = await api("/api/admin/saved/" + x.r.id, { method: saving ? "POST" : "DELETE" }).catch(() => null);
     if (res?.ok) x.d.saved = saving; else failed++;
   }
-  if (current === cur) setSaveButton(targets.every((x) => x.d.saved));
   toast(failed ? `${failed}개는 실패했습니다. 다시 시도하세요.` : saving ? "영구 저장했습니다." : "저장을 취소했습니다.");
+}
+$("dr-save").addEventListener("click", async () => {
+  const cur = current, targets = cur.turns.filter((x) => x.d?.trace);
+  if (!targets.length) return;
+  $("dr-save").disabled = true;
+  await toggleSave(targets);
+  if (current === cur) syncSave(cur);
   await load();
 });
-$("dr-copy").addEventListener("click", async () => {
-  const text = copyAll();
+$("dr-copy").addEventListener("click", () => copyOut(copyAll()));
+async function copyOut(text) {
   try { await navigator.clipboard.writeText(text); return toast("복사했습니다."); } catch {}
   // 클립보드 API를 못 쓰는 곳(http, 일부 임베드)에서는 예전 방식으로 (모달 안에 붙여야 선택된다)
   const ta = el("textarea", { value: text, style: "position:fixed;opacity:0" });
@@ -610,7 +636,7 @@ $("dr-copy").addEventListener("click", async () => {
   const ok = document.execCommand("copy");
   ta.remove();
   toast(ok ? "복사했습니다." : "복사하지 못했습니다.");
-});
+}
 $("dr-close").addEventListener("click", () => $("drawer").close());
 $("drawer").addEventListener("click", (e) => e.target === $("drawer") && $("drawer").close()); // 바깥(배경)을 누르면 닫기
 $("drawer").addEventListener("close", () => document.querySelectorAll("tr.sel").forEach((n) => n.classList.remove("sel")));
