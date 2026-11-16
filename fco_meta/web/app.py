@@ -257,8 +257,8 @@ class _TraceLog:
 
 
 def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any):
-    """ask_stream events → NDJSON lines (trace adds one line per tool call and result, names only; `keep` records
-    everything — args, results, thoughts, hand-offs — for the admin page either way); returns the turn."""
+    """ask_stream events → NDJSON lines (trace adds the model's thoughts and one line per tool call and result, names
+    only; `keep` records everything — args, results, thoughts, hand-offs — for the admin page either way); returns the turn."""
     keep = keep or _TraceLog()
     started = False
     while True:
@@ -298,8 +298,10 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             yield _event(type="delta", text=piece, **extra)
         if line:
             keep.add(**line)
-            if trace and line["kind"] == "result":  # 사용자에게는 이름·성공 여부만 (인자·결과·생각은 /admin에만)
+            if trace and line["kind"] == "result":  # 도구는 이름·성공 여부만 (인자·결과는 /admin에만)
                 yield _event(type="trace", kind="result", name=line["name"], ok=line["ok"], **extra)
+            elif trace and line["kind"] == "thought":  # 모델의 생각은 그대로
+                yield _event(type="trace", kind="thought", text=line["text"], **extra)
 
 
 def _squad_call(lines: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:

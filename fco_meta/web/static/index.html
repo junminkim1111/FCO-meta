@@ -315,6 +315,7 @@
   .trace .tr { white-space: pre-wrap; word-break: break-word; }
   .trace .tr b { color: var(--accent); font-weight: 600; margin-right: 6px; }
   .trace .tr .at { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; } /* 질문을 보낸 뒤 몇 초째 */
+  .trace .tr.thought span { color: var(--text); opacity: .75; }
   #chat-title { display: flex; align-items: baseline; gap: 8px; }
   /* 기다리는 동안 글자 위로 빛이 지나간다 */
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--strong) 50%, var(--muted) 60%, var(--muted) 100%);
@@ -816,23 +817,25 @@ const TOOL_STATUS = {
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
   escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
-// 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침이나 /cancel 전까지), /trace = 도구 호출 표시
+// 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침 전까지), /trace = 사고과정 표시 (한 번 더 치면 끔)
 let model = null, traceOn = false; // { key: "gpt" }, null이면 기본 (GPT-6 Luna)
 // 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. gpt는 생각 켬, deepseek은 생각 끔 (2026-11-16: DeepSeek은 켬이 14% 비싸고 39% 느린데 도구·답은 같음)
 const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
 const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
-const TRACE_LABEL = { tool: "도구 호출", result: "도구 결과" };
-// /trace 한 줄: 도구 이름만. 질문을 보낸 뒤 몇 초째인지(+1.2초)를 붙인다
+const TRACE_LABEL = { thought: "생각", tool: "도구 호출", result: "도구 결과" };
+// /trace 한 줄: 모델의 생각, 도구는 이름만. 질문을 보낸 뒤 몇 초째인지(+1.2초)를 붙인다
 function addTrace(box, ev) {
-  const text = ev.kind === "tool" ? `${ev.name}()` : `${ev.name}() 결과 확인${ev.ok ? "" : " (오류)"}`; // 인자·결과는 /admin에만
+  const last = box.lastElementChild;
+  if (ev.kind === "thought" && last?.classList.contains("thought")) { last.lastChild.textContent += ev.text; return; } // 생각은 조각으로 와서 한 줄로 잇는다
+  const text = ev.kind === "thought" ? ev.text : ev.kind === "tool" ? `${ev.name}()` : `${ev.name}() 결과 확인${ev.ok ? "" : " (오류)"}`; // 인자·결과는 /admin에만
   const at = `+${((performance.now() - box.started) / 1000).toFixed(1)}초`;
   box.append(el("div", { class: "tr " + ev.kind }, el("span", { class: "at", text: at }), el("b", { text: TRACE_LABEL[ev.kind] || ev.kind }), el("span", { text })));
   box.scrollTop = box.scrollHeight;
 }
 function traceBox() {
-  const box = el("div", { class: "trace", ariaLabel: "호출한 도구" });
+  const box = el("div", { class: "trace", ariaLabel: "모델의 사고과정" });
   box.started = performance.now();
   return box;
 }
@@ -1087,8 +1090,7 @@ function rateRow(id) {
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [
   ["/model", "답할 모델 고르기 (새로고침 전까지)"],
-  ["/trace", "호출한 도구 이름을 답 위에 보여 줌"],
-  ["/cancel", "켜 둔 명령어를 모두 끄고 기본 모델로"],
+  ["/trace", "모델의 사고과정 표시 (한 번 더 치면 끔)"],
   ["/help", "명령어 안내 (새 탭)"],
 ];
 let cmdShown = [], cmdIndex = 0;
@@ -1265,16 +1267,10 @@ function command(text) {
   const only = (allowed) => new Set(flags).size === flags.length && flags.every((f) => allowed.includes(f));
   if (cmd === "/admin" && !flags.length) return adminPrompt();
   if (cmd === "/trace" && !flags.length) {
-    traceOn = true; // 이 페이지에서 새로고침하기 전까지
-    return note("/trace 적용: 지금부터 호출한 도구 이름을 답 위에 함께 보여 줍니다. 새로고침하거나 /cancel로 끕니다.");
+    traceOn = !traceOn; // 한 번 더 치면 끈다 (새로고침해도 꺼짐)
+    return note(traceOn ? "/trace 적용: 모델의 사고과정을 표시합니다." : "/trace 해제: 모델의 사고과정을 더 이상 표시하지 않습니다.");
   }
   if (cmd === "/model" && !flags.length) return pickModel(); // 모델 선택창
-  if (cmd === "/cancel" && !flags.length) { // 명령어로 켠 것을 모두 처음 상태로
-    const off = [model && modelText(model), traceOn && "/trace(도구 표시)",
-                 team && `${team.mention}(팀)`].filter(Boolean);
-    model = null; traceOn = false; dropTeam();
-    return note(off.length ? `/cancel 적용: ${off.join(", ")}를 껐습니다. 이제 기본 모델이 답합니다.` : "/cancel 적용: 켜져 있던 명령어가 없어 그대로입니다.");
-  }
   if (cmd === "/help" && !flags.length) { // 가이드의 명령어 페이지를 새 탭에 (Enter로 보낸 직후라 팝업 차단에 걸리지 않는다)
     const tab = window.open("/guide/commands", "_blank");
     if (tab) { tab.opener = null; return note("/help: 명령어 안내를 새 탭에서 열었습니다."); }

@@ -423,6 +423,8 @@ class Recorder:
 
 
 def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):  # noqa: F811
+    import json
+
     import fco_meta.web.app as web_app
 
     asked, bots = [], {}
@@ -447,9 +449,9 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     assert bots["lunaTrue"].remembered == [("업그레이드 추천", "deepTrue 답")]  # 다른 모델이 답한 턴도 이어서 안다
     assert "deepTrue 답" in res.text
 
-    # /trace는 도구 이름만: 모델 선택·생각은 사용자에게 보내지 않는다 (/admin 기록에만)
+    # /trace는 생각과 도구 이름: 모델 선택은 사용자에게 보내지 않는다 (/admin 기록에만)
     res = client.post("/api/chat", json={"message": "볼란치", "trace": True})
-    assert not [line for line in res.text.splitlines() if '"trace"' in line]
+    assert [json.loads(line)["kind"] for line in res.text.splitlines() if '"trace"' in line] == ["thought"]
 
     # 서버에 OpenRouter 키가 없으면 예전처럼 Gemini: 일반 → Flash-Lite(두 번째 도구부터 3.5 Flash), 스쿼드 말 → 처음부터 3.5 Flash
     monkeypatch.delenv("OPENROUTER_API_KEY")
@@ -881,7 +883,7 @@ def test_checked_lineup_and_conditions_survive_follow_up():
     assert s.squad == {"max_total_price_bp": "10억", "team_color": "아스널"}
 
 
-def test_user_trace_shows_tool_names_only_and_admin_keeps_everything():
+def test_user_trace_shows_thoughts_and_tool_names_and_admin_keeps_everything():
     import json
 
     import fco_meta.web.app as web_app
@@ -897,7 +899,7 @@ def test_user_trace_shows_tool_names_only_and_admin_keeps_everything():
     keep = web_app._TraceLog()
     lines = [json.loads(line) for line in web_app._relay(stream(), True, keep)]
     assert [{k: v for k, v in e.items() if k != "type"} for e in lines if e["type"] == "trace"] == [
-        {"kind": "tool", "name": "recommend_squad"}, {"kind": "result", "name": "recommend_squad", "ok": True},
+        {"kind": "thought", "text": "아스널 DM을 찾자"}, {"kind": "tool", "name": "recommend_squad"}, {"kind": "result", "name": "recommend_squad", "ok": True},
     ]  # fmt: skip
     assert [(x["kind"], x.get("args") or x.get("text")) for x in keep.lines[:3]] == [
         ("thought", "아스널 DM을 찾자"), ("tool", {"team_color": "아스널"}), ("result", "라이스 …"),
