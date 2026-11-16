@@ -662,7 +662,7 @@ function pitch(players, emptyText, detailOf) {
   }
   for (const p of players) {
     const [x, y] = POS[p.position] || [50, 50];
-    const short = (p.name || "?").split(" ").pop();
+    const short = (p.name || "?").trim().split(" ").pop(); // DB 이름 끝에 공백이 붙은 선수가 있다 ("A. 우에다 ")
     const icon = p.season_img ? el("img", { src: p.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
     const node = el("div", { class: "pp", style: `left:${x}%;top:${y}%` }, photo(p), el("div", { class: "nm" }, icon, short));
     hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}`);
@@ -807,6 +807,21 @@ const say = (who, text) => {
   $("log").scrollTop = $("log").scrollHeight;
   return node;
 };
+// 질문을 채팅창 맨 위로 (LLM 서비스처럼): #log 아래 여백을 늘려 올릴 자리를 만들고, 답이 길어지는 만큼 여백을 줄인다
+let pinned = null;
+function fillPin() {
+  const log = $("log");
+  if (!pinned || !log.lastElementChild) return;
+  const room = log.clientHeight - (log.lastElementChild.getBoundingClientRect().bottom - pinned.getBoundingClientRect().top);
+  log.style.paddingBottom = `${Math.max(12, room)}px`; // 12 = 원래 아래 여백
+}
+function pinQuestion(q) {
+  const log = $("log");
+  pinned = q;
+  fillPin();
+  log.scrollTo({ top: log.scrollTop + q.getBoundingClientRect().top - log.getBoundingClientRect().top - 4,
+                 behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
 const THINKING = "랭커데이터를 살펴보고 있어요...";
 const RECHECK = "보다 정확한 답을 드리기 위해 수치를 재검토 중이에요. 잠시만 기다려 주세요.";
 // 오래 걸리면 도구별 문구 대신: 1분이 넘으면 둘 중 하나(질문마다 무작위), 1분 30초가 넘으면 마지막 문구
@@ -897,18 +912,19 @@ async function send(text) {
   if (inflight) return;
   const ctrl = new AbortController();
   setBusy(ctrl);
-  mention(say("me", text));
+  const question = mention(say("me", text));
   const used = model, { mode, think } = modelRequest(used); // 답 도중에 모델을 바꿔도 이 답의 표시는 그대로
   const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace);
   const bubble = el("div");
   $("log").append(bubble);
-  $("log").scrollTop = $("log").scrollHeight;
+  pinQuestion(question);
   let stopOrb = thinking(bubble), answer = "", shown = 0, frame = 0, answerId = null, squad = false, built = null, mine = null;
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
     renderMarkdown(bubble, splitNext(answer.slice(0, shown))[0]);
+    fillPin();
     if (stick) log.scrollTop = log.scrollHeight;
     else $("jump").hidden = false;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
@@ -1361,11 +1377,11 @@ function makeSelectable(p, question, all) {
     for (const other of all) if (other !== p) other.section.classList.add("gone");
     setTimeout(() => {
       closeCompare();
-      say("me", question);
+      const q = say("me", question);
       const bubble = el("div", { class: "msg bot" });
       renderMarkdown(bubble, splitNext(p.text)[0]);
       $("log").append(bubble);
-      $("log").scrollTop = $("log").scrollHeight;
+      pinQuestion(q);
     }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280);
   };
   const press = () => {
