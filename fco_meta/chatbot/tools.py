@@ -39,6 +39,7 @@ from ..analytics import (
     squad_range,
     squad_snapshot,
     top_players,
+    ranker_squad,
     top_ranker_squad,
     usage_history,
 )
@@ -776,6 +777,14 @@ TOOLS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "get_ranker_squad",
+        "description": (
+            "랭킹 N위 한 명의 선발 11명(자리·시즌·강화)·포메이션·팀컬러. '랭킹 59등 스쿼드', '1등 선발' 같이 순위를 콕 집어 물을 때 이것 하나만 부른다. "
+            "수집하지 않은 순위는 lineup이 없고 그 순위가 없다고 답한다 — 다른 랭커로 대신하거나 다른 도구로 채우지 않는다."
+        ),
+        "input_schema": _schema({"rank": {"type": "integer", "description": "랭킹 순위 (1위=1)"}}, ["rank"]),
+    },
+    {
         "name": "get_meta_trends",
         "description": (
             "랭커 메타 동향: 많이 쓰는 팀컬러(전체 랭커일 때)·포메이션 비율, 가장 많이 쓰인 선수 카드(시즌별), "
@@ -916,6 +925,7 @@ class Toolbox:
             "diagnose_team": self.diagnose_team,
             "get_player_detail": self.get_player_detail,
             "get_meta_trends": self.get_meta_trends,
+            "get_ranker_squad": self.get_ranker_squad,
             "query_squads": self.query_squads,
             "query_rankers": self.query_rankers,
             "get_formation_overview": self.get_formation_overview,
@@ -2872,6 +2882,9 @@ class Toolbox:
             p["main_role"] = by_role[pid].most_common(1)[0][0]
             p["usage_rate"] = round(p["rankers"] / sample[0], 4)
         return sample[0], players
+
+    def get_ranker_squad(self, rank: int) -> dict[str, Any]:
+        return ranker_squad(self.conn, int(rank))
 
     def get_meta_trends(self, team_color: str | None = None, days: int = 7) -> dict[str, Any]:
         tc_id, tc_name = self._scope(team_color)

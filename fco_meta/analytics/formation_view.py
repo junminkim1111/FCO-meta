@@ -94,6 +94,28 @@ def top_ranker_squad(
     }  # fmt: skip
 
 
+def ranker_squad(conn: sqlite3.Connection, rank: int, mode: str = "1vs1") -> dict[str, Any]:
+    """The base-match starters of the ranker at exactly `rank` in the latest squad snapshot.
+    No squad collected for that rank -> no "lineup" (never a neighbouring rank)."""
+    as_of = squad_snapshot(conn, mode=mode)
+    rows = conn.execute(
+        "SELECT s.formation, s.team_color_name, p.sp_id, mp.name, ms.name, se.class_name, p.sp_grade"
+        " FROM ranker_squad q JOIN ranker_snapshot s USING (data_as_of, mode, rank)"
+        " JOIN match_player p ON p.match_id = q.match_id AND p.ouid = q.ouid AND p.starter = 1"
+        " LEFT JOIN meta_position mp ON mp.sp_position = p.sp_position"
+        " LEFT JOIN meta_spid ms ON ms.sp_id = p.sp_id LEFT JOIN meta_season se ON se.season_id = p.season_id"
+        " WHERE q.data_as_of = ? AND q.mode = ? AND q.rank = ? AND q.match_order = 0 AND q.accepted = 1"
+        " ORDER BY p.sp_position",
+        (as_of, mode, rank),
+    ).fetchall()
+    if not rows:
+        return {"rank": rank, "data_as_of": as_of, "lineup": None, "note": f"{rank}위 랭커의 스쿼드는 수집하지 않았다 (다른 순위로 대신하지 않는다)"}
+    return {
+        "rank": rank, "data_as_of": as_of, "formation": rows[0][0], "team_color": rows[0][1],
+        "lineup": [{"sp_id": r[2], "position": r[3], "player": r[4], "season": r[5], "grade": r[6]} for r in rows],
+    }  # fmt: skip
+
+
 def best_eleven(
     conn: sqlite3.Connection, formation: str | None = None, mode: str = "1vs1", *, team_color_id: int | None = None
 ) -> dict[str, Any] | None:
