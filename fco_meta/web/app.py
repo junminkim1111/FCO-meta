@@ -123,10 +123,12 @@ class AdminGuard:
     or redeploy (Render sleeps after 15 minutes without visitors) clears it."""
 
     WARN_AT, BLOCK_AT = 3, 5
+    LOCK_AT = 20  # 모든 IP를 합쳐 1시간에 이만큼 틀리면 1시간 잠금 (IP 헤더를 바꿔 가며 시도하는 것을 막는다)
 
-    def __init__(self, key: str):
-        self.key = key
+    def __init__(self, key: str, now: Callable[[], float] = time.time):
+        self.key, self.now = key, now
         self.failures: dict[str, int] = {}
+        self.recent: deque[float] = deque()  # 최근 1시간의 틀린 시각 (모든 IP)
         self.lock = threading.Lock()
 
     def open_to(self, who: str) -> None:
@@ -142,10 +144,15 @@ class AdminGuard:
             self.open_to(who)
             if not given:  # 아직 입력 전 (틀린 횟수에 넣지 않음)
                 raise HTTPException(status_code=401, detail="관리자 비밀번호를 입력하세요")
+            while self.recent and self.recent[0] <= self.now() - 3600:
+                self.recent.popleft()
+            if len(self.recent) >= self.LOCK_AT:  # 맞는 비밀번호도 잠금이 풀릴 때까지 받지 않는다
+                raise HTTPException(status_code=429, detail="틀린 비밀번호가 많아 관리자 로그인이 잠시 잠겼습니다. 1시간 뒤에 다시 해 주세요.")
             if hmac.compare_digest(given.encode(), self.key.encode()):
                 self.failures.pop(who, None)
                 return
             n = self.failures[who] = self.failures.get(who, 0) + 1
+            self.recent.append(self.now())
         log.warning("wrong admin password from %s (%d)", who, n)
         if n >= self.BLOCK_AT:
             raise HTTPException(status_code=403, detail=self._blocked())

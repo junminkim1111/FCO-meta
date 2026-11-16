@@ -902,3 +902,25 @@ def test_user_trace_shows_tool_names_only_and_admin_keeps_everything():
     assert [(x["kind"], x.get("args") or x.get("text")) for x in keep.lines[:3]] == [
         ("thought", "아스널 DM을 찾자"), ("tool", {"team_color": "아스널"}), ("result", "라이스 …"),
     ]  # fmt: skip
+
+
+def test_admin_locks_for_an_hour_after_many_wrong_passwords_from_any_ip():
+    from fastapi import HTTPException
+
+    from fco_meta.web.app import AdminGuard
+
+    clock = [0.0]
+    guard = AdminGuard("secret", now=lambda: clock[0])
+
+    def status(key, ip):
+        try:
+            guard.check(ip, key)
+            return 200
+        except HTTPException as e:
+            return e.status_code
+
+    # IP 헤더를 바꿔 가며 틀려도 모두 합쳐 센다 (IP마다 5회 제한을 피하는 우회)
+    assert [status("wrong", f"10.0.0.{i}") for i in range(AdminGuard.LOCK_AT)] == [401] * AdminGuard.LOCK_AT
+    assert status("secret", "10.9.9.9") == 429  # 잠긴 동안은 맞는 비밀번호도 안 된다
+    clock[0] = 3601
+    assert status("secret", "10.9.9.9") == 200  # 1시간 지나면 풀린다

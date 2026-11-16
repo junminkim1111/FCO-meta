@@ -1224,7 +1224,7 @@ function adminPrompt() {
     ev.preventDefault();
     const res = await fetch("/api/admin/logs?days=1", { headers: { "X-Admin-Key": input.value } }).catch(() => null);
     if (res && res.ok) {
-      try { sessionStorage.setItem("fclm-admin", input.value); } catch {} // 기록 페이지가 다시 묻지 않도록 (이 탭에만)
+      try { localStorage.setItem("fclm-admin", input.value); } catch {} // 기록 페이지가 다시 묻지 않도록 (이 기기에서 기억)
       form.replaceWith(el("div", { class: "msg bot note done", text: "/admin 적용: 답변 기록 페이지로 이동합니다." }));
       location.href = "/admin";
       return;

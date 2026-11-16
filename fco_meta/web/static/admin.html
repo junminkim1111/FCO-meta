@@ -280,7 +280,7 @@ const status = (o) => el("span", { class: "status " + o, text: LABEL[o] || o });
 const modelOf = (r) => (r.outcome === "compare" ? "3개 모델" : r.model || "");
 let data = null, filter = "all", voteTab = "down", query = "", current = null;
 let adminKey = "";
-try { adminKey = sessionStorage.getItem("fclm-admin") || ""; } catch {}
+try { adminKey = localStorage.getItem("fclm-admin") || ""; } catch {} // 이 기기에서 기억 (틀리면 지운다)
 
 function toast(text) {
   const t = el("div", { class: "toast", text, role: "status" });
@@ -300,9 +300,9 @@ async function load() {
 async function fetchLogs() {
   const res = await api("/api/admin/logs?days=" + $("days").value).catch(() => null);
   if (!res) return showLogin("서버에 연결하지 못했습니다.");
-  if (res.status === 401 || res.status === 403) { // 3회부터 경고, 5회 틀리면 이 IP는 막힘 (서버 문구 그대로)
+  if (res.status === 401 || res.status === 403 || res.status === 429) { // 3회부터 경고, 5회 틀리면 이 IP는 막힘, 전체로 많이 틀리면 잠금 (서버 문구 그대로)
     adminKey = "";
-    try { sessionStorage.removeItem("fclm-admin"); } catch {}
+    try { localStorage.removeItem("fclm-admin"); } catch {}
     showLogin((await res.json().catch(() => ({}))).detail || "비밀번호가 맞지 않습니다.");
     if (res.status === 403) $("login").querySelector("form").querySelectorAll("input, button").forEach((n) => (n.disabled = true));
     return;
@@ -644,7 +644,7 @@ $("drawer").addEventListener("close", () => document.querySelectorAll("tr.sel").
 $("login").querySelector("form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   adminKey = $("key").value;
-  try { sessionStorage.setItem("fclm-admin", adminKey); } catch {}
+  try { localStorage.setItem("fclm-admin", adminKey); } catch {}
   load();
 });
 $("search").addEventListener("input", (e) => { query = e.target.value; renderTraces(); });
