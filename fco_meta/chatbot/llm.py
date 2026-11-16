@@ -23,9 +23,9 @@ import httpx
 
 from .gemini import (
     ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_HISTORY_TURNS, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
-    GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, _drain, _preview, unchecked_squad,
+    GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, UNVERIFIED_SQUAD, _drain, _preview, unchecked_squad,
 )  # fmt: skip
-from .numbers import RECHECK_AT, unsupported_numbers, without
+from .numbers import RECHECK_AT, unsupported_numbers
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
@@ -56,7 +56,6 @@ class ToolChat:
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치
-        self.unbacked: list[str] = []  # 이 대화의 답들에 그렇게 남은 수치 (다음 답의 근거로 쓰지 않는다)
         self._ends_at = float("inf")
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
 
@@ -93,7 +92,6 @@ class ToolChat:
         finally:
             self.thoughts = False
         self.history.append((question, turn.text))
-        self.unbacked += self.unverified
         return turn
 
     def _left(self) -> float:
@@ -104,12 +102,11 @@ class ToolChat:
 
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         messages = self._start(question)
-        # 앞선 질문(팀 블록)·답에 나온 수치는 다시 써도 된다 — 그 답에서 끝내 확인되지 않은 수치만 빼고
-        known: list[Any] = [x for q, a in self.history for x in (q, without(a, self.unbacked))]
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()
         evidence: list[str] = []
         results: list[Any] = []
+        pending_squad = False
         nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
@@ -125,14 +122,18 @@ class ToolChat:
                     note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
                     yield note
                     return GeminiTurn(note, calls, "tool_limit")
-                if not final and not nudged and unchecked_squad(calls):
+                if not final and not nudged and pending_squad:
                     nudged = True
                     log.warning("squad answered without check_squad — sending it back once")
                     yield RESET
                     messages.append({"role": "user", "content": CHECK_REQUEST})
                     continue
+                if pending_squad:
+                    yield RESET
+                    yield UNVERIFIED_SQUAD
+                    return GeminiTurn(UNVERIFIED_SQUAD, calls, "unverified_squad")
                 if results:
-                    text = yield from self._checked(messages, question, text, [*results, *known])
+                    text = yield from self._checked(messages, question, text, results)
                 if reply.stop == "max_tokens":
                     yield "\n\n(답변이 길이 제한으로 잘렸습니다)"
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
@@ -150,6 +151,7 @@ class ToolChat:
                 yield ToolCall(name, args)
                 content, is_error = self.toolbox.run(name, args)
                 result = json.loads(content)
+                pending_squad = unchecked_squad(pending_squad, name, result, is_error)
                 yield ToolResult(name, not is_error, _preview(result.get("error") if is_error else for_model(name, result)), result)
                 if is_error:
                     out.append((call_id, result["error"], True))

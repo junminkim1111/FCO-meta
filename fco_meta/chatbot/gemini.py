@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .numbers import RECHECK_AT, unsupported_numbers, without
+from .numbers import RECHECK_AT, unsupported_numbers
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
@@ -151,10 +151,16 @@ CHECK_REQUEST = (
 )
 
 
-def unchecked_squad(calls: list[tuple[str, dict[str, Any]]]) -> bool:
-    """The model got squad candidates but answered without checking its picks."""
-    names = {name for name, _ in calls}
-    return "squad_candidates" in names and "check_squad" not in names
+UNVERIFIED_SQUAD = "요청한 조건을 만족하는 스쿼드를 검증하지 못했습니다. 조건을 조정해 다시 요청해 주세요."
+
+
+def unchecked_squad(pending: bool, name: str, result: dict[str, Any], is_error: bool) -> bool:
+    """Candidates invalidate the previous check; only a successful final squad clears it."""
+    if name in ("squad_candidates", "check_squad"):
+        return not (name == "check_squad" and not is_error and result.get("ok") is True)
+    if name == "recommend_squad" and not is_error and result.get("lineup"):
+        return False
+    return pending
 
 
 def _short_reason(exc: Exception) -> str:
@@ -348,7 +354,6 @@ class GeminiChat:
         self.tokens: Counter[str] = Counter()  # 입력·출력·생각 토큰 합 (비용 비교용)
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output, 생각은 output에) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치 (다시 쓰기 뒤에도 남은 것)
-        self.unbacked: list[str] = []  # 이 대화의 답들에 그렇게 남은 수치 (다음 답의 근거로 쓰지 않는다)
         self.deadline = ANSWER_DEADLINE  # 한 질문의 전체 대기 상한(초)
         self._fallbacks: list[str] | None = None  # 이 질문만의 대체 모델 순서 (ask_stream)
         self._think = False  # 이 질문만 생각 깊이 HIGH (/model … --r). 아니면 모델이 정한다
@@ -506,7 +511,6 @@ class GeminiChat:
         self._fallbacks, self._think = fallbacks, think
         try:
             turn = yield from self._ask(question)
-            self.unbacked += self.unverified
             return turn
         except BaseException:  # GeneratorExit = 사용자가 정지 → 그 질문은 기록에 남기지 않는다
             del self.contents[checkpoint:]
@@ -623,15 +627,12 @@ class GeminiChat:
 
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
         types = _types()
-        # 앞선 대화의 답에 나온 수치는 이번 답에 다시 써도 된다 (수치 검증용)
-        known: list[Any] = [
-            without(p.text, self.unbacked) if c.role == "model" else p.text for c in self.contents for p in c.parts or [] if p.text
-        ]  # 앞선 답에서 끝내 확인되지 않은 수치는 근거로 쓰지 않는다
         self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()  # 이번 질문에서 이미 실행한 (도구, 인자)
         evidence: list[str] = []  # 모델이 아니라 도구 결과로 만든 근거 줄
         results: list[Any] = []  # 이번 질문의 도구 결과 (수치 검증용)
+        pending_squad = False
         nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             final = round_no == MAX_TOOL_ROUNDS
@@ -660,14 +661,19 @@ class GeminiChat:
                     note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
                     yield note
                     return GeminiTurn(note, calls, "tool_limit")
-                if not final and not nudged and unchecked_squad(calls):
+                if not final and not nudged and pending_squad:
                     nudged = True
                     log.warning("squad answered without check_squad — sending it back once")
                     yield RESET
                     self.contents.append(types.Content(role="user", parts=[types.Part.from_text(text=CHECK_REQUEST)]))
                     continue
+                if pending_squad:
+                    self.contents[-1] = types.Content(role="model", parts=[types.Part.from_text(text=UNVERIFIED_SQUAD)])
+                    yield RESET
+                    yield UNVERIFIED_SQUAD
+                    return GeminiTurn(UNVERIFIED_SQUAD, calls, "unverified_squad")
                 if results:  # 도구로 조회한 답만 검증한다 (인사·범위 밖 질문은 대조할 결과가 없음)
-                    text, finish = yield from self._checked(question, text, finish, [*results, *known])
+                    text, finish = yield from self._checked(question, text, finish, results)
                 if finish == "MAX_TOKENS":
                     yield "\n\n(답변이 길이 제한으로 잘렸습니다)"
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
@@ -691,6 +697,7 @@ class GeminiChat:
                         self.on_tool_call(fc.name, args)
                     content, is_error = self.toolbox.run(fc.name, args)
                     result = json.loads(content)
+                    pending_squad = unchecked_squad(pending_squad, fc.name, result, is_error)
                     if is_error:
                         log.warning("tool %s(%s) → error: %s", fc.name, args, result.get("error"))
                         payload = {"error": result["error"]}

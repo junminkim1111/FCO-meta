@@ -35,8 +35,19 @@ docs/PLAN.md
 docs/RESEARCH.md
 docs/nexon-openapi-spec/
 docs/DEVELOPMENT.md
-tests/
-eval/
+tests/*
+!tests/test_golden.py
+eval/*
+!eval/LESSONS.md
 .env.example
 docs/BACKLOG.md
 docs/TROUBLESHOOTING.md
+
+# ORCA local render artifacts
+.orca/
+
+# Harness regression cases
+!eval/golden.json
+!tests/test_llm.py
+!tests/test_web.py
+!tests/test_chatbot_tools.py

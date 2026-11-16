@@ -189,6 +189,8 @@ class _Session:
         self.team: Team | None = None  # @닉네임으로 붙인 팀: 다음 질문 하나가 가져간다 (멘션처럼)
         self.last: str | None = None  # 마지막 질문 (팀 블록 없이, Jev가 이어지는 질문인지 볼 때)
         self.squad: dict[str, Any] | None = None  # 마지막으로 짠 스쿼드의 recommend_squad 인자 (기록엔 답 글만 남아 다음 질문에 붙인다)
+        self.before_lineup: list[dict[str, Any]] | None = None
+        self.turn_squad: dict[str, Any] | None = None
         self.before: dict[str, Any] | None = None  # 그 앞에 짠 스쿼드의 인자 ("다시 돌려놔")
         self.lineup: list[dict[str, Any]] | None = None  # 마지막으로 답한 스쿼드의 선발 (다시 짜면 바뀐 자리를 도구 결과에 붙인다)
         self.turn_lineup: list[dict[str, Any]] | None = None  # 이번 질문에서 짠 선발 (답을 마치면 lineup이 된다)
@@ -198,10 +200,15 @@ class _Session:
         (its block stays in the history, so follow-ups still know the team)."""
         team, self.team = self.team, None
         self.turn_lineup = None  # 실패한 앞 질문의 선발은 버린다
+        self.turn_squad = None
         if self.squad:  # "WG 말고 UC로" 같은 이어지는 바람이 앞 조건(예산 등)을 잃지 않게
             message += f"\n\n(앞서 짠 스쿼드의 recommend_squad 인자: {json.dumps(self.squad, ensure_ascii=False)})"
             if self.before:
                 message = message[:-1] + f"; 그 앞 스쿼드의 인자(되돌려 달라면 이것): {json.dumps(self.before, ensure_ascii=False)})"
+        if self.lineup:
+            message += "\n\n[확정 스쿼드: " + json.dumps(self.lineup, ensure_ascii=False) + "]"
+            if self.before_lineup:
+                message += "\n[되돌릴 스쿼드: " + json.dumps(self.before_lineup, ensure_ascii=False) + "]"
         return (f"{team.for_model()}\n\n{message}" if team else message), team
 
     def bot(self, key: str, make: Callable[[], Any]) -> Any:
@@ -215,11 +222,12 @@ class _Session:
 
     def answered(self, key: str | None, question: str, answer: str, plain: str | None = None, calls: Iterable[tuple[str, Any]] = ()) -> None:
         self.history.append((question, answer))
-        squad = next((args for name, args in reversed(list(calls)) if name == "recommend_squad"), self.squad)
-        if squad != self.squad:
-            self.before, self.squad = self.squad, squad
         if self.turn_lineup is not None:
+            if self.turn_lineup != self.lineup:
+                self.before, self.before_lineup = self.squad, self.lineup
+            self.squad = self.turn_squad or self.squad
             self.lineup, self.turn_lineup = self.turn_lineup, None
+            self.turn_squad = None
         self.last = plain or question
         if key in self.bots:  # 답한 chat은 이 턴을 이미 안다
             self.bots[key][1] = len(self.history)
@@ -268,8 +276,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
         elif isinstance(piece, gemini.Fallback):
             line = {"kind": "fallback", "text": f"{piece.failed} {piece.reason} → {piece.model}이 대신"}
         elif isinstance(piece, ToolResult):
-            line = {"kind": "result", "name": piece.name, "ok": piece.ok, "text": piece.preview}
-            if piece.ok and piece.name in SQUAD_TOOLS and piece.result:  # 짜는 중인 스쿼드도 왼쪽 칸에 바로 그린다
+            line = {"kind": "result", "name": piece.name, "ok": piece.ok and (piece.result or {}).get("ok", True), "text": piece.preview}
+            if piece.ok and piece.name in SQUAD_TOOLS and piece.result and piece.result.get("ok", True):  # 짜는 중인 스쿼드도 왼쪽 칸에 바로 그린다
                 try:
                     yield _event(type="squad", **squad_view(piece.result), **extra)
                 except FeedError:
@@ -600,9 +608,10 @@ def create_app(
                     if req.mode == "gemini":  # 모델 선택창의 Gemini 3.5 Flash (안 되면 다른 Flash 먼저, 그다음 Lite)
                         entry["mode"] = req.mode
                         options, why = {"model": FLASH_MODEL}, f"/model gemini → {GEMINI_LABEL} (안 되면 다른 Gemini 모델)"
-                    elif _deepseek_ready():  # 기본은 GPT-6 Luna 생각 끔 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
+                    elif _deepseek_ready():  # 기본은 GPT-6 Luna 생각 켬 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
                         # 2026-11-15 DeepSeek과 같은 하네스로 비교: 품질은 비슷하고 비용은 약 2.5분의 1 (DeepSeek은 한글이 안 깨지는 제공사가 비싸다)
-                        key, options = "luna", {"deadline": LONG_DEADLINE}
+                        # 2026-11-16 생각 켬: 불필요한 도구 호출이 줄어 비용은 크게 늘지 않고 의도 구분이 나아짐 (reports/luna-thinking-20261116)
+                        key, options = "luna_r", {"deadline": LONG_DEADLINE}
                         why = f"{route.describe() if route else 'Jev 없음'} → {LUNA_LABEL[key]}"
                     entry["route"] = why
                 else:  # deep·luna (OpenRouter)
@@ -647,13 +656,13 @@ def create_app(
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
                 answers.put(req.message, turn.text)
-            entry.update(outcome="ok", model=bot.last_model, provider=getattr(bot, "last_provider", None), tools=[n for n, _ in turn.tool_calls],
+            entry.update(outcome="unverified_squad" if turn.finish_reason == "unverified_squad" else "ok", model=bot.last_model, provider=getattr(bot, "last_provider", None), tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
             if unverified := getattr(bot, "unverified", None):  # 다시 쓰기 뒤에도 도구 결과로 확인되지 않은 수치 (관리자 페이지에서 모아 본다)
                 entry["unverified"] = unverified
             keep.add("done", text=f"모델 {bot.last_model}" + (f" · 제공사 {p}" if (p := getattr(bot, "last_provider", None)) else ""))
             keep.answer = turn.text
-            squad = _squad_call(keep.lines)
+            squad = None if turn.finish_reason == "unverified_squad" else _squad_call(keep.lines)
             if squad:  # 답 아래 "스쿼드메이커로 내보내기": 누르면 같은 호출을 다시 돌려(결과는 pages에 캐시) 링크를 만든다
                 with lock:
                     squads[entry["id"]] = squad
@@ -899,9 +908,14 @@ class _SessionTools(_LockedTools):
 
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
         content, is_error = super().run(name, tool_input)
+        if name == "squad_candidates" or name in SQUAD_TOOLS:
+            self.session.turn_lineup = None
+            self.session.turn_squad = None
         if is_error or name not in SQUAD_TOOLS:
             return content, is_error
         result = json.loads(content)
+        if result.get("ok") is False:
+            return content, is_error
         if lineup := result.get("lineup"):
             if changes := _lineup_changes(self.session.lineup, lineup):
                 result["changed_from_previous"] = {
@@ -910,7 +924,12 @@ class _SessionTools(_LockedTools):
                             " (급여·예산을 맞추려고 바뀐 것이면 그렇다고)",
                 }  # fmt: skip
                 content = json.dumps(result, ensure_ascii=False)
-            self.session.turn_lineup = lineup
+            self.session.turn_lineup = [
+                {"role": p["role"], "player": p.get("player"), "season": p.get("season"),
+                 "card": {k: v for k, v in p.get("card", {}).items() if k in ("most_used_grade", "salary")}, **({"owned": True} if p.get("owned") else {})}
+                for p in lineup
+            ]
+            self.session.turn_squad = {k: v for k, v in tool_input.items() if k != "picks"}
         return content, is_error
 
 
@@ -1004,8 +1023,5 @@ def _deepseek_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
 def _luna_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
     from ..chatbot.llm import OpenAIChat
 
-    from ..chatbot.prompt import LUNA_ADDENDUM
-
     bot = OpenAIChat(_http(), toolbox, model=LUNA_MODEL, extra={"reasoning": {"enabled": reasoning}, "provider": {"only": ["openai"]}})
-    bot.prompt += LUNA_ADDENDUM  # 공통 지시문 + Luna만의 몇 줄
     return bot

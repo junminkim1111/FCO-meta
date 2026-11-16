@@ -98,15 +98,6 @@ def _numbers(value: Any, out: set[float]) -> set[float]:
     return out
 
 
-def without(text: str, figures: list[str]) -> str:
-    """`text` with these figures cut out: an earlier answer minus the figures no tool result backed up, so it can be
-    evidence for the next answer without passing those on.
-    ponytail: plain substring cut ("5%" also cuts the end of "15%") — match whole figures if that ever misfires."""
-    for figure in figures:
-        text = text.replace(figure, " ")
-    return text
-
-
 def unsupported_numbers(answer: str, results: list[Any], question: str = "") -> list[str]:
     """Percentages, BP amounts and head counts in `answer` that no tool result (or the question, or the system prompt's
     facts like "TOP 10,000") contains — also not as the sum or difference of two of them."""

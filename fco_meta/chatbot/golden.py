@@ -34,7 +34,7 @@ from typing import Any
 
 from ..config import load_env
 from .evaluate import DEFAULT_DB, DEFAULT_OUT_DIR, select
-from .tools import BUDGET_STRETCH, Toolbox
+from .tools import Toolbox
 
 DEFAULT_CASES = Path("eval/golden.json")
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
@@ -147,8 +147,6 @@ def _squad(want: dict[str, Any], result: dict[str, Any] | None, answer: str | No
     cap = want.get("max_salary", 315)
     out.append((f"급여 ≤ {cap}", (result.get("total_salary") or 0) <= cap, str(result.get("total_salary"))))
     if (budget := want.get("max_price")) is not None:
-        if (result.get("budget") or {}).get("over_by"):  # 도구가 일부러 조금 넘긴 스쿼드 (BUDGET_STRETCH)
-            budget = int(budget * (1 + BUDGET_STRETCH))
         within = (result.get("total_price_bp") or 0) <= budget
         if want.get("infeasible") and not within:  # 안 되는 예산: 넘긴 걸 답이 말해야
             if answer is not None:
@@ -157,6 +155,12 @@ def _squad(want: dict[str, Any], result: dict[str, Any] | None, answer: str | No
             out.append((f"총액 ≤ {budget:,}", within, str(result.get("total_price"))))
     if formation := want.get("formation"):
         out.append((f"포메이션 {formation}", result.get("formation") == formation, str(result.get("formation"))))
+    if chemistry := want.get("chemistry"):
+        got = result.get("chemistry") or {}
+        out.append((f"케미 {chemistry} 발동", _key(got.get("team_color")) == _key(chemistry) and bool(got.get("active")), str(got)))
+    for role, minimum in want.get("min_role_salary", {}).items():
+        cards = [p.get("card") or {} for p in lineup if p.get("role") == role]
+        out.append((f"{role} 급여 ≥ {minimum}", bool(cards) and all(c.get("salary") is not None and c["salary"] >= minimum for c in cards), str(cards)))
     players = " ".join(p["player"] for p in lineup)
     for name in want.get("include", []):
         if (result.get("include") or {}).get(name) is None and name not in players:  # 도구가 넣지 못함 (그 팀 랭커 기록에 없음 등)
@@ -208,28 +212,32 @@ def run_oracle(cases: list[tuple[int, dict]], toolbox: Toolbox) -> list[dict[str
     rows = []
     for i, case in cases:
         if not case.get("oracle"):
-            continue  # 거절·인사는 모델(Jev)이 있어야 확인된다
+            rows.append({"i": i, "case": case, "record": None, "answer": None, "checks": [], "s": 0})
+            continue  # 미검증을 통과로 세지 않는다
         calls = [(name, args) for name, args in case["oracle"]]
         rows.append({"i": i, "case": case, "record": None, "answer": None, "checks": check(case["expect"], None, calls, None, toolbox), "s": 0})
     return rows
 
 
 def report(rows: list[dict[str, Any]], oracle: bool) -> str:
-    passed = sum(all(c[1] for c in r["checks"]) for r in rows)
+    passed = sum(bool(r["checks"]) and all(c[1] for c in r["checks"]) for r in rows)
+    unchecked = sum(not r["checks"] for r in rows)
     lines = [f"# 골든 세트 {'(oracle — 모델 없이 조건만)' if oracle else ''} — {datetime.now():%Y-%m-%d %H:%M}", "",
-             f"**통과 {passed}/{len(rows)}**"]  # fmt: skip
+             f"**통과 {passed}/{len(rows)} · 실패 {len(rows) - passed - unchecked} · 미검증 {unchecked}**"]  # fmt: skip
     if not oracle:
         recs = [r["record"] for r in rows]
         cost = sum(r.get("cost", 0) for r in recs)
         lines[-1] += (f" · 수치 미확인 {sum(1 for r in recs if r.get('unverified'))} · 평균 {sum(r['s'] for r in rows) / max(len(rows), 1):.1f}초"
                       f" · 추정 비용 ${cost:.4f}")  # fmt: skip
+    if oracle:
+        lines += ["", "oracle 통과는 지정된 도구 조건만의 통과입니다. 실제 모델의 도구 선택·라우팅·답변은 미검증입니다."]
     lines += ["", "| # | 질문 | 결과 | 실패한 조건 | 모델 · 도구 | 시간 |", "|---|---|---|---|---|---|"]
     for r in rows:
         failed = "<br>".join(f"{n} ({why})" if why else n for n, ok, why in r["checks"] if not ok)
         rec = r["record"] or {}
         used = " · ".join(filter(None, [rec.get("model"), ", ".join(rec.get("tools") or [])]))
-        ok = all(c[1] for c in r["checks"])
-        lines.append(f"| {r['i']} | {r['case']['q']} | {'✅' if ok else '❌'} | {failed} | {used} | {r['s']:.0f}초 |")
+        status = "미검증" if not r["checks"] else ("✅" if all(c[1] for c in r["checks"]) else "❌")
+        lines.append(f"| {r['i']} | {r['case']['q']} | {status} | {failed} | {used} | {r['s']:.0f}초 |")
     if not oracle:
         lines += ["", "## 실패한 답"]
         for r in rows:
@@ -247,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--oracle", action="store_true", help="모델 없이 oracle 도구로 조건만 확인 (토큰 0)")
     parser.add_argument("--mode", default="auto", choices=("auto", "deep", "luna"), help="답할 모델 (기본: 사이트 기본)")
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--json-out", type=Path, help="케이스별 비교를 위한 구조화된 결과")
     args = parser.parse_args(argv)
     if not args.db.exists():
         print(f"DB가 없습니다: {args.db}", file=sys.stderr)
@@ -258,8 +267,13 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out or DEFAULT_OUT_DIR / f"golden{'-oracle' if args.oracle else ''}{'' if args.mode == 'auto' else '-' + args.mode}-{datetime.now():%Y%m%d-%H%M}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(json.dumps({"oracle": args.oracle, "mode": args.mode, "rows": rows}, ensure_ascii=False, indent=2), encoding="utf-8")
     print(re.sub(r"\*\*", "", text.splitlines()[2]), f"→ {out}")
-    return 0
+    if any(not ok for r in rows for _, ok, _ in r["checks"]):
+        return 1
+    return 0 if any(r["checks"] for r in rows) else 2
 
 
 if __name__ == "__main__":

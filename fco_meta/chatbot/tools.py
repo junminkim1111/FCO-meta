@@ -1614,15 +1614,12 @@ class Toolbox:
         chosen, loose = _choose_floored(sq.slot_options, sq.limits, sq.reqs)
         if not loose:  # 하한 안에서 맞췄으면 예산 넘기기·강화 올리기도 그 카드들 안에서
             sq.slot_options = _card_floor(sq.slot_options)
-        within = chosen
         wider = self._stretch(sq, chosen) if budget else None
-        if wider:  # 살짝 넘겨서 훨씬 나은 스쿼드면 그쪽을 (넘긴 만큼 알린다)
-            chosen = wider
         if budget and spend is not False:  # 예산이 남으면 그대로 두지 않는다
             chosen = self._spend(sq, chosen, knobs)
             chosen = self._better_cards(sq, chosen, knobs)  # 다 11강인데도 남으면 더 좋은 카드로
             chosen = self._top_grades(sq, chosen, knobs)  # 그래도 남으면 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 12·13강
-        out = self._squad_result(sq, chosen, stretched=bool(wider))
+        out = self._squad_result(sq, chosen)
         if budget and spend is not False and out["budget"]["within_budget"] and (stuck := self._not_raised(sq, chosen, knobs)):
             out["budget"]["not_raised"] = stuck  # 돈이 남았는데 11강 아래인 카드: 다음 강화가 남은 돈보다 비싸다
         if top := [f"{role} {c['entry']['name']} {c['card']['most_used_grade']}강 (랭커 {c['top_grade_rankers']}명이 그 강화로 씀)"
@@ -1632,15 +1629,12 @@ class Toolbox:
         if budget:
             out.update(self._grade_changes(sq, chosen))
             if wider:
-                if all(within) and all(sum(c[k] or 0 for c in within) <= v for k, v in sq.limits.items()):
-                    out["budget"].update(over_by=format_bp(out["total_price_bp"] - sq.limits["price"]),
-                                         within_budget_instead=self._swaps(sq, wider, within),
-                                         stretched="의도한 결과: 훨씬 많이 쓰이는 카드라 예산을 10% 안에서 넘김. 이대로 답하고 예산 안 구성은"
-                                                   " within_budget_instead로 안내 (예산에 맞추려고 다시 부르지 않음)")  # fmt: skip
-                else:  # 넣을 선수만으로도 예산이 모자라는 등 예산 안 구성이 없다
-                    out["budget"].update(over_by=format_bp(out["total_price_bp"] - sq.limits["price"]),
-                                         stretched="예산 안에서는 조건(넣을 선수 등)을 맞출 수 없어 가장 싸게 맞춘 구성이 예산을 넘음."
-                                                   " 넘는 금액(over_by)을 알리고, 예산을 올리거나 넣을 선수를 줄이자고 제안할 것")  # fmt: skip
+                alternative = self._squad_result(sq, wider, checking=True)
+                out["budget"]["over_budget_alternative"] = {
+                    "lineup": alternative["lineup"], "total_price": alternative["total_price"],
+                    "total_salary": alternative["total_salary"],
+                    "over_by": format_bp(alternative["total_price_bp"] - sq.limits["price"]),
+                }
         if gaps := self._salary_vs_rankers(sq, chosen):
             out["salary_vs_rankers"] = gaps
         if loose and (rare := [f"{c['entry']['name']} {(c['card']['season'] or '').split(' (')[0]}" for c in chosen
@@ -1744,25 +1738,6 @@ class Toolbox:
         if fits(chosen, sq.limits) and score(wider) < score(chosen) * (1 + STRETCH_GAIN):
             return None
         return wider
-
-    @staticmethod
-    def _swaps(sq: _Squad, picked, instead) -> list[dict[str, str]]:
-        """Per slot, the picked card that the other lineup does not have and that lineup's card for the role."""
-
-        def name(c) -> str:
-            return f"{c['entry']['name']} {(c['card']['season'] or '').split(' (')[0]}"
-
-        ids = [{c["card"]["sp_id"] for c in combo if c} for combo in (picked, instead)]
-        left = [(role, c) for (role, _), c in zip(sq.slot_options, instead) if c and c["card"]["sp_id"] not in ids[0]]
-        out = []
-        for (role, _), c in zip(sq.slot_options, picked):
-            if c is None or c["card"]["sp_id"] in ids[1]:
-                continue
-            other = next((x for x in left if x[0] == role), None)
-            if other:
-                left.remove(other)
-            out.append({"role": role, "pick": name(c), **({"instead": name(other[1])} if other else {})})
-        return out
 
     def _salary_vs_rankers(self, sq: _Squad, chosen: list[dict[str, Any] | None]) -> list[dict[str, Any]]:
         """Roles where the lineup's average salary is SALARY_GAP or more away from what the scope's rankers spend there
@@ -2520,7 +2495,7 @@ class Toolbox:
         )  # fmt: skip
 
     def _squad_result(
-        self, sq: _Squad, chosen: list[dict[str, Any] | None], checking: bool = False, stretched: bool = False
+        self, sq: _Squad, chosen: list[dict[str, Any] | None], checking: bool = False
     ) -> dict[str, Any]:
         """The squad tool result for one pick per slot: lineup, totals and whether every rule held
         (checking = check_squad: the model picked, so no alternatives and no 'cheapest swaps' note)."""
@@ -2673,7 +2648,7 @@ class Toolbox:
                     "note": "가진 카드를 그대로 두면 한도를 넘음. 넘었다고만 하지 말고 fixes(가진 카드 한 자리를 그 자리 랭커 픽으로 바꾸면 한도 안)를"
                             " 해결안으로 바로 제시할 것",
                 }  # fmt: skip
-            elif not within and not checking and not stretched:  # stretched: 일부러 조금 넘긴 스쿼드 (recommend_squad)
+            elif not within and not checking:
                 notes.append("후보를 가장 싸게 바꿔도 예산·급여 한도를 넘음")
             out["leftover"] = {"price": format_bp(limits["price"] - total("price")) if "price" in limits else None,
                                "salary": limits["salary"] - total("salary") if "salary" in limits else None}  # fmt: skip
@@ -2723,6 +2698,11 @@ class Toolbox:
         out = self._player_detail(name, team_color, formation, _typo_retry)
         if season:  # 랭커가 쓰지 않은 카드의 급여 ("GR 돈나룸마 쓰고 싶은데 급여를 어디서")
             out["season_card"] = self._season_card(out.get("players", [{}])[0].get("name", name) if out.get("players") else name, season)
+        out.setdefault("definitions", {}).update({
+            "season_card": "데이터센터의 카드 자체 정보. 급여·능력치·시세는 랭커 사용률이나 특정 팀·포메이션의 표본이 아님",
+            "players_scope": "players 각 선수의 scope가 그 선수의 roles 통계 범위",
+            "usage_scope": "usage 각 행의 team_color·formation·sample_size가 해당 행만의 범위. 서로 다른 행·도구의 표본을 합치지 않음",
+        })
         return out
 
     def _player_detail(self, name: str, team_color: str | None, formation: str | None, _typo_retry: bool) -> dict[str, Any]:

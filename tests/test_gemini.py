@@ -693,7 +693,7 @@ def test_squad_question_goes_to_the_judging_model_with_its_tools(toolbox):
 
 
 def test_squad_answered_without_check_is_sent_back_once(toolbox):
-    from fco_meta.chatbot.gemini import CHECK_REQUEST
+    from fco_meta.chatbot.gemini import CHECK_REQUEST, UNVERIFIED_SQUAD
 
     cand = {"function_call": {"name": "squad_candidates", "args": {"team_color": "아스널"}}}
     check = {"function_call": {"name": "check_squad", "args": {"team_color": "아스널", "picks": [{"role": "DM", "player": "볼란치R"}]}}}
@@ -703,7 +703,7 @@ def test_squad_answered_without_check_is_sent_back_once(toolbox):
     ])  # fmt: skip
     chat = GeminiChat(client, toolbox, model="gemini-flash", fallback_models=[])
     turn = chat.ask("아스널 스쿼드 짜줘")
-    assert turn.text == "검사한 스쿼드" and [n for n, _ in turn.tool_calls] == ["squad_candidates", "check_squad"]
+    assert turn.text == UNVERIFIED_SQUAD and [n for n, _ in turn.tool_calls] == ["squad_candidates", "check_squad"]
     assert client.models.requests[2]["contents"][-1].parts[0].text == CHECK_REQUEST
 
 
