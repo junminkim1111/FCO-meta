@@ -2,6 +2,7 @@
 #team-box .spring-input { height: 38px; max-width: 100%; border: 1px solid #60a5fa; border-radius: 999px; background: var(--field); overflow: hidden; }
 #team-box .spring-input:focus-within { box-shadow: 0 0 0 3px rgba(96,165,250,.25); }
 #team-box .spring-input input { position: absolute; left: 14px; top: 7px; width: calc(100% - 58px); height: 24px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: transparent; caret-color: transparent; line-height: 24px; font-kerning: none; letter-spacing: 0; }
+#team-box .spring-input input:focus { box-shadow: none; }
 #team-box .spring-input input::placeholder { color: var(--muted); }
 .spring-view { position: absolute; left: 14px; right: 44px; top: 7px; height: 24px; overflow: hidden; pointer-events: none; }
 .spring-layer { position: absolute; height: 24px; line-height: 24px; white-space: pre; }

@@ -12,6 +12,7 @@ export function mountSpringInput(input) {
   let chars = [], spans = [], frame = 0, last = 0, moved = 0, composing = false;
   function sync() {
     const next = Array.from(input.value);
+    if (next.join('') === chars.join('')) return;
     let a = 0, b = 0;
     while (a < chars.length && a < next.length && chars[a] === next[a]) a++;
     while (b < chars.length - a && b < next.length - a && chars[chars.length - 1 - b] === next[next.length - 1 - b]) b++;
@@ -43,7 +44,8 @@ export function mountSpringInput(input) {
     caret.classList.toggle('blink', now - moved > 550 && Math.abs(C.v) < 5);
     field.style.transform = `translateX(${shake.x}px)`;
     field.style.width = W.x > 1 ? `${W.x}px` : '';
-    frame = requestAnimationFrame(loop);
+    const moving = [C, W, shake].some(s => Math.abs(s.x - s.t) > .01 || Math.abs(s.v) > .1);
+    if (moving || (!reduced.matches && document.activeElement === input && now - moved <= 550)) frame = requestAnimationFrame(loop);
   }
   function refresh() {
     sync();
@@ -51,9 +53,12 @@ export function mountSpringInput(input) {
   }
   input.addEventListener('input', refresh);
   input.addEventListener('focus', refresh);
-  input.addEventListener('compositionstart', () => { composing = true; field.classList.add('composing'); });
+  input.addEventListener('blur', refresh);
+  input.addEventListener('scroll', refresh);
+  reduced.addEventListener('change', refresh);
+  input.addEventListener('compositionstart', () => { composing = true; field.classList.add('composing'); refresh(); });
   input.addEventListener('compositionend', () => { composing = false; field.classList.remove('composing'); refresh(); });
-  for (const event of ['keydown', 'click', 'select']) input.addEventListener(event, () => { moved = performance.now(); });
+  for (const event of ['keydown', 'click', 'select']) input.addEventListener(event, () => { moved = performance.now(); refresh(); });
   field.classList.add('spring-input');
   return {
     reset() { field.classList.remove('ok', 'err'); W.x = W.v = W.t = 0; C.x = C.v = C.t = 0; refresh(); },

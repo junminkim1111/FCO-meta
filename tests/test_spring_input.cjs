@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     const errors = []; page.on('pageerror', e => errors.push(e.message));
-    await page.goto('http://127.0.0.1:8000/');
+    await page.route('**/api/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ formations: [], rows: [] }) }));
+    await page.goto(process.env.FCO_TEST_URL || 'http://127.0.0.1:8000/');
     let nickname, fail = false;
     await page.route('**/api/team', async route => {
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -16,7 +17,11 @@ const assert = require('node:assert/strict');
       await page.locator('#msg').fill(mark);
       await page.locator('#team-name').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#team-name').getAttribute('placeholder'), mark === '@' ? '구단주명' : '스쿼드 피드 ID');
+      await page.locator('#team-name').focus();
       assert.equal(await page.locator('.spring-label').count(), 0);
+      assert.equal(await page.locator('#team-name').evaluate(el => getComputedStyle(el).outlineStyle), 'none');
+      assert.equal(await page.locator('#team-name').evaluate(el => getComputedStyle(el).boxShadow), 'none');
+      assert.notEqual(await page.locator('.spring-input').evaluate(el => getComputedStyle(el).boxShadow), 'none');
       assert.equal(await page.locator('.spring-input').evaluate(el => parseFloat(getComputedStyle(el).height)), 38);
       await page.locator('#team-name').fill(mark === '@' ? '아스널😀' : '12345');
       await page.waitForFunction(() => document.querySelector('.spring-layer').textContent.includes(document.querySelector('#team-name').value));

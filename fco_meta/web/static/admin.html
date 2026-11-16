@@ -245,7 +245,7 @@
   </div>
 </div>
 
-<dialog id="drawer" class="drawer" aria-label="질문 상세"><div class="dr">
+<dialog id="drawer" class="drawer" closedby="any" aria-label="질문 상세"><div class="dr">
   <div class="dr-head"><span class="id" id="dr-id"></span>
     <button class="btn" id="dr-copy" type="button" title="질문·trace·답변을 AI 에이전트에 붙여 넣을 수 있게 복사">복사</button>
     <button class="btn" id="dr-save" type="button">저장</button>
@@ -353,7 +353,7 @@ function renderOverview() {
 }
 
 function drawChart() {
-  const svg = $("chart"), days = [...data.by_day].reverse(), keys = Object.keys(LABEL);
+  const svg = $("chart"), days = data.by_day.toReversed(), keys = Object.keys(LABEL);
   const W = svg.clientWidth || 600, H = 180, pad = { l: 32, b: 20, t: 8 };
   const max = Math.max(1, ...days.map((d) => keys.reduce((s, k) => s + (d[k] || 0), 0)));
   const step = (W - pad.l) / Math.max(1, days.length), bw = Math.min(36, step * 0.6);
@@ -428,7 +428,7 @@ function renderTraces() {
 // 한 채팅창(세션)의 질문들을 한 줄로: 첫 질문 · 질문 수 · 시간·토큰·비용 합. 세션 없는 기록(질문 수 제한)은 따로
 function conversations(records) {
   const groups = new Map();
-  for (const r of [...records].reverse()) { // 오래된 것부터 → 대화 안 질문 순서
+  for (const r of records.toReversed()) { // 오래된 것부터 → 대화 안 질문 순서
     const key = r.session || r.id || r.t;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r);
@@ -638,7 +638,16 @@ async function copyOut(text) {
   toast(ok ? "복사했습니다." : "복사하지 못했습니다.");
 }
 $("dr-close").addEventListener("click", () => $("drawer").close());
-$("drawer").addEventListener("click", (e) => e.target === $("drawer") && $("drawer").close()); // 바깥(배경)을 누르면 닫기
+if (!("closedBy" in HTMLDialogElement.prototype)) {
+  const drawer = $("drawer");
+  const outside = (e) => {
+    const r = drawer.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  let pressedOutside = false;
+  drawer.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
+  drawer.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e)) drawer.close(); });
+}
 $("drawer").addEventListener("close", () => document.querySelectorAll("tr.sel").forEach((n) => n.classList.remove("sel")));
 
 $("login").querySelector("form").addEventListener("submit", (ev) => {

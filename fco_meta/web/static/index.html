@@ -89,11 +89,11 @@
   /* 누르는 순간 살짝 눌린다 (막대 줄은 제외) */
   @media (prefers-reduced-motion: no-preference) { button:not(.row, :disabled):active { transform: scale(.96); } }
   button:disabled { opacity: .5; cursor: wait; }
-  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, textarea:focus-visible, [aria-describedby="tip"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   textarea { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 16px;
              padding: 12px 16px; min-width: 0; transition: border-color .15s; resize: none; line-height: 1.5; }
   textarea::placeholder { color: var(--faint); }
-  textarea:focus { border-color: var(--line-strong); outline: none; }
+  textarea:focus { border-color: var(--line-strong); }
 
   /* formation distribution */
   .dist-head { margin-bottom: 12px; } /* 전환 버튼과 막대 사이 */
@@ -190,7 +190,7 @@
           box-shadow: 0 0 36px -6px rgba(99, 102, 241, .22), 0 0 80px -20px rgba(56, 189, 248, .17); }
   #chat::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
                   background: linear-gradient(135deg, var(--logo-a), var(--logo-b));
-                  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+                  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude; }
   #chat h2 { font-size: 18px; font-weight: 600; }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px 12px; max-height: 60vh; }
   /* 넓은 화면: 챗봇 칸이 화면 높이를 채우고 입력창은 맨 아래 (#log 뒤에 와야 60vh 제한을 푼다) */
@@ -429,7 +429,7 @@
         <span class="hint" id="team-hint" role="alert"></span></div>
       <ul id="cmd-menu" role="listbox" aria-label="명령어" hidden></ul>
       <button type="button" id="jump" aria-label="맨 아래로" hidden>…</button>
-      <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg class="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></button></div>
+      <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" aria-label="질문" aria-controls="cmd-menu" aria-haspopup="listbox" aria-autocomplete="list" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg class="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></button></div>
     </form>
   </section>
   </div>
@@ -452,7 +452,7 @@
     </a>
   </p>
 </footer>
-<div id="tip" hidden></div>
+<div id="tip" role="tooltip" hidden></div>
 
 <script type="module">
 import { mountSpringInput } from "/static/spring-input.js";
@@ -502,6 +502,16 @@ function showTip(ev, text) {
 }
 const hideTip = () => { tip.hidden = true; };
 const hover = (node, text) => {
+  node.tabIndex = 0;
+  node.setAttribute("aria-describedby", "tip");
+  const show = () => {
+    const r = node.getBoundingClientRect();
+    showTip({ clientX: r.left, clientY: r.bottom + 24 }, text);
+  };
+  node.addEventListener("focus", show);
+  node.addEventListener("blur", hideTip);
+  node.addEventListener("click", show);
+  node.addEventListener("keydown", (ev) => { if (ev.key === "Escape") hideTip(); });
   node.addEventListener("mousemove", (ev) => showTip(ev, text));
   node.addEventListener("mouseleave", hideTip);
   return node;
@@ -580,10 +590,17 @@ async function loadChart() {
 // 보기 전환 토글 (분포·스쿼드 같은 모양): 누르면 그 쪽이 밝아지고 onChange
 function mountPills(container, items, { value = items[0].value, onChange, ariaLabel = "보기 전환" } = {}) {
   const seg = el("div", { class: "seg", role: "radiogroup", ariaLabel });
-  const set = (v) => buttons.forEach((b, i) => { b.classList.toggle("on", items[i].value === v); b.setAttribute("aria-checked", String(items[i].value === v)); });
-  const buttons = items.map((item) => {
+  const set = (v) => buttons.forEach((b, i) => { b.classList.toggle("on", items[i].value === v); b.setAttribute("aria-checked", String(items[i].value === v)); b.tabIndex = items[i].value === v ? 0 : -1; });
+  const buttons = items.map((item, i) => {
     const b = el("button", { type: "button", text: item.label, role: "radio" });
     b.addEventListener("click", () => { if (b.classList.contains("on")) return; set(item.value); onChange?.(item.value); });
+    b.addEventListener("keydown", (ev) => {
+      const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+      if (!delta && ev.key !== "Home" && ev.key !== "End") return;
+      ev.preventDefault();
+      const next = ev.key === "Home" ? 0 : ev.key === "End" ? buttons.length - 1 : (i + delta + buttons.length) % buttons.length;
+      buttons[next].focus(); buttons[next].click();
+    });
     return b;
   });
   seg.append(...buttons);
@@ -1081,20 +1098,27 @@ const COMMANDS = [
   ["/help", "명령어 안내 (새 탭)"],
 ];
 let cmdShown = [], cmdIndex = 0;
+function closeCmdMenu() {
+  $("cmd-menu").hidden = true;
+  $("msg").removeAttribute("aria-activedescendant");
+}
+
 function updateCmdMenu() {
   const v = $("msg").value;
   cmdShown = /^\/[^\n]*$/.test(v) ? COMMANDS.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
   cmdIndex = Math.min(cmdIndex, Math.max(cmdShown.length - 1, 0));
   $("cmd-menu").hidden = !cmdShown.length;
+  if (cmdShown.length) $("msg").setAttribute("aria-activedescendant", `cmd-${cmdIndex}`);
+  else closeCmdMenu();
   $("cmd-menu").replaceChildren(...cmdShown.map(([c, desc], i) => {
-    const li = el("li", { role: "option", ariaSelected: String(i === cmdIndex) }, el("b", { text: c }), el("span", { text: desc }));
+    const li = el("li", { id: `cmd-${i}`, role: "option", ariaSelected: String(i === cmdIndex) }, el("b", { text: c }), el("span", { text: desc }));
     li.addEventListener("pointerdown", (ev) => { ev.preventDefault(); pickCmd(c); }); // 입력창 포커스를 잃지 않게
     return li;
   }));
 }
 // 고르면 입력창에 채우기만 한다 (실행은 Enter로). /model은 바로 모델 선택창
 function pickCmd(c) {
-  $("msg").value = c + " "; cmdShown = []; $("cmd-menu").hidden = true;
+  $("msg").value = c + " "; cmdShown = []; closeCmdMenu();
   $("msg").focus(); $("msg").setSelectionRange($("msg").value.length, $("msg").value.length);
   if (c === "/model") { $("msg").value = ""; pickModel(); } // 모델 선택창
 }
@@ -1107,16 +1131,16 @@ function cmdKeys(ev) {
     $("cmd-menu").classList.add("kb"); updateCmdMenu();
   } else if (ev.key === "Enter" && !ev.shiftKey) {
     const c = cmdShown[cmdIndex][0], v = $("msg").value.trim();
-    if (v === c || v.startsWith(c + " ")) { $("cmd-menu").hidden = true; return false; } // 다 친 명령어는 그대로 실행
+    if (v === c || v.startsWith(c + " ")) { closeCmdMenu(); return false; } // 다 친 명령어는 그대로 실행
     pickCmd(c);
   } else if (ev.key === "Tab") pickCmd(cmdShown[cmdIndex][0]);
-  else if (ev.key === "Escape") $("cmd-menu").hidden = true;
+  else if (ev.key === "Escape") closeCmdMenu();
   else return false;
   ev.preventDefault();
   return true;
 }
 $("msg").addEventListener("input", () => { cmdIndex = 0; $("cmd-menu").classList.remove("kb"); updateCmdMenu(); });
-$("msg").addEventListener("blur", () => { $("cmd-menu").hidden = true; });
+$("msg").addEventListener("blur", () => { closeCmdMenu(); });
 $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Enter는 줄바꿈 (한글 조합 중인 Enter는 무시)
   if (cmdKeys(ev)) return; // 명령어 목록이 열려 있으면 ↑↓·Enter·Tab·Esc는 목록이
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {

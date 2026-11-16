@@ -55,3 +55,4 @@ docs/TROUBLESHOOTING.md
 !tests/test_trace.cjs
 
 !tests/test_spring_input.cjs
+!tests/test_modern_web.cjs
