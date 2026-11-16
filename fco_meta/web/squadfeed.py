@@ -54,7 +54,8 @@ def squad_view(result: dict[str, Any]) -> dict[str, Any]:
     """A squad tool result as the chat shows it on its pitch: {title, formation, team_color, players (placed), salary, price}."""
     formation = result.get("formation")
     return {"title": f"{result.get('team_color') or '랭커'} {formation or ''}".strip(), "formation": formation, "team_color": result.get("team_color"),
-            "players": place(lineup_of(result), formation), "salary": result.get("total_salary"), "price": result.get("total_price")}  # fmt: skip
+            "players": place(lineup_of(result), formation), "salary": result.get("total_salary"),
+            "price": result.get("total_value") or result.get("total_price")}  # fmt: skip  (가진 카드 시세까지: 구단가치)
 
 
 def squad_link(placed: list[dict[str, Any]], formation: str, title: str) -> str:

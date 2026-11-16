@@ -2494,6 +2494,16 @@ class Toolbox:
                                if (mine := [o for o in opts if name in "".join((o["entry"]["name"] or "").split())])} for name in must},
         )  # fmt: skip
 
+    @staticmethod
+    def _squad_value(chosen: list[dict[str, Any] | None], buying: int) -> dict[str, Any]:
+        """{'total_value_bp', 'total_value'} when the lineup has owned cards: what they are worth at their grade added to
+        the buying total (total_price leaves them at 0, so the budget is only what is bought)."""
+        owned = [c for c in chosen if c and c.get("owned")]
+        if not owned:
+            return {}
+        value = buying + sum(_price_bp(c["card"]) or 0 for c in owned)
+        return {"total_value_bp": value, "total_value": format_bp(value)}
+
     def _squad_result(
         self, sq: _Squad, chosen: list[dict[str, Any] | None], checking: bool = False
     ) -> dict[str, Any]:
@@ -2556,11 +2566,13 @@ class Toolbox:
             "total_price_bp": total("price"),
             "total_price": format_bp(total("price")),
             "total_salary": total("salary"),
+            **self._squad_value(chosen, total("price")),
             "definitions": {
                 "usage_rate": "표본 랭커 중 이 시즌 카드를 이 역할로 선발 기용한 비율 (rankers = 그 랭커 수)",
                 "price_at_most_used_grade": "랭커들이 그 카드를 가장 많이 쓴 강화 단계의 최근 수집 시세",
                 "layout": "slots로 준 자리, 아니면 그 포메이션으로 실제 경기한 랭커 스쿼드에서 가장 흔한 역할 구성",
-                "total_price·total_salary": "시세·급여가 수집된 선수만 더한 값",
+                "total_price·total_salary": "시세·급여가 수집된 선수만 더한 값. total_price는 새로 살 카드만 (가진 카드 owned는 0)",
+                "total_value": "가진 카드가 있을 때만: 가진 카드의 그 강화 시세까지 더한 스쿼드 전체 시세",
                 "ovr·bonus": "ovr = 그 자리·강화의 OVR에 bonus를 더한 경기 속 OVR. bonus = 선발 +4, 팀컬러(클럽·국가 11명 +4·8명+ +3, "
                              "시즌 단일 8명+ +3), 강화 팀케미(백금 +5·금 +4·은 +3, 그 등급 이상 8명+)로 모든 능력치에 더해지는 값",
             },

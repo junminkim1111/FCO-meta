@@ -621,6 +621,8 @@ def test_squad_draft_shows_leftover_upgrades_and_owned_cards(toolbox):  # noqa: 
     picks = [{"role": "DM", "player": "볼란치R", "season": "S250", "owned": True}, {"role": "DM", "player": "볼란치L"}]
     c = run(toolbox, "check_squad", {**args, "picks": picks, "spend": False})
     assert c["ok"] and c["owned"]["players"] == ["볼란치R"] and c["total_price_bp"] < r["total_price_bp"]
+    # 구단가치(total_value)는 가진 카드 시세까지: 추천 스쿼드 패널의 총 금액은 이 값 (총액은 살 카드만)
+    assert c["total_value_bp"] == r["total_price_bp"] and "total_value" not in r
     # 모델이 고른 강화로 예산이 남으면 check_squad도 남는 돈으로 올린다 (가진 카드는 그대로) — 예전엔 27억을 남긴 채 답했다
     c = run(toolbox, "check_squad", {**args, "picks": picks})
     assert c["ok"] and [(x["player"], x["to"]) for x in c["raised_grades"]] == [("볼란치L", "7강")]
