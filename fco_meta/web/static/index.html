@@ -883,6 +883,7 @@ const headers = () => ({ "Content-Type": "application/json" });
 let inflight = null;
 function setBusy(ctrl) {
   inflight = ctrl;
+  if (ctrl) setHint(""); else randomHint(); // 답을 만드는 동안엔 예시를 비운다 (끝나면 send가 다음 질문으로 덮어쓸 수 있다)
   beam.set(!!ctrl);
   $("send").type = ctrl ? "button" : "submit";
   $("send").toggleAttribute("data-busy", !!ctrl); // 위쪽 화살표 ↔ 정지 사각형
@@ -1014,7 +1015,8 @@ async function send(text) {
   }
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
-  if (!ctrl.signal.aborted) $("msg").placeholder = splitNext(answer)[1] || DEFAULT_HINT; // 다음 질문이 없으면 기본 안내 (Tab은 채우지 않음)
+  const next = !ctrl.signal.aborted && splitNext(answer)[1];
+  if (next) setHint(next, true); // 다음 질문이 없으면 setBusy(null)이 고른 무작위 안내 그대로
   if (used) bubble.after(el("div", { class: "applied", text: modelText(used) }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
   if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId, built));
@@ -1175,13 +1177,23 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
     ev.preventDefault();
     $("chat-form").requestSubmit();
-  } else if (ev.key === "Tab" && !ev.shiftKey && !$("msg").value && $("msg").placeholder !== DEFAULT_HINT) {
+  } else if (ev.key === "Tab" && !ev.shiftKey && !$("msg").value && tabFill) {
     ev.preventDefault(); // 빈 입력창에서 Tab = 흐리게 보이는 예시 질문을 그대로 채운다 (Shift+Tab은 원래대로 이동)
-    $("msg").value = $("msg").placeholder;
+    $("msg").value = tabFill;
     $("msg").dispatchEvent(new Event("input"));
   }
 });
-const DEFAULT_HINT = $("msg").placeholder; // 예시를 못 불러왔을 때의 기본 안내 ("무엇이든 물어보세요")는 채우지 않는다
+// 입력창 안내: 20% 명령어·팀 안내, 10% 한 줄 소개, 70% 예시 질문(static/examples.txt) 중 하나. Tab으로 채우는 건 예시 질문만
+const DEFAULT_HINT = $("msg").placeholder; // 예시를 못 불러왔을 때 ("무엇이든 물어보세요")
+let examples = [], tabFill = "";
+function setHint(text, fill = false) { $("msg").placeholder = text; tabFill = fill ? text : ""; }
+function randomHint() {
+  const r = Math.random();
+  if (r < 0.2) return setHint("/로 명령어를 실행하고 @구단주명 또는 #스쿼드ID로 팀을 첨부할 수 있어요.");
+  if (r < 0.3) return setHint("FCLM과 함께 더욱 강력한 팀을 구성하세요");
+  if (!examples.length) return setHint(DEFAULT_HINT);
+  setHint(examples[Math.floor(Math.random() * examples.length)], true);
+}
 // @닉네임: 빈 입력창에 @를 치면 위에 작은 칸이 뜨고, 그 유저의 최근 경기 선발 11명을 불러와 다음 질문에 붙인다 (멘션처럼 그 질문 한 번)
 // #피드ID: 같은 칸으로 스쿼드메이커 피드의 선발 11명을 붙인다
 let team = null; // 붙인 팀 { nickname, mention, label }
@@ -1453,12 +1465,11 @@ $("chat-form").addEventListener("submit", (ev) => {
   if ($("chat").classList.contains("comparing")) closeCompare(); // 비교를 본 뒤 다음 질문은 원래 채팅으로
   send(text);
 });
-// 입력창 안내: 예시 질문(static/examples.txt) 중 하나를 무작위로
 fetch("/static/examples.txt").then((r) => r.text()).then((t) => {
-  const qs = t.split("\n").filter((q) => q.trim());
-  $("msg").placeholder = qs[Math.floor(Math.random() * qs.length)];
+  examples = t.split("\n").filter((q) => q.trim());
+  if (!inflight) randomHint();
 }).catch(() => {});
-say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.");
+say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다.");
 
 mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
   ariaLabel: "분포 보기 전환",
