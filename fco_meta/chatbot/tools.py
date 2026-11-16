@@ -625,7 +625,8 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "사용자 팀(@구단주명 블록) 진단을 한 번에: 선발마다 그 팀컬러(·포메이션) 랭커들이 그 자리에 그 선수를 얼마나 쓰는지(사용률 순위)와 "
             "더 많이 쓰는 선수(최대 3명, 카드·시세·급여)를 준다. 팀 평가·약점·업그레이드할 자리 질문은 이 도구 한 번으로 시작한다 "
-            "(선수마다 get_player_detail·recommend_players를 부르지 않는다)"
+            "(선수마다 get_player_detail·recommend_players를 부르지 않는다). 급여를 비울 자리를 물으면 free_salary(비울 급여)를 "
+            "주어 salary_savers(한 자리만 바꿔 그만큼 비우는 교체: 같은 선수의 급여 낮은 시즌, 급여 낮은 다른 선수)를 받는다"
         ),
         "input_schema": None,
     },
@@ -848,7 +849,8 @@ for _tool in TOOLS:
             "type": "boolean", "description": "예산을 주면 남는 돈으로 picks의 강화를 OVR이 많이 오르는 것부터 올린다 (기본 true, 아끼라고 하면 "
             "false). 올린 카드는 결과의 raised_grades"}}, "required": ["picks"]}
     elif _tool["name"] == "diagnose_team":  # 블록의 선발을 그대로 picks로, 팀컬러 줄·포메이션을 조건으로
-        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **{k: _SQUAD_ARGS["properties"][k] for k in ("team_color", "formation")}},
+        _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **{k: _SQUAD_ARGS["properties"][k] for k in ("team_color", "formation")},
+                                                               "free_salary": {"type": "integer", "description": "비워야 하는 급여 (예: '급여 1을 비워야' = 1)"}},
                                  "required": ["picks"]}  # fmt: skip
 
 JUDGE_TOOLS = ("squad_candidates", "check_squad")  # 큰 모델: 도구의 초안을 사용자 요청에 맞게 고친다
@@ -2182,9 +2184,11 @@ class Toolbox:
             out["owned"] = {"players": owned, "note": "이미 가진 카드라 총액·남은 예산에서 시세를 뺌"}
         return {"ok": not problems, "problems": problems, **out}
 
-    def diagnose_team(self, picks: list[dict[str, Any]], team_color: str | None = None, formation: str | None = None) -> dict[str, Any]:
+    def diagnose_team(self, picks: list[dict[str, Any]], team_color: str | None = None, formation: str | None = None,
+                      free_salary: int | None = None) -> dict[str, Any]:  # fmt: skip
         """A user's starting XI against the rankers of its team color, in one call: per starter, its rank among the players
-        rankers use in that role and the players they use more (not already in the team)."""
+        rankers use in that role and the players they use more (not already in the team). With `free_salary`: also the
+        single swaps that free that much salary (salary_savers)."""
         if not isinstance(picks, list) or not all(isinstance(p, dict) for p in picks):
             raise ToolError("picks는 [{role, player, season, grade}] 목록 (사용자 팀 블록의 선발)")
         roles = []
@@ -2209,7 +2213,7 @@ class Toolbox:
                 return False
             return not season or season in "".join((o["card"]["season"] or "").split()).casefold()
 
-        slots = []
+        slots, savers = [], []
         for pick, name, role in zip(picks, names, roles):
             # 그 자리에 쓰인 시즌 카드 전부, 많이 쓰인 순 (같은 선수도 시즌이 다르면 다른 카드). 스쿼드 후보는 선수당 가장 많이
             # 쓰인 카드 하나뿐이라, 선수의 카드 목록(entry["cards"])을 펼친다
@@ -2217,7 +2221,7 @@ class Toolbox:
             for o in by_role.get(role, []):
                 for c in o["entry"]["cards"]:
                     if (not sq.fits or sq.season_rule or sq.fits(c["sp_id"])) and all(u["card"]["sp_id"] != c["sp_id"] for u in used):
-                        used.append({**o, "card": c})
+                        used.append({**o, "card": c, "salary": c["salary"]})  # 급여는 그 시즌 카드의 것
             used.sort(key=_card_usage, reverse=True)
             season = "".join(str(pick.get("season") or "").split()).casefold()
             at = next((i for i, o in enumerate(used) if same(o, name, season)), None)
@@ -2232,9 +2236,27 @@ class Toolbox:
             others = [o for o in used[:at] if not any(n in "".join((o["entry"]["name"] or "").split()) for n in mine)]
             row["used_more"] = [{"player": o["entry"]["name"], "usage_rate": _card_usage(o), **card(o)} for o in others[:3]]
             slots.append(row)
+            if free_salary and at is not None and used[at]["salary"] is not None:
+                # 급여를 그만큼 덜 쓰는 카드: 같은 선수의 다른 시즌 먼저, 그다음 많이 쓰인 순 (팀의 다른 자리 선수는 제외)
+                now = used[at]["salary"]
+                cheaper = [(same(o, name, ""), o) for o in used  # 랭커 한두 명만 쓴 카드는 근거가 약해 뺀다
+                           if o["salary"] is not None and o["salary"] <= now - int(free_salary) and o["card"]["rankers"] >= 3]
+                cheaper = [(own, o) for own, o in cheaper if own or not any(n in "".join((o["entry"]["name"] or "").split()) for n in mine)]
+                cheaper = [x for x in cheaper if x[0]][:1] + [x for x in cheaper if not x[0]][:2]  # used는 많이 쓰인 순
+                savers += [{"role": role, "from": f"{pick.get('player')} {pick.get('season') or ''} (급여 {now})".replace("  ", " "),
+                            "to": o["entry"]["name"], **card(o), "saves": now - o["salary"], "usage_rate": _card_usage(o),
+                            "rankers": o["card"]["rankers"], "same_player": own}
+                           for own, o in cheaper]  # fmt: skip
+        extra: dict[str, Any] = {}
+        if free_salary:
+            extra["salary_savers"] = sorted(savers, key=lambda s: (not s["same_player"], -s["usage_rate"]))[:10]
+            extra["salary_savers_note"] = (
+                f"한 자리만 바꿔 급여 {free_salary} 이상을 비우는 교체 (같은 선수의 다른 시즌 먼저, 그다음 사용률 순. 랭커 3명 이상이 쓴 카드만). "
+                "사용자가 빼거나 바꾸려는 선수의 자리는 답에서 제외. 표: 자리 | 지금 카드(급여) | 바꿀 카드(급여) | 줄어드는 급여 | 사용률 | 시세"
+            )
         return {
             "team_color": sq.tc_name, "formation": sq.formation or "전체", "data_as_of": sq.first.data_as_of,
-            "sample_size": sq.first.sample_size, "fallback_to_all_formations": sq.first.fallback, "slots": slots,
+            "sample_size": sq.first.sample_size, "fallback_to_all_formations": sq.first.fallback, "slots": slots, **extra,
             "definitions": {
                 "usage_rank": "이 범위 랭커들이 그 자리에 쓴 시즌 카드 중 사용 순위 (1 = 가장 많이 씀, 같은 선수도 시즌이 다르면 다른 카드)",
                 "usage_rate": "표본 랭커 중 이 시즌 카드를 이 자리에 선발로 쓴 비율 (선수가 아니라 그 시즌 카드 기준)",
