@@ -19,8 +19,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from ..chatbot import gemini
@@ -444,6 +446,13 @@ def create_app(
     app.state.conn = conn
     app.state.chat_log = chat_log
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def not_found_page(request: Request, exc: StarletteHTTPException):
+        """Pages that do not exist get the 404 page (home / guide buttons); /api and /static keep their plain errors."""
+        if exc.status_code == 404 and request.method in ("GET", "HEAD") and not request.url.path.startswith(("/api/", "/static/")):
+            return FileResponse(STATIC_DIR / "404.html", status_code=404)
+        return await http_exception_handler(request, exc)
 
     @app.middleware("http")
     async def revalidate(request, call_next):
