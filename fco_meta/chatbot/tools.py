@@ -117,6 +117,7 @@ NEW_TRAITS = {
     "라인 브레이커": ["라브"], "체이서": ["체"], "파이터": ["파"], "트릭스터": ["트릭"], "스피드스터": ["스스"],
     "크로스 포쳐": ["크포", "크로스포처"], "아크로바틱 피니셔": ["아크로", "아크로바틱"], "타이탄": [], "블로커": [],
     "프레데터": [], "레이저 슈터": ["레이저"], "커맨더": [], "2개의 심장": ["두심", "두개의심장", "2심"],
+    "와일드 태클러": ["와태"], "GK 빠른 반응": ["빠른반응"], "GK 공중볼 장악": ["공중볼장악"], "GK 데드아이": ["데드아이"],
 }  # fmt: skip
 TRAIT_NAMES = {"".join(k.split()): k for k in NEW_TRAITS} | {a: k for k, v in NEW_TRAITS.items() for a in v}
 ADD_TRAIT_GRADE = 8
@@ -301,6 +302,9 @@ def _pin_includes(slot_options: list[tuple[str, list[dict[str, Any]]]], must: li
             i = -best[1]  # 같으면 앞 자리
             taken.add(i)
             out[i] = (out[i][0], [o for o in out[i][1] if tag in o["tags"]])
+            pids = {o["entry"]["pid"] for o in out[i][1]}  # 다른 자리에서는 뺀다: 먼저 고르는 자리가 그 선수를 가져가면 이 자리가 빈다
+            out = [(role, opts) if j == i else (role, [o for o in opts if o["entry"]["pid"] not in pids] or opts)
+                   for j, (role, opts) in enumerate(out)]  # fmt: skip
     return out
 
 
@@ -368,6 +372,7 @@ class _Squad:
     slot_options: list[tuple[str, list[dict[str, Any]]]]
     first: Any  # 첫 자리의 top_players 결과 (표본·기준 시각)
     must_season: dict[str, str] = field(default_factory=dict)  # 넣을 선수 중 시즌을 정한 선수 (이름 → 시즌)
+    must_roles: dict[str, dict[str, int]] = field(default_factory=dict)  # 넣을 선수를 랭커들이 쓴 자리 (이름 → 역할 → 랭커 수)
 
 
 MAX_UPGRADES = 2  # recommend_squad의 upgrades: 자리마다 보여 줄 강화·시즌 선택지 수
@@ -2459,6 +2464,8 @@ class Toolbox:
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
             include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
             strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first, must_season=wanted_season,
+            must_roles={name: {role: max(o["entry"]["rankers"] for o in mine) for role, opts in dict(slot_options).items()
+                               if (mine := [o for o in opts if name in "".join((o["entry"]["name"] or "").split())])} for name in must},
         )  # fmt: skip
 
     def _squad_result(
@@ -2572,6 +2579,15 @@ class Toolbox:
                     "note": "사용자가 원해 넣었지만 이 팀컬러·포메이션 랭커들이 그 자리에 이 카드를 쓴 기록이 없음 (사용률 없음, 랭커가 쓴 카드가 없거나 한도에 안 맞아 시세가 있는 다른 카드로 넣음)."
                             " 거절하지 말고 넣은 스쿼드를 보여 주며 기록이 없다고 한 번만 말할 것",
                 }  # fmt: skip
+            elsewhere = {}  # "압데를 LM에": 넣긴 하되 랭커들은 주로 다른 자리에 쓴다고 알린다
+            for (role, _), c in zip(slot_options, chosen):
+                for name in must if c else ():
+                    by_role = sq.must_roles.get(name, {})
+                    top = max(by_role, key=by_role.get, default=None)
+                    if f"include:{name}" in c["tags"] and top and top != role and by_role[top] > by_role.get(role, 0):
+                        elsewhere[c["entry"]["name"]] = f"{role}에 넣음 (이 자리 랭커 {by_role.get(role, 0)}명). 랭커들은 주로 {top}에 씀 ({by_role[top]}명)"
+            if elsewhere:
+                out["include_used_elsewhere"] = {**elsewhere, "note": "요청대로 그 자리에 넣었음. 답에서 이 사실을 한 문장으로 알릴 것"}
             for name, player in got.items():
                 if player is None:
                     card = f" {sq.must_season[name].upper()} 카드" if name in sq.must_season else ""
