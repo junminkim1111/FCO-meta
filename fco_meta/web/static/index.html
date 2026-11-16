@@ -154,7 +154,7 @@
   .pp .gr.bronze { background: linear-gradient(140deg, #de946b, #ad5f42); color: #7e3f27; }
   .pp .gr.silver { background: linear-gradient(140deg, #d8d9dc, #b8bdca); color: #4e545e; }
   .pp .gr.gold { background: linear-gradient(140deg, #f9dd62, #dca908); color: #695100; }
-  .pp .gr.platinum { background: #dfe3f5 url(https://ssl.nexon.com/s2/game/fc/online/obt/datacenter/bg_plt.png) 0 0 / 100% 100%; color: #2d2b43; }
+  .pp .gr.platinum { background: #dfe3f5 url(https://ssl.nexon.com/s2/game/fc/online/obt/datacenter/bg_plt.png) 0 0 / 100% 100%; color: #000; }
   .pp .nm { margin-top: 4px; max-width: 100%; font-size: 14px; color: var(--pitch-name); text-align: center; white-space: nowrap; overflow: hidden;
             text-overflow: ellipsis; text-shadow: var(--name-shadow); display: flex; align-items: center; gap: 2px; }
   .pp .nm img { height: 14px; }
@@ -464,7 +464,7 @@
         <button type="button" id="team-ok" aria-label="팀 불러오기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
         <span class="hint" id="team-hint" role="alert"></span></div>
       <ul id="cmd-menu" role="listbox" aria-label="명령어" hidden></ul>
-      <button type="button" id="jump" hidden>↓ 새 답</button>
+      <button type="button" id="jump" aria-label="맨 아래로" hidden>…</button>
       <div id="msg-beam"><span id="team-chip" hidden><span id="team-chip-name"></span><button type="button" id="team-off" aria-label="팀 떼기">✕</button></span><textarea id="msg" rows="3" maxlength="500" placeholder="무엇이든 물어보세요"></textarea><button type="submit" id="send" aria-label="보내기"><svg class="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></button></div>
     </form>
   </section>
@@ -912,6 +912,7 @@ async function send(text) {
     if (stick) log.scrollTop = log.scrollHeight;
     else $("jump").hidden = false;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
+    if (!frame && !inflight) $("jump").hidden = true; // 답이 다 써지면 '…'를 지운다
   };
   // 기다리는 문구: 도구에 맞는 문구, 1분·1분 30초가 넘으면 오래 걸린다는 안내 (수치 재검토 안내는 그대로)
   const started = performance.now(), longWait = LONG_WAIT[Math.floor(Math.random() * LONG_WAIT.length)];
@@ -986,6 +987,7 @@ async function send(text) {
   }
   timers.forEach(clearTimeout);
   setBusy(null);
+  if (!frame) $("jump").hidden = true;
   if (mine && shownSquad === mine) built || mine.players.length ? squadStatus(null) : showSquad(null); // 다 짰거나 원래 있던 스쿼드면 진행 문구만 떼고, 빈 칸이면 닫는다
   if (ctrl.signal.aborted && !answer) {
     stopOrb();
@@ -1328,7 +1330,7 @@ function closeCompare() {
   morph(() => { $("chat").classList.remove("comparing"); $("compare").hidden = true; });
 }
 $("compare-close").addEventListener("click", closeCompare);
-// '↓ 새 답': 누르면 맨 아래로, 맨 아래 가까이 내려오면 저절로 사라진다
+// '…': 답이 써지는 중에 위로 올려 읽으면 뜬다. 누르면 맨 아래로, 맨 아래 가까이 내려오면 저절로 사라진다
 $("jump").addEventListener("click", () => {
   const log = $("log");
   log.scrollTo({ top: log.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
