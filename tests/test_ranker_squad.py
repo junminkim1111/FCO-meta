@@ -1,21 +1,9 @@
 import json
-import os
-import sqlite3
-from pathlib import Path
 
 import pytest
+from test_top_rankers import setup
 
-from fco_meta.chatbot.tools import Toolbox
-
-# frozen eval DB (sha256 0dc263f2...); other machines point FCO_BASELINE_DB at their copy
-DB = Path(os.environ.get("FCO_BASELINE_DB", "/Users/junmin/fco-meta/reports/orca/run_e7420413ea3c/baseline.sqlite"))
-
-
-@pytest.fixture(scope="module")
-def tb():
-    if not DB.exists():
-        pytest.fail(f"frozen baseline DB missing: {DB} (set FCO_BASELINE_DB)")
-    return Toolbox(sqlite3.connect(f"file:{DB}?mode=ro", uri=True))
+from fco_meta.chatbot import Toolbox
 
 
 def get(tb, rank):
@@ -24,13 +12,29 @@ def get(tb, rank):
     return json.loads(content)
 
 
-def test_rank_59(tb):
-    r = get(tb, 59)
-    assert (r["formation"], r["team_color"]) == ("4-2-2-1-1", "브라질")
-    assert len(r["lineup"]) == 11 and {c["player"] for c in r["lineup"]} >= {"에데르송", "카카"}
+def test_collected_rank_returns_exactly_its_starters(tmp_path, fixture_html):
+    storage, as_of, targets = setup(tmp_path, fixture_html, top=10)
+    tb = Toolbox(storage.conn, min_sample=1)
+    for t in targets:
+        r = get(tb, t.rank)
+        stored = storage.conn.execute(
+            "SELECT team_color_name FROM ranker_snapshot WHERE data_as_of = ? AND mode = '1vs1' AND rank = ?", (as_of, t.rank)
+        ).fetchone()[0]
+        starters = {
+            row[0]
+            for row in storage.conn.execute(
+                "SELECT p.sp_id FROM ranker_squad q JOIN match_player p ON p.match_id = q.match_id AND p.ouid = q.ouid AND p.starter = 1"
+                " WHERE q.data_as_of = ? AND q.rank = ? AND q.match_order = 0 AND q.accepted = 1",
+                (as_of, t.rank),
+            )
+        }
+        assert (r["rank"], r["formation"], r["team_color"]) == (t.rank, t.formation, stored)
+        assert len(r["lineup"]) == 11 and {c["sp_id"] for c in r["lineup"]} == starters
+        assert all({"position", "player", "season", "grade"} <= c.keys() for c in r["lineup"])
 
 
-@pytest.mark.parametrize("rank", [0, 123, 20000])
-def test_not_collected_has_no_lineup(tb, rank):
-    r = get(tb, rank)
-    assert not r["lineup"] and "lineup" in r and r["rank"] == rank
+@pytest.mark.parametrize("rank", [0, 15, 20000])  # 15위: 랭킹엔 있으나 스쿼드 미수집
+def test_not_collected_has_no_lineup(tmp_path, fixture_html, rank):
+    storage, _, _ = setup(tmp_path, fixture_html, top=10)
+    r = get(Toolbox(storage.conn, min_sample=1), rank)
+    assert r["rank"] == rank and not r["lineup"] and "formation" not in r
