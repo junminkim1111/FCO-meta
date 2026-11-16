@@ -51,3 +51,7 @@ docs/TROUBLESHOOTING.md
 !tests/test_llm.py
 !tests/test_web.py
 !tests/test_chatbot_tools.py
+
+!tests/test_trace.cjs
+
+!tests/test_spring_input.cjs

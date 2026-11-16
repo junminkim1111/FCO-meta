@@ -1,0 +1,22 @@
+/* Motion and spring values adapted from DesignBookmark Springy Input. */
+#team-box .spring-input { height: 38px; max-width: 100%; border: 1px solid #60a5fa; border-radius: 999px; background: var(--field); overflow: hidden; }
+#team-box .spring-input:focus-within { box-shadow: 0 0 0 3px rgba(96,165,250,.25); }
+#team-box .spring-input input { position: absolute; left: 14px; top: 7px; width: calc(100% - 58px); height: 24px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: transparent; caret-color: transparent; line-height: 24px; font-kerning: none; letter-spacing: 0; }
+#team-box .spring-input input::placeholder { color: var(--muted); }
+.spring-view { position: absolute; left: 14px; right: 44px; top: 7px; height: 24px; overflow: hidden; pointer-events: none; }
+.spring-layer { position: absolute; height: 24px; line-height: 24px; white-space: pre; }
+.spring-char { display: inline-block; font-size: 14px; font-kerning: none; transform-origin: 50% 80%; }
+.spring-caret { position: absolute; left: 14px; top: 9px; height: 20px; width: 2px; border-radius: 2px; background: var(--text); pointer-events: none; }
+.spring-caret.blink { animation: spring-blink 1s steps(1) infinite; }
+.spring-done { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; pointer-events: none; font-size: 14px; }
+.spring-input.ok .spring-done { opacity: 1; transition: opacity .3s .15s; }
+#team-box .spring-input.ok { border-color: var(--accent); background: var(--panel-strong); }
+.spring-input.ok :is(input, label, button, .spring-view, .spring-caret) { visibility: hidden; }
+#team-box .spring-input.err { border-color: var(--error); }
+#team-box .spring-input.composing input { color: var(--text); caret-color: var(--text); }
+.spring-input.composing :is(.spring-view, .spring-caret) { visibility: hidden; }
+@keyframes spring-blink { 50% { opacity: 0; } }
+#team-box button[aria-busy="true"] svg { visibility: hidden; }
+#team-box button[aria-busy="true"]::after { content: ""; position: absolute; inset: 0; margin: auto; box-sizing: border-box; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spring-loading .8s linear infinite; }
+@keyframes spring-loading { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { #team-box button[aria-busy="true"]::after { animation: none; } }
