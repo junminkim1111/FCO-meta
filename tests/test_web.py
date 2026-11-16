@@ -466,7 +466,7 @@ def test_heavy_words():
 
 
 class FakeJev:
-    """Jev's Decisions answer by question: {question: scope}."""
+    """Jev's Decisions answer by question: {question: scope} or {question: "fco light"} (a plain lookup)."""
 
     def __init__(self, answers):
         self.answers, self.states = answers, []
@@ -476,10 +476,12 @@ class FakeJev:
 
         question = json["state"].split("현재 질문: ")[-1]
         self.states.append(json["state"])
-        scope = self.answers[question]
+        scope, *light = self.answers[question].split()
         scopes = {s: 0.01 for s in ("fco", "greeting", "off_topic", "attack")} | {scope: 0.97}
+        thinking = {"light": 0.95, "think": 0.05} if light else {"light": 0.05, "think": 0.95}
         body = {"answers": {
             "scope": {"type": "choice", "choice": scope, "probabilities": scopes, "confidence": 0.9},
+            "thinking": {"type": "choice", "choice": "light" if light else "think", "probabilities": thinking, "confidence": 0.9},
         }}  # fmt: skip
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
 
@@ -513,6 +515,33 @@ def test_jev_blocks_out_of_scope_and_picks_the_model(db, tmp_path, monkeypatch):
                                         {"escalate_to": web_app.FLASH_MODEL}, {"escalate_to": web_app.FLASH_MODEL}]  # fmt: skip
     assert jev.states[-2] == "이전 질문: 이 스쿼드 업그레이드\n현재 질문: 그럼 더 싸게"  # 이어지는 말은 앞 질문과 함께 판단
     assert sorted(r["outcome"] for r in log.pending) == ["blocked", "blocked", "ok", "ok", "ok", "ok"]
+
+
+def test_thinking_is_off_only_for_a_first_plain_lookup_without_a_team(db, tmp_path, monkeypatch):  # noqa: F811
+    from datetime import datetime, timezone
+
+    import fco_meta.web.app as web_app
+    from fco_meta.web.team import Team
+
+    asked = []
+    jev = FakeJev({"WS 호나우두 급여 얼마야": "fco light", "UC 마네 시세": "fco light", "안녕": "greeting light", "아스널 짜줘": "fco"})
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(web_app, "_http", lambda: jev)
+    monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Recorder(f"luna{reasoning}", asked))
+    team = Team("레몬", "공식경기", datetime(2026, 10, 9, tzinfo=timezone.utc), "4-2-3-1", [], totals={"salary": 0, "price": "0", "price_bp": 0, "unpriced": 0})
+    monkeypatch.setenv("NEXON_API_KEY", "test")
+    monkeypatch.setattr(web_app, "_nexon", lambda: None)
+    monkeypatch.setattr(web_app, "fetch_team", lambda *a, **k: team)
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="gemini"))
+
+    _, done = ask(client, "WS 호나우두 급여 얼마야")  # 첫 질문 · 단순 조회 → 생각 끔
+    ask(client, "UC 마네 시세", session_id=done["session_id"])  # 같은 세션 두 번째 질문은 단순 조회여도 생각 켬
+    ask(client, "아스널 짜줘")  # 새 세션이어도 단순 조회가 아니면 생각 켬
+    sid = client.post("/api/team", json={"nickname": "레몬"}).json()["session_id"]
+    ask(client, "안녕", session_id=sid)  # 팀(@·#)을 붙인 첫 질문은 생각 켬
+    assert [n for n, _, _ in asked] == ["lunaFalse", "lunaTrue", "lunaTrue", "lunaTrue"]
+    client.post("/api/chat", json={"message": "안녕", "mode": "luna_r"})  # /model로 고른 모델은 그대로
+    assert asked[-1][0] == "lunaTrue"
 
 
 def test_without_jev_the_keyword_rule_routes(db, tmp_path, monkeypatch):  # noqa: F811

@@ -602,7 +602,9 @@ def create_app(
                     elif _deepseek_ready():  # 기본은 GPT-6 Luna 생각 켬 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
                         # 2026-11-15 DeepSeek과 같은 하네스로 비교: 품질은 비슷하고 비용은 약 2.5분의 1 (DeepSeek은 한글이 안 깨지는 제공사가 비싸다)
                         # 2026-11-16 생각 켬: 불필요한 도구 호출이 줄어 비용은 크게 늘지 않고 의도 구분이 나아짐 (reports/luna-thinking-20261116)
-                        key, options = "luna_r", {"deadline": LONG_DEADLINE}
+                        # 생각 끔은 세션 첫 질문 · 팀(@·#) 없음 · Jev가 단순 조회(light)라고 확신할 때만. 나머지는 모두 생각 켬
+                        light = bool(route and route.light and first and not team)
+                        key, options = ("luna" if light else "luna_r"), {"deadline": LONG_DEADLINE}
                         why = f"{route.describe() if route else 'Jev 없음'} → {LUNA_LABEL[key]}"
                     entry["route"] = why
                 else:  # deep·luna (OpenRouter)
