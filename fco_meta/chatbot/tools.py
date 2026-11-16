@@ -2213,6 +2213,8 @@ class Toolbox:
                 return False
             return not season or season in "".join((o["card"]["season"] or "").split()).casefold()
 
+        # 사용자 카드의 급여: 랭커가 쓰지 않은 카드여도 카드 표에서 (없으면 아래에서 랭커 카드의 값)
+        own = [self._season_card(n, str(p.get("season"))).get("salary") if n and p.get("season") else None for p, n in zip(picks, names)]
         slots, savers = [], []
         for pick, name, role in zip(picks, names, roles):
             # 그 자리에 쓰인 시즌 카드 전부, 많이 쓰인 순 (같은 선수도 시즌이 다르면 다른 카드). 스쿼드 후보는 선수당 가장 많이
@@ -2236,9 +2238,9 @@ class Toolbox:
             others = [o for o in used[:at] if not any(n in "".join((o["entry"]["name"] or "").split()) for n in mine)]
             row["used_more"] = [{"player": o["entry"]["name"], "usage_rate": _card_usage(o), **card(o)} for o in others[:3]]
             slots.append(row)
-            if free_salary and at is not None and used[at]["salary"] is not None:
+            now = own[len(slots) - 1] if own[len(slots) - 1] is not None else (used[at]["salary"] if at is not None else None)
+            if free_salary and now is not None:
                 # 급여를 그만큼 덜 쓰는 카드: 같은 선수의 다른 시즌 먼저, 그다음 많이 쓰인 순 (팀의 다른 자리 선수는 제외)
-                now = used[at]["salary"]
                 cheaper = [(same(o, name, ""), o) for o in used  # 랭커 한두 명만 쓴 카드는 근거가 약해 뺀다
                            if o["salary"] is not None and o["salary"] <= now - int(free_salary) and o["card"]["rankers"] >= 3]
                 cheaper = [(own, o) for own, o in cheaper if own or not any(n in "".join((o["entry"]["name"] or "").split()) for n in mine)]
@@ -2704,10 +2706,11 @@ class Toolbox:
 
     def _season_card(self, name: str, season: str) -> dict[str, Any]:
         """That season's card of the player (any card, used by rankers or not): salary, OVR, position, price per grade."""
-        key = "".join(season.split()).upper()
+        norm = lambda v: re.sub(r"[\W_]", "", v or "").upper()  # noqa: E731 — 'EVO-CU' = 'EVO_CU', '25 UCL' = '25UCL'
+        key = norm(season)
         rows = [r for r in self.conn.execute(
             "SELECT spid, name, season_code, main_position, ovr, salary FROM card WHERE REPLACE(name, ' ', '') LIKE ?",
-            (f"%{''.join(name.split())}%",)) if "".join((r["season_code"] or "").split()).upper() == key]  # fmt: skip
+            (f"%{''.join(name.split())}%",)) if norm(r["season_code"]) == key]  # fmt: skip
         if not rows:
             return {"season": season, "note": f"'{name}' 선수의 {season} 카드를 찾지 못함"}
         r = rows[0]
