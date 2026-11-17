@@ -119,9 +119,9 @@ def _players(want: dict[str, Any], result: dict[str, Any] | None, answer: str | 
     if traits := want.get("traits"):
         info = result.get("traits") or {}
         out.append((f"특성 {'·'.join(traits)}", set(traits) <= set(info.get("wanted", [])), str(info.get("wanted"))))
-        if not info.get("can_add_trait"):  # 원래 가진 특성: 추천된 선수마다 그 특성 카드가 있어야
-            missing = [p["name"] for p in result["players"] if not any(set(traits) <= set(c.get("new_traits") or []) for c in p.get("cards", []))]
-            out.append(("추천 선수 모두 그 특성 카드", not missing, ", ".join(missing[:3])))
+        # 원하는 특성 중 하나라도 원래 달린 카드가 추천된 선수마다 있어야 (두 개 달린 카드는 아직 없다)
+        missing = [p["name"] for p in result["players"] if not any(set(traits) & set(c.get("new_traits") or []) for c in p.get("cards", []))]
+        out.append(("추천 선수 모두 그 특성 카드", not missing, ", ".join(missing[:3])))
     if answer is not None:
         top = result["players"][0]["name"].split()[-1]
         out.append((f"답에 1순위 '{top}'", top in answer, ""))

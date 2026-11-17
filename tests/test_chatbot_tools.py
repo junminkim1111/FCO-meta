@@ -581,7 +581,15 @@ def test_recommend_squad_includes_requested_players(toolbox):  # noqa: F811
     assert r["include"] == {"볼란치R": None} and "ICON 카드를 넣지 못함" in r["note"]
     # 시즌·자리·강화 어느 것도 아닌 값은 조용히 시즌으로 받지 않고 형식을 알려 주는 오류
     content, is_error = toolbox.run("recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "볼란치R:S999"})
-    assert is_error and "'이름:11강'" in content
+    assert is_error and "[{player, role, seasons, grades}]" in content
+    # 목록 형식: 시즌을 여럿 주면 그중 한도에 맞는 카드 (급여 15 이하면 S300 10, 넉넉하면 둘 중 랭커가 더 쓴 카드)
+    many = [{"player": "볼란치R", "role": "DM", "seasons": ["S250", "S300"]}]
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": many, "max_total_salary": 15})
+    assert (r["lineup"][0]["player"], r["lineup"][0]["season"]) == ("볼란치R", "S300")
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": many})
+    assert r["lineup"][0]["player"] == "볼란치R" and r["lineup"][0]["season"] in ("S250", "S300")
+    assert toolbox.run("recommend_squad", {"team_color": "아스널", "slots": "DM", "include": [{"player": "볼란치R", "seasons": ["S999"]}]})[1]
+    assert toolbox.run("recommend_squad", {"team_color": "아스널", "slots": "DM", "include": [{"player": "볼란치R", "role": "중원"}]})[1]
     content, is_error = toolbox.run("recommend_squad", {"team_color": "아스널", "exclude": "없는선수"})
     assert is_error and "없는선수" in content  # 없는 선수를 뺐다고 하지 않는다
 
@@ -879,19 +887,57 @@ def test_min_total_salary_raises_the_salary_with_the_smallest_usage_loss(toolbox
     assert r["total_salary"] == 15
 
 
+def test_full_squads_fill_the_salary_to_cap_minus_five_unless_told(toolbox, monkeypatch):  # noqa: F811
+    from fco_meta.chatbot.tools import SALARY_CAP, SALARY_FILL_GAP
+
+    floors = []
+    real = toolbox._raise_salary
+    monkeypatch.setattr(toolbox, "_raise_salary", lambda sq, chosen, knobs: floors.append(knobs.get("min_total_salary")) or real(sq, chosen, knobs))
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4-2-3-1"})
+    assert floors[0] == SALARY_CAP - SALARY_FILL_GAP and "min_total_salary" not in (r.get("applied") or {})  # 기본값은 사용자의 바람이 아니다
+    floors.clear()
+    run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4-2-3-1", "max_total_salary": 280})
+    assert floors[0] == 280 - SALARY_FILL_GAP  # 상한을 말하면 그 상한 기준
+    floors.clear()
+    run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM,DM", "max_total_salary": 40})
+    assert floors[0] is None  # 두세 자리 조합에는 적용하지 않는다
+
+
+def test_season_code_matches_exactly_before_any_season_containing_it():
+    from fco_meta.chatbot.tools import _season_hits
+
+    names = ["FAC (Football Association Champions)", "CH (Continental Heroes)", "25 TOTS (25 Team Of The Season)", "26 TOTS (26 Team Of The Season)"]
+    assert _season_hits("ch", names, str) == ["CH (Continental Heroes)"]  # FAC의 'Champions'에 걸리지 않는다
+    assert _season_hits("continentalheroes", names, str) == ["CH (Continental Heroes)"]
+    assert _season_hits("tots", names, str) == names[2:]  # 정확한 시즌이 없으면 그 글자가 든 시즌들
+    assert _season_hits("ch", names[:1], str, exact=True) == []  # 'CH'는 그 자체로 시즌이라 FAC로 대신하지 않는다
+
+
+def test_any_trait_and_include_cards_obey_the_slots_trait_wish(toolbox):  # noqa: F811
+    from fco_meta.chatbot.tools import ANY_TRAIT, parse_traits
+
+    assert parse_traits("아무") == [ANY_TRAIT] and parse_traits("라브, 트릭") == ["라인 브레이커", "트릭스터"]
+    # 볼란치L ICON만 트릭스터. "신특 있는 볼란치R"을 DM에 넣으라는데 R 카드엔 신특이 없으면 신특 없는 R을 넣지 않는다
+    toolbox.conn.execute("UPDATE card_detail SET traits = '[\"트릭스터\"]' WHERE spid = 101000011")
+    toolbox.conn.commit()
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "traits": "DM:아무"})
+    assert [(s["player"], s["card"]["new_traits"]) for s in r["lineup"]] == [("볼란치L", ["트릭스터"])]
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "traits": "DM:아무", "include": "볼란치R:DM"})
+    assert all(s["player"] != "볼란치R" for s in r["lineup"] if s.get("player"))
+
+
 def test_squad_trait_knob_keeps_only_cards_with_the_traits(toolbox):  # noqa: F811
-    # 볼란치L ICON만 트릭스터가 달려 있다. 라브까지 "달 수 있는"이면 8강 이상에서 하나를 새로 단다
+    # 볼란치L ICON만 트릭스터가 달려 있다
     toolbox.conn.execute("UPDATE card_detail SET traits = '[\"트릭스터\"]' WHERE spid = 101000011")
     toolbox.conn.execute("INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (101000011, 8, 2000000000, 'x')")
     toolbox.conn.commit()
     args = {"team_color": "아스널", "slots": "DM"}
     r = run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭"})
     assert [(s["player"], s["card"]["new_traits"]) for s in r["lineup"]] == [("볼란치L", ["트릭스터"])]
-    r = run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭,라브", "can_add_trait": True})
-    card = r["lineup"][0]["card"]
-    assert card["added_trait"] == "라인 브레이커" and card["most_used_grade"] == 8 and r["total_price"] == "20억"
-    # 달 수 없으면 그 자리를 채우지 못한다
-    assert run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭,라브"})["lineup"][0]["player"] is None
+    # 트릭 or 라브: 트릭이 달린 L 그대로 (라브는 8강 이상이면 달 수 있다고만, 가격은 그대로), 어느 것도 없으면 그 자리를 채우지 못한다
+    card = run(toolbox, "recommend_squad", {**args, "traits": "DM:트릭,라브"})["lineup"][0]["card"]
+    assert card["new_traits"] == ["트릭스터"] and card["addable_trait"] == "라인 브레이커" and card["most_used_grade"] == 5
+    assert run(toolbox, "recommend_squad", {**args, "traits": "DM:라브,체"})["lineup"][0]["player"] is None
 
 
 def test_diagnose_team_ranks_each_starter_and_shows_who_rankers_use_more(toolbox):  # noqa: F811
@@ -1151,3 +1197,27 @@ def test_owned_grade_keeps_market_price_but_costs_nothing(toolbox):  # noqa: F81
     assert owned["card"]["most_used_grade"] == 5
     assert owned["card"]["price_at_most_used_grade"]["price_bp"] == 900_000_000
     assert result["total_price_bp"] == 300_000_000  # 보유 카드의 시세는 남기되 구매 비용에는 나머지 카드만.
+
+
+def test_structured_args_match_the_old_text_forms(toolbox):  # noqa: F811
+    from fco_meta.chatbot.tools import _legacy_args
+
+    # 도구 스키마의 목록·객체 인자는 입구에서 도구가 읽던 글 형식으로 바뀐다
+    assert _legacy_args({
+        "slots": ["DM", "DM"], "roles": ["ST", "RW"], "exclude": ["벨링엄", "사카"], "save": ["GK"], "invest": ["ST"],
+        "owned": [{"player": "손흥민", "season": "UC", "grade": 10}, {"player": "박지성"}],
+        "prefer": [{"role": "ST", "stat": "키"}, {"role": "RW", "stat": "속력"}],
+        "high_salary": [{"role": "GK"}, {"role": "ST", "min_salary": 25}],
+        "traits": [{"roles": ["RAM", "LAM"], "traits": ["라브", "트릭"]}, {"traits": ["아무"]}],
+    }) == {
+        "slots": "DM,DM", "roles": "ST,RW", "exclude": "벨링엄,사카", "save": "GK", "invest": "ST",
+        "owned": "손흥민:UC:10,박지성", "prefer": "ST:키,RW:속력", "high_salary": "GK,ST:25", "traits": "RAM,LAM:라브,트릭;아무",
+    }  # fmt: skip
+    assert _legacy_args({"traits": ["라브", "트릭"]}) == {"traits": "라브,트릭"}  # recommend_players
+    assert _legacy_args({"slots": "DM,DM"}) == {"slots": "DM,DM"}  # 글 형식은 그대로
+    # 실제 호출도 같은 결과
+    same = [({"slots": ["DM", "DM"], "exclude": ["볼란치R"]}, {"slots": "DM,DM", "exclude": "볼란치R"}),
+            ({"slots": ["DM"], "traits": [{"roles": ["DM"], "traits": ["아무"]}]}, {"slots": "DM", "traits": "DM:아무"})]
+    for new, old in same:
+        a, b = (run(toolbox, "recommend_squad", {"team_color": "아스널", **x}) for x in (new, old))
+        assert [p["player"] for p in a["lineup"]] == [p["player"] for p in b["lineup"]]

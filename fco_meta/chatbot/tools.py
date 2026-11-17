@@ -84,6 +84,7 @@ QUERY_MIN_RANKERS = 3  # query_squads를 평점·승률 등으로 정렬할 때 
 QUERY_MAX_ROWS = 30
 MAX_TEAM_COLOR_INFO = 10  # get_team_color_info가 상세까지 보여 줄 최대 팀컬러 수 (넘으면 이름만)
 SALARY_CAP = 315  # 게임의 팀 급여 상한: 선발 11명은 사용자가 급여 합을 말하지 않으면 이 안에서 고른다 (더 크게 말하면 따르고 경고)
+SALARY_FILL_GAP = 5  # 선발 11명은 급여를 (상한 − 이만큼) 이상 쓴다: 랭커처럼 급여를 남기지 않는다 (min_total_salary의 기본값)
 def _grade(card: dict[str, Any]) -> int:
     """The grade a squad card is quoted at (its price's grade, else the rankers' most used)."""
     return (card.get("price_at_most_used_grade") or {}).get("grade") or card.get("most_used_grade") or 1
@@ -155,8 +156,29 @@ def normalize_formation(value: str | None) -> str | None:
     return matches[0] if len(matches) == 1 else text
 
 
+def _season_hits(want: str, items: list[Any], name_of: Callable[[Any], str | None], exact: bool = False) -> list[Any]:
+    """The items whose season is `want` (spaces and case ignored): the exact code or full name ('ch' = CH, not
+    'FAC (Football Association Champions)'); only when `want` is not itself a season (exact=False), any season
+    containing it ('tots' → 25·26 TOTS)."""
+
+    def parts(name: str | None) -> tuple[str, str]:
+        code, _, long = "".join((name or "").split()).casefold().partition("(")
+        return code, long.rstrip(")")
+
+    hits = [x for x in items if want in parts(name_of(x))]
+    if hits or exact:
+        return hits
+    return [x for x in items if want in "".join((name_of(x) or "").split()).casefold()]
+
+
+ANY_TRAIT = "*"  # traits의 '아무': 신규특성이 하나라도 달린 카드
+ANY_TRAIT_WORDS = {"아무", "아무거나", "any", "*", "신특", "신규특성"}
+
+
 def parse_traits(text: str) -> list[str]:
-    """"라브, 트릭" / "체 파" / "크로스 포처" → 신규특성 이름들."""
+    """"라브, 트릭" / "체 파" / "크로스 포처" → 신규특성 이름들. "아무" → [ANY_TRAIT] (하나라도 달린 카드)."""
+    if "".join(text.split()).casefold() in ANY_TRAIT_WORDS:
+        return [ANY_TRAIT]
     out = []
     for part in re.split(r"[,+/·]+", text):
         words = part.split()
@@ -170,6 +192,37 @@ def parse_traits(text: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def _legacy_args(tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Structured arguments (lists and objects, what the tool schemas ask for) → the text forms the tools parse
+    ('DM,DM', '손흥민:UC:10', 'ST:키', 'GK:25', 'RAM,LAM:라브;CB:파'). Text still passes as it is."""
+
+    def names(v: Any) -> str:
+        return ",".join(str(x) for x in v)
+
+    out = dict(tool_input)
+    for k in ("slots", "roles", "exclude", "save", "invest"):
+        if isinstance(out.get(k), list):
+            out[k] = names(out[k])
+    if isinstance(out.get("owned"), list):  # [{player, season, grade}]
+        out["owned"] = ",".join(":".join(str(x) for x in (o.get("player"), o.get("season") or "", o.get("grade") or "")).rstrip(":")
+                                if isinstance(o, dict) else str(o) for o in out["owned"])  # fmt: skip
+    pairs = {"prefer": ("stat", None), "high_salary": ("min_salary", 0)}  # [{role, stat}] / [{role, min_salary}] (dict {자리: 값}도)
+    for k, (field_, empty) in pairs.items():
+        v = out.get(k)
+        if isinstance(v, dict):
+            v = [{"role": r, field_: x} for r, x in v.items()]
+        if isinstance(v, list):
+            out[k] = ",".join(f"{o.get('role')}:{o[field_]}" if isinstance(o, dict) and o.get(field_) not in (None, empty, "") else
+                              str(o.get("role") if isinstance(o, dict) else o) for o in v)  # fmt: skip
+    traits = out.get("traits")
+    if isinstance(traits, list) and traits and all(isinstance(t, dict) for t in traits):  # [{roles, traits}] (스쿼드 도구)
+        out["traits"] = ";".join(f"{names(t.get('roles') or [])}:{names(t.get('traits') or [])}" if t.get("roles") else names(t.get("traits") or [])
+                                 for t in traits)  # fmt: skip
+    elif isinstance(traits, list):  # ['라브', '트릭'] (recommend_players)
+        out["traits"] = names(traits)
+    return out
+
+
 def _arg_name(key: str, known: Iterable[str]) -> str:
     """모델이 망가뜨린 인자 이름을 실제 이름으로: 'top_n`' / 'team_color」 string=' / 'Role' / 'team_color_rankers'
     → 'top_n' / 'team_color' / 'role' / 'team_color' (영문·숫자·밑줄 앞부분, 그래도 모르면 가장 길게 겹치는 실제 이름)."""
@@ -181,7 +234,7 @@ def _arg_name(key: str, known: Iterable[str]) -> str:
 
 
 def _price_bp(card: dict[str, Any]) -> int | None:
-    price = card["price_for_traits"] if "price_for_traits" in card else card.get("price_at_most_used_grade")
+    price = card.get("price_at_most_used_grade")
     return price["price_bp"] if price else None
 
 
@@ -380,7 +433,7 @@ class _Squad:
     limits: dict[str, int]
     slot_options: list[tuple[str, list[dict[str, Any]]]]
     first: Any  # 첫 자리의 top_players 결과 (표본·기준 시각)
-    must_season: dict[str, str] = field(default_factory=dict)  # 넣을 선수 중 시즌을 정한 선수 (이름 → 시즌)
+    must_season: dict[str, list[str]] = field(default_factory=dict)  # 넣을 선수 중 시즌을 정한 선수 (이름 → 시즌들)
     setup_notes: list[str] = field(default_factory=list)  # 인자를 그대로 반영하지 못한 것 (결과의 note에)
     must_roles: dict[str, dict[str, int]] = field(default_factory=dict)  # 넣을 선수를 랭커들이 쓴 자리 (이름 → 역할 → 랭커 수)
     picked: dict[str, Any] = field(default_factory=dict)  # 말하지 않아 사용률 비례로 뽑은 팀컬러·포메이션
@@ -556,15 +609,11 @@ TOOLS: list[dict[str, Any]] = [
                     "description": f"sort=price일 때 최소 사용률 (기본 {DEFAULT_MIN_USAGE_FOR_PRICE_SORT})",
                 },
                 "traits": {
-                    "type": "string",
-                    "description": "신규특성(금특·신특) 조건, 쉼표로 (예: '라인 브레이커,트릭스터', 줄임말 '라브,트릭'). "
-                    f"가능: {', '.join(NEW_TRAITS)}",
-                },
-                "can_add_trait": {
-                    "type": "boolean",
-                    "description": f"'달 수 있는'이면 true: {ADD_TRAIT_GRADE}강(금카) 이상은 신규특성을 하나 더 달 수 있으므로, "
-                    f"하나가 모자란 카드도 {ADD_TRAIT_GRADE}강 이상 기준(시세도 그 강화)으로 넣는다. "
-                    "'달린'(원래 가진 카드만)이면 false(기본)",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "신규특성(금특·신특) 조건 (예: ['라인 브레이커', '트릭스터'], 줄임말 ['라브', '트릭']). 여러 개면 그중 하나라도 "
+                    "원래 달린 카드 (두 개 달린 카드는 아직 없다). 특성을 정하지 않은 '신특 있는'은 ['아무']. "
+                    f"가능: {', '.join(NEW_TRAITS)}. 결과 카드의 addable_trait = 원하는 특성 중 그 카드에 없는 것 ({ADD_TRAIT_GRADE}강 이상이면 달 수 있음)",
                 },
             },
             ["role"],
@@ -573,10 +622,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "recommend_squad",
         "description": (
-            "여러 자리를 한 번에 추천한다: 포메이션 선발 11명, 또는 slots로 준 일부 자리(예: 투볼란치 'DM,DM', 좌우 윙 'RW,LW'). "
+            "여러 자리를 한 번에 추천한다: 포메이션 선발 11명, 또는 slots로 준 일부 자리(예: 투볼란치 ['DM', 'DM'], 좌우 윙 ['RW', 'LW']). "
             "포지션 구성은 그 포메이션으로 실제 경기한 랭커 스쿼드에서 가져오고, 자리마다 사용률 높은 선수를 (같은 선수 중복 없이) 넣는다. "
             "자리별 대안, 카드 시세·급여, 총액·총 급여를 준다. max_total_price_bp·max_total_salary를 주면 그 한도 안에서 "
-            "사용률 합이 가장 큰 조합을 고른다 (자리가 적으면 모든 조합을 비교). '두 명 급여 합 54 미만' = slots 'DM,DM', max_total_salary 53. "
+            "사용률 합이 가장 큰 조합을 고른다 (자리가 적으면 모든 조합을 비교). '두 명 급여 합 54 미만' = slots ['DM', 'DM'], max_total_salary 53. "
             f"선발 11명은 max_total_salary를 안 주면 게임 급여 상한 {SALARY_CAP} 안에서 고른다 (사용자가 더 크게 말하면 그 값, 결과에 상한 초과 경고). "
             "예산을 줬으면 leftover(남은 예산·급여)와 upgrades(남은 예산으로 올릴 수 있는 강화·시즌)를 준다"
         ),
@@ -588,8 +637,9 @@ TOOLS: list[dict[str, Any]] = [
                 "max_total_price_bp": {"type": "string", "description": "고른 선수들의 총 예산. 질문에 적힌 금액 그대로('20억', '1억 5천만'), BP 정수도 됨"},
                 "max_total_salary": {"type": "integer", "description": "고른 선수들의 급여 합 상한 ('미만'이면 1 뺀 값)"},
                 "slots": {
-                    "type": "string",
-                    "description": "일부 자리만 고를 때, 자리마다 역할 하나를 쉼표로 (예: 'DM,DM', 'RW,LW', 'ST,ST'). 생략하면 포메이션 11명",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "일부 자리만 고를 때, 자리마다 역할 하나 (예: ['DM', 'DM'], ['RW', 'LW']). 생략하면 포메이션 11명",
                 },
                 "chemistry": {
                     "type": "string",
@@ -598,10 +648,20 @@ TOOLS: list[dict[str, Any]] = [
                     "team_color를 생략하면 그 클럽·국가 팀컬러도 지킨다 (나머지 선수도 그 소속). 결과의 chemistry.active로 발동 여부 확인",
                 },
                 "include": {
-                    "type": "string",
-                    "description": "꼭 넣을 선수 이름, 쉼표로 (예: '슈케르', '라이스,사카'). 랭커들이 그 선수를 쓴 자리에 넣고 나머지를 한도 안에서 "
-                    "다시 고른다. 자리를 정해 달라면 '이름:자리' (예: '호날두:ST', 자리는 GK·CB·ST 같은 역할), 시즌을 정해 달라면 '이름:시즌' "
-                    "(예: '반페르시:UC', 둘 다면 '반페르시:ST:UC'), 강화를 정해 달라면 '이름:11강' (예: '음바페:PTG:11강'). 결과의 include로 들어갔는지 확인",
+                    "type": "array",
+                    "description": "꼭 넣을 선수들. 랭커들이 그 선수를 쓴 자리에 넣고 나머지를 한도 안에서 다시 고른다. 결과의 include로 들어갔는지 확인",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "player": {"type": "string", "description": "선수 이름 (예: '슈케르', '반페르시')"},
+                            "role": {"type": "string", "description": "사용자가 자리를 말했을 때만 (GK·CB·ST 같은 역할). 없으면 도구가 정함"},
+                            "seasons": {"type": "array", "items": {"type": "string"},
+                                        "description": "이 시즌 카드 중에서 (예: ['UC'], ['CH', '26 TOTS']). 여럿이면 그중 사용률·한도에 맞는 카드"},
+                            "grades": {"type": "array", "items": {"type": "integer"},
+                                       "description": "이 강화 중에서 (예: [11], [9, 11]). 여럿이면 한도 안의 가장 높은 강화부터"},
+                        },
+                        "required": ["player"],
+                    },
                 },
             },
             [],
@@ -827,25 +887,33 @@ _PICKS = {
 }
 # 사용자의 바람을 옮기는 손잡이: recommend_squad만 (도구가 한 번에 최적 조합을 찾는다)
 _KNOBS = {
-    "exclude": {"type": "string", "description": "빼 달라는 선수 이름, 쉼표로 (예: '벨링엄')"},
-    "owned": {"type": "string", "description": "사용자가 이미 가진 카드 '이름:시즌:강화', 쉼표로 (예: '손흥민:UC:10'). "
-              "그 카드로 고정하고 시세는 총액에서 뺀다"},
+    "exclude": {"type": "array", "items": {"type": "string"}, "description": "빼 달라는 선수 이름들 (예: ['벨링엄'])"},
+    "owned": {"type": "array", "description": "사용자가 이미 가진 카드들. 그 카드로 고정하고 시세는 총액에서 뺀다",
+              "items": {"type": "object", "required": ["player"], "properties": {
+                  "player": {"type": "string"}, "season": {"type": "string", "description": "예: 'UC'"},
+                  "grade": {"type": "integer", "description": "강화 (예: 10)"}}}},
     "min_grade": {"type": "integer", "description": "이 강화 이상 카드만 (예: 8). 랭커들이 덜 강화해 쓴 카드는 이 강화 시세로 센다"},
-    "save": {"type": "string", "description": "최대한 싸게 채울 자리, 쉼표로 (예: 'GK'). 사용률보다 싼 카드 우선"},
-    "invest": {"type": "string", "description": "돈(시세·강화)을 많이 쓸 자리 (예: 'ST,RW,LW', '공격수', 'CB,LB,RB'). 급여가 아님 — 급여는 high_salary. "
+    "save": {"type": "array", "items": {"type": "string"}, "description": "최대한 싸게 채울 자리들 (예: ['GK']). 사용률보다 싼 카드 우선"},
+    "invest": {"type": "array", "items": {"type": "string"}, "description": "돈(시세·강화)을 많이 쓸 자리들 (예: ['ST', 'RW', 'LW'], ['공격수']). "
+               "급여가 아님 — 급여는 high_salary. "
                "먼저 짠 뒤 이 자리들을 예산의 50%(2자리 70%, 3자리 80%, 4자리 85%…) 안에서 사용률 높은 더 비싼 카드로 고정하고 나머지를 다시 짠다. "
                "예산이 없으면 기본 스쿼드 총액을 기준으로 돈을 이 자리로 옮긴다. 결과의 invest.changed가 바꾼 카드"},
     "min_total_salary": {"type": "integer", "description": "총 급여 하한 ('급여 꽉 채워' → 315 또는 max_total_salary와 같은 값, '급여 313 이상' → 313). "
+                         "말하지 않아도 선발 11명은 급여 상한 − 5 이상을 채운다. "
                          "짠 뒤 사용률이 가장 적게 줄어드는 교체로 급여를 올린다 (예산·급여 상한·케미는 지킴). 못 맞추면 결과의 salary_floor"},
-    "high_salary": {"type": "string", "description": "급여가 높은 카드를 쓸 자리, 쉼표로 ('고급여 키퍼' → 'GK'). '자리:숫자'면 그 급여 이상 카드만 "
-                    "('급여 25 이상 키퍼' → 'GK:25'). 돈(시세)이 아니라 카드 급여. 총 급여 한도는 다른 자리 급여를 낮춰 맞춘다"},
-    "prefer": {"type": "string", "description": "자리별로 원하는 능력치 '자리:능력치', 쉼표로 (예: 'ST:키', 'RW:속력,LW:속력'). "
+    "high_salary": {"type": "array", "description": "급여가 높은 카드를 쓸 자리들. '고급여 키퍼' → [{'role': 'GK'}], '급여 25 이상 키퍼' → "
+                    "[{'role': 'GK', 'min_salary': 25}]. 돈(시세)이 아니라 카드 급여. 총 급여 한도는 다른 자리 급여를 낮춰 맞춘다",
+                    "items": {"type": "object", "required": ["role"], "properties": {
+                        "role": {"type": "string"}, "min_salary": {"type": "integer", "description": "이 급여 이상 카드만 (없으면 급여 높은 카드 우선)"}}}},
+    "prefer": {"type": "array", "description": "자리별로 원하는 능력치 (예: [{'role': 'ST', 'stat': '키'}], [{'role': 'RW', 'stat': '속력'}, {'role': 'LW', 'stat': '속력'}]). "
                "그 자리는 이 능력치가 높은 선수 우선 (사용률도 일부 반영). 자리는 그 포메이션의 자리로 (4-2-2-2의 윙은 RM·LM, 4-2-3-1은 RAM·LAM; "
-               "RW·LW로 줘도 같은 쪽 자리로 옮김). 결과 lineup의 preferred_stat이 그 능력치 값(1강 기준)"},
-    "traits": {"type": "string", "description": "자리별 신규특성 조건 '자리들:특성들', 묶음이 여럿이면 ; (예: 'RAM,LAM,ST:라인 브레이커,트릭스터', "
-               "'CB:파이터'). 자리를 빼면 모든 자리. 그 자리는 조건에 맞는 카드만"},
-    "can_add_trait": {"type": "boolean", "description": "traits를 '달 수 있는' 카드까지 (원래 가진 카드 + 하나가 모자라 8강 이상에서 "
-                      "새로 다는 카드, 그 강화 시세로). '달린'이면 false"},
+               "RW·LW로 줘도 같은 쪽 자리로 옮김). 결과 lineup의 preferred_stat이 그 능력치 값(1강 기준)",
+               "items": {"type": "object", "required": ["role", "stat"], "properties": {"role": {"type": "string"}, "stat": {"type": "string"}}}},
+    "traits": {"type": "array", "description": "자리별 신규특성 조건들 (예: [{'roles': ['RAM', 'LAM', 'ST'], 'traits': ['라인 브레이커', '트릭스터']}, "
+               "{'roles': ['CB'], 'traits': ['파이터']}]). roles를 빼면 모든 자리. 그 자리는 조건에 맞는 카드만 (여러 특성이면 그중 하나라도 달린 카드). "
+               "'신특 있는'처럼 특성을 정하지 않았으면 traits ['아무'] — 하나라도 달린 카드 (특성을 다 나열하지 말 것)",
+               "items": {"type": "object", "required": ["traits"], "properties": {
+                   "roles": {"type": "array", "items": {"type": "string"}}, "traits": {"type": "array", "items": {"type": "string"}}}}},
     "spend": {"type": "boolean", "description": "예산(max_total_price_bp)을 주면 강화는 8강에서 시작해, 남는 돈으로 OVR이 많이 오르는 강화부터 올린다 "
               "(기본 true, 아끼라고 하면 false). 결과의 lowered·upgraded에 랭커가 주로 쓰는 강화와 달라진 카드"},
 }  # fmt: skip
@@ -854,8 +922,8 @@ for _tool in TOOLS:
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], **_KNOBS}}
     if _tool["name"] == "squad_candidates":
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {**_SQUAD_ARGS["properties"], "roles": {
-            "type": "string", "description": "후보를 볼 자리만, 쉼표로 (예: 'GK', 'ST,RW'). 생략하면 모든 자리"},
-            **{k: _KNOBS[k] for k in ("exclude", "traits", "can_add_trait")}}}
+            "type": "array", "items": {"type": "string"}, "description": "후보를 볼 자리만 (예: ['GK'], ['ST', 'RW']). 생략하면 모든 자리"},
+            **{k: _KNOBS[k] for k in ("exclude", "traits")}}}
     elif _tool["name"] == "check_squad":
         _tool["input_schema"] = {**_SQUAD_ARGS, "properties": {"picks": _PICKS, **_SQUAD_ARGS["properties"], "spend": {
             "type": "boolean", "description": "예산을 주면 남는 돈으로 picks의 강화를 OVR이 많이 오르는 것부터 올린다 (기본 true, 아끼라고 하면 "
@@ -955,7 +1023,7 @@ class Toolbox:
             return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False), True
         # 모델이 인자 이름에 표기 찌꺼기를 붙여 보낼 때가 있다 ("top_n`", "team_color」 string=", "Role") → 이름 부분만
         known = inspect.signature(handler).parameters
-        tool_input = {_arg_name(k, known): v for k, v in tool_input.items()}
+        tool_input = _legacy_args({_arg_name(k, known): v for k, v in tool_input.items()})
         try:
             for k, v in tool_input.items():  # 금액은 '20억'처럼 받아 도구가 바꾼다 (모델이 0을 하나 더 붙이던 실수: 20억 → 200억)
                 if k.endswith("_bp") and isinstance(v, str):
@@ -1175,6 +1243,12 @@ class Toolbox:
             ]  # fmt: skip
         return any(key in code or key == long for code, long in self._season_keys)
 
+    def _season_is_exact(self, text: str) -> bool:
+        """Whether `text` is itself a season's code or full name ('ch', '26tots') — then only that season, never others containing it."""
+        self._season_known(text)
+        key = "".join(text.split()).casefold()
+        return any(key in (code, long) for code, long in self._season_keys)
+
     def _player_known(self, name: str) -> bool:
         """Whether any card's name holds `name` (spaces ignored)."""
         key = "".join(name.split())
@@ -1326,7 +1400,6 @@ class Toolbox:
         sort: str = "usage",
         min_usage_rate: float | None = None,
         traits: str | None = None,
-        can_add_trait: bool = False,
     ) -> dict[str, Any]:
         tc_id, tc_name = self._scope(team_color)
         wanted = parse_traits(traits) if traits else []
@@ -1381,7 +1454,7 @@ class Toolbox:
         for p in res.players:
             entry = self._player_entry(res, roles, p)
             if wanted:
-                entry["cards"] = [c for c in entry["cards"] if self._with_traits(c, wanted, bool(can_add_trait))]
+                entry["cards"] = [c for c in entry["cards"] if self._with_traits(c, wanted)]
                 if not entry["cards"]:
                     continue
             if need_price or need_salary:
@@ -1436,11 +1509,8 @@ class Toolbox:
             }  # fmt: skip
         out["definitions"]["new_traits"] = "카드가 원래 가진 신규특성 (카드 상세 기준, 상세 미수집 카드는 이 칸이 없음, 빈 목록 = 없음)"
         if wanted:
-            out["traits"] = {"wanted": wanted, "can_add_trait": bool(can_add_trait)}
-            if can_add_trait:
-                out["definitions"]["added_trait"] = (
-                    f"{ADD_TRAIT_GRADE}강 이상에서 새로 달 특성. price_for_traits는 그 강화(가장 많이 쓴 강화와 {ADD_TRAIT_GRADE} 중 큰 쪽)의 시세"
-                )
+            out["traits"] = {"wanted": wanted}
+            out["definitions"]["addable_trait"] = f"원하는 특성 중 이 카드에 없는 것: {ADD_TRAIT_GRADE}강(금카) 이상이면 하나를 더 달 수 있다 (가격은 그대로)"
         notes = []
         if need_price and not self._has_prices(res):
             notes.append("이 역할 카드의 시세가 수집되지 않아 예산·가격으로 거를 수 없음")
@@ -1489,19 +1559,20 @@ class Toolbox:
         row = self.conn.execute("SELECT traits FROM card_detail WHERE spid = ?", (sp_id,)).fetchone()
         return None if row is None else [t for t in json.loads(row["traits"]) if t in NEW_TRAITS]
 
-    def _with_traits(self, card: dict[str, Any], wanted: list[str], can_add: bool) -> bool:
-        """Keep a card that has the wanted new traits — or, with can_add, lacks one that 8강+ can add (then priced at 8강+)."""
+    def _with_traits(self, card: dict[str, Any], wanted: list[str]) -> bool:
+        """Keep a card that has one of the wanted new traits (none has two yet: "트릭 스스" = 트릭 or 스스); a wanted one
+        it lacks is noted as addable_trait (8강+ can add one more)."""
         own = self._new_traits(card["sp_id"])
         if own is None:
             return False
-        missing = [t for t in wanted if t not in own]
-        if len(missing) > (1 if can_add else 0):
-            return False
         card["new_traits"] = own
+        if wanted == [ANY_TRAIT]:  # "신특 있는": 원래 달린 특성이 하나라도
+            return bool(own)
+        missing = [t for t in wanted if t not in own]
+        if len(missing) == len(wanted):  # 원하는 특성이 하나도 없음
+            return False
         if missing:
-            grade = max(card["most_used_grade"] or 0, ADD_TRAIT_GRADE)
-            card["added_trait"] = missing[0]
-            card["price_for_traits"] = self._price(card["sp_id"], grade)
+            card["addable_trait"] = missing[0]
         return True
 
     def _card_profile(self, sp_id: int) -> dict[str, Any] | None:
@@ -1625,10 +1696,10 @@ class Toolbox:
                 continue
             roles = self._roles(part)
             if len(roles) != 1:
-                raise ToolError(f"slots는 자리마다 역할 하나씩 (예: 'DM,DM', 'RW,LW'): {part}")
+                raise ToolError(f"slots는 자리마다 역할 하나씩 (예: ['DM', 'DM'], ['RW', 'LW']): {part}")
             layout[roles[0]] += 1
         if not layout:
-            raise ToolError("slots가 비어 있음 (예: 'DM,DM')")
+            raise ToolError("slots가 비어 있음 (예: ['DM', 'DM'])")
         order = list(ROLES)
         return dict(sorted(layout.items(), key=lambda kv: order.index(kv[0])))
 
@@ -1641,7 +1712,7 @@ class Toolbox:
         max_total_salary: int | None = None,
         slots: str | None = None,
         chemistry: str | None = None,
-        include: str | None = None,
+        include: list[dict[str, Any]] | str | None = None,
         exclude: str | None = None,
         owned: str | None = None,
         min_grade: int | None = None,
@@ -1650,11 +1721,10 @@ class Toolbox:
         prefer: str | None = None,
         spend: bool | None = None,
         traits: str | None = None,
-        can_add_trait: bool = False,
         high_salary: str | None = None,
         min_total_salary: int | None = None,
     ) -> dict[str, Any]:
-        knobs = self._squad_knobs(exclude, owned, min_grade, save, invest, prefer, traits, can_add_trait, high_salary)
+        knobs = self._squad_knobs(exclude, owned, min_grade, save, invest, prefer, traits, high_salary)
         if min_total_salary:
             knobs["min_total_salary"] = int(min_total_salary)
         sq = self._squad_setup(
@@ -1662,6 +1732,8 @@ class Toolbox:
         )
         if isinstance(sq, dict):
             return sq
+        if not min_total_salary and not slots and "salary" in sq.limits:  # 말하지 않아도 급여를 (상한 − 5) 이상은 채운다
+            knobs["min_total_salary"] = sq.limits["salary"] - SALARY_FILL_GAP
         budget = "price" in sq.limits
         moved, base = None, None  # 예산 없이 invest: 기본 스쿼드 총액을 예산으로 삼아 돈을 투자 자리로 옮긴다
         if knobs.get("invest") and not budget:
@@ -1694,7 +1766,7 @@ class Toolbox:
                                                   " 이어서 다시 부를 때는 결과의 team_color·formation을 그대로 넘길 것"}
         if invested is not None:
             out["invest"] = invested
-        if (floor := knobs.get("min_total_salary")) and out["total_salary"] < min(floor, sq.limits.get("salary", floor)):
+        if min_total_salary and (floor := knobs["min_total_salary"]) and out["total_salary"] < min(floor, sq.limits.get("salary", floor)):
             out["salary_floor"] = (f"총 급여 {floor} 이상을 맞추지 못하고 {out['total_salary']} (급여가 더 높은 카드로 바꾸면 예산·급여 상한·케미 조건을 넘음)")
         if moved is not None and invested is not None:
             out["invest"]["budget_from_base"] = (f"예산을 주지 않아 기본 스쿼드 총액 {format_bp(moved)}을 기준으로 투자 자리로 돈을 옮김."
@@ -1720,7 +1792,7 @@ class Toolbox:
                                if c and (c["card"]["rankers"] or 0) < CARD_MIN_RANKERS]):  # fmt: skip
             out["rarely_used"] = {"cards": rare, "why": f"랭커 {CARD_MIN_RANKERS}명 이상이 쓴 카드만으로는 급여·예산·팀컬러 조건을 맞출 수 없어 "
                                                       "랭커가 몇 명만 쓴 카드도 넣음 (표본이 적은 범위)"}
-        if knobs:
+        if knobs := {k: v for k, v in knobs.items() if k != "min_total_salary" or min_total_salary}:  # 기본 급여 하한은 사용자의 바람이 아니다
             out["applied"] = {k: sorted(v) if isinstance(v, set) else v for k, v in knobs.items()}
             if hs := knobs.get("high_salary"):
                 out["applied"]["high_salary"] = {r: f"급여 {f} 이상" if f else "급여 높은 카드 우선" for r, f in hs.items()}
@@ -1816,7 +1888,7 @@ class Toolbox:
             note["note"] = "투자 자리에 지금보다 비싸면서 한도 안에 드는 카드가 없거나, 넣으면 나머지를 예산 안에 맞출 수 없어 그대로 둠"
         return sq, chosen, note
 
-    def _squad_knobs(self, exclude, owned, min_grade, save, invest, prefer, traits=None, can_add_trait=False, high_salary=None) -> dict[str, Any]:
+    def _squad_knobs(self, exclude, owned, min_grade, save, invest, prefer, traits=None, high_salary=None) -> dict[str, Any]:
         """The user's own squad wishes as recommend_squad arguments → what _squad_setup and _spend apply."""
 
         def names(text: str) -> list[str]:
@@ -1838,7 +1910,7 @@ class Toolbox:
                     continue
                 grade = re.sub(r"\D", "", bits[2]) if len(bits) > 2 else ""
                 if len(bits) > 1 and bits[1] and not self._season_known(bits[1]):
-                    raise ToolError(f"owned의 '{bits[1]}'는 알 수 없는 시즌. 형식: '이름:시즌:강화' (예: '손흥민:UC:10')")
+                    raise ToolError(f"owned의 '{bits[1]}'는 알 수 없는 시즌. 형식: [{{'player': '손흥민', 'season': 'UC', 'grade': 10}}]")
                 specs.append({"name": "".join(bits[0].split()), "season": "".join(bits[1].split()).casefold() if len(bits) > 1 and bits[1] else None,
                               "grade": int(grade) if grade else None})  # fmt: skip
             knobs["owned"] = specs
@@ -1855,14 +1927,14 @@ class Toolbox:
                 if not role_text.strip():
                     continue
                 if floor.strip() and not floor.strip().isdigit():
-                    raise ToolError("high_salary는 '자리' 또는 '자리:최소급여'를 쉼표로 (예: 'GK', 'GK:25')")
+                    raise ToolError("high_salary는 [{'role': 'GK'}] 또는 [{'role': 'GK', 'min_salary': 25}] 목록")
                 want.update(dict.fromkeys(roles(role_text), int(floor) if floor.strip() else 0))
             knobs["high_salary"] = want
         if prefer:  # "ST:키, RW:속력"
             pref = {}
             for part in prefer.split(","):
                 if ":" not in part:
-                    raise ToolError("prefer는 '자리:능력치'를 쉼표로 (예: 'ST:키, RW:속력')")
+                    raise ToolError("prefer는 [{'role': 'ST', 'stat': '키'}] 목록")
                 role_text, stat_text = part.split(":", 1)
                 stat = resolve_stat(stat_text.strip())
                 if stat is None:
@@ -1876,24 +1948,21 @@ class Toolbox:
                     role_text, _, trait_text = part.rpartition(":")
                     rule.update(dict.fromkeys(roles(role_text) if role_text.strip() else ["*"], parse_traits(trait_text)))
             knobs["traits"] = rule
-            if can_add_trait:
-                knobs["can_add_trait"] = True
         return knobs
 
     def _budget_grades(self, slot_options, knobs: dict[str, Any]) -> list[tuple[str, list[dict[str, Any]]]]:
         """The options with every card at the lowest grade a budget may buy it at (BUDGET_MIN_GRADE, or the min_grade
-        wish, or the grade a new trait needs — never above the grade rankers use; owned cards as they are), so a tight
+        wish — never above the grade rankers use; owned cards as they are), so a tight
         budget lowers grades before it gives up the card rankers use. _spend raises them again with what is left."""
         lowest = max(BUDGET_MIN_GRADE, knobs.get("min_grade") or 0)
 
         def low(o: dict[str, Any]) -> dict[str, Any]:
             grade = o["card"]["most_used_grade"] or 0
-            floor = max(lowest, ADD_TRAIT_GRADE) if o["card"].get("added_trait") else lowest
-            price = None if o.get("owned") or o.get("fixed_grade") or grade <= floor else self._price(o["card"]["sp_id"], floor)
+            price = None if o.get("owned") or o.get("fixed_grade") or grade <= lowest else self._price(o["card"]["sp_id"], lowest)
             if price is None:
                 return {**o, "ranker_grade": grade}
             return {**o, "ranker_grade": grade, "price": price["price_bp"],
-                    "card": {**o["card"], "most_used_grade": floor, "price_at_most_used_grade": price}}  # fmt: skip
+                    "card": {**o["card"], "most_used_grade": lowest, "price_at_most_used_grade": price}}  # fmt: skip
 
         done: dict[int, list[dict[str, Any]]] = {}  # 같은 역할의 자리들은 후보 목록을 함께 쓴다
         for _, options in slot_options:
@@ -2128,17 +2197,16 @@ class Toolbox:
         max_total_salary: int | None = None,
         slots: str | None = None,
         chemistry: str | None = None,
-        include: str | None = None,
+        include: list[dict[str, Any]] | str | None = None,
         roles: str | None = None,
         exclude: str | None = None,
         traits: str | None = None,
-        can_add_trait: bool = False,
     ) -> dict[str, Any]:
         """Per slot 3~5 players with the data to judge them; the model picks and check_squad verifies.
 
         The players of one combination within every limit are always among them (so a passing squad exists), but
         that combination is not shown — the model judges on its own."""
-        knobs = self._squad_knobs(exclude, None, None, None, None, None, traits, can_add_trait)
+        knobs = self._squad_knobs(exclude, None, None, None, None, None, traits)
         sq = self._squad_setup(team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs)
         if isinstance(sq, dict):
             return sq
@@ -2256,7 +2324,7 @@ class Toolbox:
         max_total_salary: int | None = None,
         slots: str | None = None,
         chemistry: str | None = None,
-        include: str | None = None,
+        include: list[dict[str, Any]] | str | None = None,
         spend: bool | None = None,
     ) -> dict[str, Any]:
         """The model's own lineup checked against the same rules: slots filled, rankers used each card there,
@@ -2422,15 +2490,6 @@ class Toolbox:
             "note": "사용률 순위가 낮은 자리가 랭커 기준 약점 후보 (능력치가 아니라 사용 기록 기준). 대안은 used_more, 더 찾을 때만 그 자리로 recommend_players",
         }  # fmt: skip
 
-    @staticmethod
-    def _trait_card(card: dict[str, Any]) -> dict[str, Any]:
-        """A card that needs a new trait added: counted at the grade that allows it (8강+), like any other grade."""
-        if "price_for_traits" not in card:
-            return card
-        price = card.pop("price_for_traits")
-        return {**card, "most_used_grade": price["grade"] if price else max(card["most_used_grade"] or 0, ADD_TRAIT_GRADE),
-                "price_at_most_used_grade": price}  # fmt: skip
-
     def _unused_options(self, name: str, season: str | None, grade: int, fixed: bool, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
         """Options for a player to include beyond the cards rankers used in that slot: his collected cards (of `season`)
         at `grade` that have a price, higher OVR scored a little higher (no ranker usage, so ranker cards that fit win)."""
@@ -2454,11 +2513,12 @@ class Toolbox:
     def _owned_cards(self, pid: int, season: str, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
         """A card the user owns that rankers did not use there: looked up among all collected cards of the player."""
         cards = []
-        for sp_id, salary, season_id, name in self.conn.execute(
+        rows = self.conn.execute(
             "SELECT c.spid, c.salary, c.season_id, s.class_name FROM card c LEFT JOIN meta_season s ON s.season_id = c.season_id"
             " WHERE c.pid = ?", (pid,),
-        ):  # fmt: skip
-            if season in "".join((name or "").split()).casefold() and (fits is None or fits(sp_id)):
+        ).fetchall()  # fmt: skip
+        for sp_id, salary, season_id, name in _season_hits(season, rows, lambda r: r[3], self._season_is_exact(season)) if season else rows:
+            if fits is None or fits(sp_id):
                 cards.append({"sp_id": sp_id, "season": name, "season_img": self._season_img(season_id), "rankers": 0,
                               "avg_grade": None, "most_used_grade": None, "price_at_most_used_grade": None, "salary": salary})  # fmt: skip
         return cards
@@ -2498,6 +2558,31 @@ class Toolbox:
                 o["score"] = 0.001 * (1 - (o["price"] or 0) / most)  # 사용률은 거의 보지 않고 싼 카드부터
         return note
 
+    def _include_specs(self, include: Any) -> list[dict[str, Any]]:
+        """include as a list of {player, role, seasons, grades} — also the older text form '이름:자리:시즌:11강, 이름'."""
+        if not include:
+            return []
+        if isinstance(include, list):
+            return [x if isinstance(x, dict) else {"player": x} for x in include]
+        specs = []
+        for n in re.split(r"[,/+]", str(include)):
+            name, *rest = n.split(":")
+            spec: dict[str, Any] = {"player": name}
+            for part in filter(None, ("".join(x.split()) for x in rest)):
+                if part.upper() in ROLES:
+                    spec["role"] = part
+                elif m := re.fullmatch(r"(\d{1,2})(?:강|카)?", part):
+                    spec.setdefault("grades", []).append(int(m[1]))
+                elif self._season_known(part):
+                    spec.setdefault("seasons", []).append(part)
+                else:  # 모르는 값을 시즌으로 받아 조용히 빼지 않는다 ("음바페:11"이 "11 시즌 카드 없음"이 되던 일)
+                    raise ToolError(
+                        f"include의 '{part}'는 자리·시즌·강화 중 무엇인지 알 수 없음. include는 [{{player, role, seasons, grades}}] 목록으로"
+                        " 넘길 것. 사용자의 바람이 이 형식으로 안 되면 억지로 넣지 말고 답에서 반영하지 못했다고 말할 것"
+                    )
+            specs.append(spec)
+        return specs
+
     def _squad_setup(
         self, team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include,
         names: Iterable[str] = (), knobs: dict[str, Any] | None = None, pick: bool = False,
@@ -2506,25 +2591,24 @@ class Toolbox:
         result as it is). `names` (띄어쓰기 없는 이름): players to look up beyond the usual top candidates (check_squad)."""
         names = [n for n in names if n]
         chem = self._chemistry(chemistry) if chemistry else None
-        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시). 뒤에 ':자리'면 그 자리에만, ':시즌'이면 그 시즌 카드로, ':11강'이면 그 강화로
-        # ('반페르시:ST:UC', '음바페:PTG:11강')
+        # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시): role이면 그 자리에만, seasons면 그 시즌 카드 중에서, grades면 그 강화 중에서
         must, pinned, wanted_season, wanted_grade = [], {}, {}, {}
-        for n in re.split(r"[,/+]", include or ""):
-            name, *rest = n.split(":")
-            if name := "".join(name.split()):
-                must.append(name)
-                for part in filter(None, ("".join(x.split()) for x in rest)):
-                    if part.upper() in ROLES:
-                        pinned[name] = part.upper()
-                    elif m := re.fullmatch(r"(\d{1,2})(?:강|카)?", part):
-                        wanted_grade[name] = int(m[1])
-                    elif self._season_known(part):
-                        wanted_season[name] = part.casefold()
-                    else:  # 모르는 값을 시즌으로 받아 조용히 빼지 않는다 ("음바페:11"이 "11 시즌 카드 없음"이 되던 일)
-                        raise ToolError(
-                            f"include의 '{part}'는 자리·시즌·강화 중 무엇인지 알 수 없음. 형식: '이름', '이름:자리', '이름:시즌', '이름:11강'"
-                            " (예: '음바페:ST:PTG:11강'). 사용자의 바람이 이 형식으로 안 되면 억지로 넣지 말고 답에서 반영하지 못했다고 말할 것"
-                        )
+        for spec in self._include_specs(include):
+            if not (name := "".join(str(spec.get("player") or "").split())):
+                continue
+            must.append(name)
+            if role := "".join(str(spec.get("role") or "").split()).upper():
+                if role not in ROLES:
+                    raise ToolError(f"include의 role '{role}'는 역할이 아님 (GK·CB·RB·DM·CAM·ST 같은 역할)")
+                pinned[name] = role
+            for season in spec.get("seasons") or []:
+                if not self._season_known(key := "".join(str(season).split()).casefold()):
+                    raise ToolError(f"include의 시즌 '{season}'을 알 수 없음 (예: 'UC', '26 TOTS'). get_player_detail로 그 선수의 시즌을 확인할 것")
+                wanted_season.setdefault(name, []).append(key)
+            for grade in spec.get("grades") or []:
+                if not 1 <= int(grade) <= TOP_GRADE:
+                    raise ToolError(f"include의 강화 {grade}는 1~{TOP_GRADE} 사이여야 함")
+                wanted_grade.setdefault(name, []).append(int(grade))
         knobs = knobs or {}
         owned = knobs.get("owned", [])
         include_clubs = None
@@ -2623,13 +2707,13 @@ class Toolbox:
                     cards = [c for c in cards if fits(c["sp_id"])]
                     if not cards:
                         continue
-                if season := next((wanted_season[n] for n in must if f"include:{n}" in wanted and n in wanted_season), None):
-                    # 넣을 선수의 시즌을 정했으면 그 시즌 카드만 (이 자리에 랭커가 안 쓴 카드면 전체 카드에서, 강화는 8강 시세로)
-                    matched = [c for c in cards if season in "".join((c["season"] or "").split()).casefold()]
+                if seasons := next((wanted_season[n] for n in must if f"include:{n}" in wanted and n in wanted_season), None):
+                    # 넣을 선수의 시즌을 정했으면 그 시즌 카드들만 (이 자리에 랭커가 안 쓴 카드면 전체 카드에서, 강화는 8강 시세로)
+                    matched = list({c["sp_id"]: c for s in seasons for c in _season_hits(s, cards, lambda c: c["season"], self._season_is_exact(s))}.values())
                     if not matched:  # ponytail: 랭커가 안 쓴 카드는 8강(또는 min_grade)으로 셈 — 강화 지정 인자가 생기면 그 값으로
                         g = knobs.get("min_grade") or 8
-                        matched = [self._at_grade(c, g)
-                                   for c in self._owned_cards(p.key, season, fits if not season_rule else None)]  # fmt: skip
+                        matched = list({c["sp_id"]: self._at_grade(c, g) for s in seasons
+                                        for c in self._owned_cards(p.key, s, fits if not season_rule else None)}.values())  # fmt: skip
                     if not matched:  # 그 시즌 카드가 없으면 이 선수는 넣지 못함 (결과의 include가 null)
                         continue
                     cards = matched
@@ -2637,7 +2721,7 @@ class Toolbox:
                 if own:  # 가진 카드: 그 시즌·강화로 고정, 시세는 0 (랭커가 적게 쓴 카드여도)
                     note = None
                     if own["season"]:
-                        matched = [c for c in cards if own["season"] in "".join((c["season"] or "").split()).casefold()]
+                        matched = _season_hits(own["season"], cards, lambda c: c["season"], self._season_is_exact(own["season"]))
                         matched = matched or self._owned_cards(p.key, own["season"], fits if not season_rule else None)
                         if not matched:  # 수집된 카드 목록에도 없는 시즌
                             note = f"가진 카드 '{p.name} {own['season'].upper()}'는 수집된 카드 목록에 없어 {cards[0]['season']} 카드의 급여로 셈"
@@ -2649,7 +2733,7 @@ class Toolbox:
                                  **({"owned_note": note} if note else {})} for c in cards[:1]]  # fmt: skip
                     continue
                 if wanted_traits := knobs.get("traits", {}).get(role) or knobs.get("traits", {}).get("*"):
-                    cards = [self._trait_card(c) for c in cards if self._with_traits(c, wanted_traits, knobs.get("can_add_trait", False))]
+                    cards = [c for c in cards if self._with_traits(c, wanted_traits)]
                     if not cards:
                         continue
                 cards = _common_cards(cards, entry["rankers"], keep=lambda c: season_rule and fits(c["sp_id"]))
@@ -2661,8 +2745,8 @@ class Toolbox:
                     cards = [c if (c["most_used_grade"] or 0) >= g else
                              self._at_grade(c, g) for c in cards]  # fmt: skip
                 fixed = next((wanted_grade[n] for n in must if f"include:{n}" in wanted and n in wanted_grade), None)
-                if fixed:  # "음바페 11카": 그 강화로 고정 (예산 맞추기·남은 예산 쓰기가 바꾸지 않는다)
-                    cards = [self._at_grade(c, fixed) for c in cards]
+                if fixed:  # "음바페 11카": 그 강화들로 고정 (예산 맞추기·남은 예산 쓰기가 바꾸지 않는다), 높은 강화부터
+                    cards = [self._at_grade(c, g) for c in cards for g in sorted(set(fixed), reverse=True)]
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
                 for card in cards if limits else cards[:1]:
@@ -2677,10 +2761,14 @@ class Toolbox:
                 mine = [o for o in options if f"include:{name}" in o["tags"]]
                 if any(o.get("owned") for o in mine) or not (pinned.get(name) == role or (name not in pinned and mine)):
                     continue
-                grade = wanted_grade.get(name) or knobs.get("min_grade") or 8
                 have = {o["card"]["sp_id"] for o in mine}
-                options += [o for o in self._unused_options(name, wanted_season.get(name), grade, name in wanted_grade,
-                                                            fits if not season_rule else None) if o["card"]["sp_id"] not in have]  # fmt: skip
+                extra = [o for season in wanted_season.get(name) or [None]
+                         for grade in sorted(set(wanted_grade.get(name) or [knobs.get("min_grade") or 8]), reverse=True)
+                         for o in self._unused_options(name, season, grade, name in wanted_grade, fits if not season_rule else None)
+                         if o["card"]["sp_id"] not in have]  # fmt: skip
+                if wanted_traits := knobs.get("traits", {}).get(role) or knobs.get("traits", {}).get("*"):  # 이 자리 신특 조건은 넣을 선수 카드에도
+                    extra = [o for o in extra if self._with_traits(o["card"], wanted_traits)]
+                options += extra
             if (note := self._score_options(role, options, knobs)) and note not in setup_notes:
                 setup_notes.append(note)
             slot_options += [(role, options)] * n
@@ -2733,7 +2821,7 @@ class Toolbox:
                 "role": role, "player": e["name"], "pid": e["pid"], "season": card["season"], "rankers": card["rankers"], "usage_rate": _card_usage(c),
                 "ovr": self._ovr(card["sp_id"], role, _grade(card)),
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
-                                              "price_at_most_used_grade", "salary", "new_traits", "added_trait") if k in card},
+                                              "price_at_most_used_grade", "salary", "new_traits", "addable_trait") if k in card},
             })  # fmt: skip
         picked = {c["entry"]["pid"] for c in chosen if c}
         alternatives: dict[str, list[dict[str, Any]]] = {}
@@ -2831,7 +2919,7 @@ class Toolbox:
                 out["include_used_elsewhere"] = {**elsewhere, "note": "요청대로 그 자리에 넣었음. 답에서 이 사실을 한 문장으로 알릴 것"}
             for name, player in got.items():
                 if player is None:
-                    card = f" {sq.must_season[name].upper()} 카드" if name in sq.must_season else ""
+                    card = f" {'/'.join(sq.must_season[name]).upper()} 카드" if name in sq.must_season else ""
                     notes.append(f"'{name}'{card}를 넣지 못함 (그 선수·시즌 카드가 없거나, 이 팀컬러 소속 카드가 없거나, 자리가 겹침)")
         if chem:
             need = reqs["chem"]
