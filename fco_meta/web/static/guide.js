@@ -56,7 +56,7 @@ function play(win, scene) {
 }
 
 // ---------- 공통 조각 ----------
-const chat = (hello = "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다. 무엇이든 물어보세요.") => `
+const chat = (hello = "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다.") => `
   <div class="m-chat"><div class="m-title">FCLM<small>FC Online 랭커 데이터 기반 AI</small></div>
     <div class="m-log"><p class="m-hello">${hello}</p></div>
     <div class="m-form"><div class="m-input"><span class="chipslot"></span><span class="txt"></span><span class="m-caret"></span><span class="ph">무엇이든 물어보세요</span><span class="m-send">↑</span></div></div>
@@ -131,7 +131,7 @@ const SCENES = {
     t.stage.innerHTML = chat();
     const txt = t.q(".m-input .txt");
     await t.wait(400);
-    await t.type(txt, "레알 5억 미만 공격수 추천해줘"); await t.wait(1100); await t.erase(txt);
+    await t.type(txt, "레알 5억 미만 공격수를 추천해 줘."); await t.wait(1100); await t.erase(txt);
     await t.wait(300);
     t.q(".m-input .chipslot").append(html(`<span class="m-chip m-in">@구단주명</span>`));
     await t.type(txt, "내 팀 약점이 뭐야?"); await t.wait(1100); await t.erase(txt); t.q(".m-input .chipslot").replaceChildren();
@@ -217,7 +217,7 @@ const SCENES = {
   async ask(t) {
     t.stage.innerHTML = chat();
     await t.wait(400);
-    const log = await ask(t, "아스널 50억으로 스쿼드 짜줘");
+    const log = await ask(t, "아스널 스쿼드를 50억으로 짜 줘.");
     const bot = t.put(log, `<div class="m-bot"></div>`);
     t.put(bot, `<p>아스널 랭커들이 가장 많이 쓰는 <b>4-2-2-2</b> 기반 50억 BP 스쿼드입니다. (아스널 랭커 188명, 2026-11-11 05:00 기준)</p>`);
     await t.wait(400);
@@ -233,7 +233,7 @@ const SCENES = {
   async examples(t) {
     t.stage.innerHTML = chat();
     const txt = t.q(".m-input .txt");
-    for (const q of ["라브 달린 뮌헨 윙어 추천해줘", "라이스랑 수비멘디 비교해줘", "UC 마네 대신 급여를 1 줄일 수 있는 윙어", "요즘 사용률이 가장 많이 오른 팀컬러는?"]) {
+    for (const q of ["라브가 달린 뮌헨 윙어를 추천해 줘.", "라이스랑 수비멘디를 비교해 줘.", "UC 마네 대신 급여를 1 줄일 수 있는 윙어가 있어?", "요즘 사용률이 가장 많이 오른 팀컬러는 뭐야?"]) {
       await t.type(txt, q, 40); await t.wait(1000); if (REDUCE) return; await t.erase(txt); await t.wait(200);
     }
   },
@@ -272,9 +272,9 @@ const SCENES = {
     await t.wait(500);
     for (const i of [0, 1, 2, 1, 0]) { select(i); await t.wait(650); }
     menu.remove(); txt.textContent = "";
-    const models = ["Gemini 3.5 Flash", "GPT-6 Luna", "DeepSeek V4.1 Flash"]; // 모델 선택창
+    const models = ["GPT-6 Luna", "Gemini 3.5 Flash", "DeepSeek V4.1 Flash"]; // 모델 선택창
     menu = t.put(form, `<ul class="m-menu">${models.map((m) => `<li>${m}</li>`).join("")}</ul>`, "m-pop");
-    for (const i of [2, 1]) { select(i); await t.wait(i === 1 ? 900 : 500); }
+    for (const i of [2, 1, 0]) { select(i); await t.wait(i === 0 ? 900 : 500); }
     menu.remove();
     t.put(t.q(".m-log"), `<p class="m-note">model: GPT-6 Luna</p>`);
     await t.wait(1500);

@@ -28,11 +28,11 @@
     <text x="130" y="268" text-anchor="middle" font-weight="700">정해진 거절 문구</text>
     <text x="130" y="290" text-anchor="middle" font-size="12" fill="#9f1239">모델을 부르지 않음</text>
 
-    <!-- 3b. DeepSeek -->
+    <!-- 3b. GPT-6 Luna -->
     <rect x="274" y="240" width="212" height="76" rx="10" fill="#ecfdf5" stroke="#6ee7b7"/>
-    <text x="380" y="268" text-anchor="middle" font-weight="700">DeepSeek V4.1 Flash</text>
-    <text x="380" y="290" text-anchor="middle" font-size="12" fill="#065f46">생각 끔 · OpenRouter 키가</text>
-    <text x="380" y="306" text-anchor="middle" font-size="12" fill="#065f46">없는 서버만 Gemini</text>
+    <text x="380" y="268" text-anchor="middle" font-weight="700">GPT-6 Luna</text>
+    <text x="380" y="290" text-anchor="middle" font-size="12" fill="#065f46">단순 조회만 생각 끔 (OpenRouter)</text>
+    <text x="380" y="306" text-anchor="middle" font-size="12" fill="#065f46">키 없는 서버만 Gemini</text>
 
     <path d="M130 316V606H286" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/>
 
