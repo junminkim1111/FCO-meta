@@ -1,6 +1,7 @@
 """New chatbot tools: squad, value sort, player summary, meta trends, evidence lines."""
 
 import json
+from collections import Counter
 import sqlite3
 
 import pytest
@@ -46,8 +47,35 @@ def test_recommend_squad_fills_every_slot_once(toolbox):  # noqa: F811
     assert [(s["player"], s["card"]["season"]) for s in dms] == [("볼란치R", "S250"), ("볼란치L", "ICON")]
     assert r["total_price"] == "12억" and len(r["unpriced_players"]) == 9  # 볼란치 카드만 시세 있음
 
-    # 포메이션을 말하지 않으면 가장 많이 쓰인 포메이션
-    assert run(toolbox, "recommend_squad", {"team_color": "아스널"})["formation_source"] == "most_used"
+    # 포메이션을 말하지 않으면 상위 포메이션에서 사용률 비례로 뽑고 알린다 (check_squad는 모델이 고른 카드에 맞춰 가장 많이 쓰인 포메이션)
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널"})
+    assert r["formation_source"] == "random_top5" and r["picked"]["formation"]["name"] == r["formation"]
+
+
+def test_unnamed_team_color_is_drawn_by_ranker_share_unless_a_player_or_chemistry_decides(toolbox):  # noqa: F811
+    arsenal = toolbox._scope("아스널")[0]
+    toolbox._unfiltered_snapshots = lambda: [("x", 10_000)]
+    toolbox._team_color_counts = lambda *a: Counter({arsenal: 30, 999_999: 70})  # 스쿼드가 수집되지 않은 팀컬러는 뽑지 않는다
+    r = run(toolbox, "recommend_squad", {})
+    assert r["team_color"] == r["picked"]["team_color"]["name"] and r["picked"]["team_color"]["usage_rank"] == 1
+    assert "picked" not in run(toolbox, "recommend_squad", {"slots": "DM,DM"})  # 두세 자리 조합은 팀컬러를 정하지 않는다
+
+
+def test_unnamed_formation_is_drawn_from_the_top_five_by_normalized_share(toolbox):  # noqa: F811
+    import random
+
+    tc = toolbox._scope("아스널")[0]
+    as_of = toolbox.conn.execute("SELECT MAX(data_as_of) FROM usage_sample WHERE team_color_id = ?", (tc,)).fetchone()[0]
+    toolbox.conn.execute("DELETE FROM usage_sample WHERE team_color_id = ? AND formation != '*'", (tc,))
+    toolbox.conn.executemany(
+        "INSERT INTO usage_sample VALUES (?, '1vs1', ?, ?, 0, ?, ?, 'x')",
+        [(as_of, tc, f, n, n) for f, n in (("4-2-2-2", 30), ("4-3-2-1", 10), ("4-2-2-1-1", 5), ("4-1-4-1", 3), ("4-1-2-3", 2), ("5-2-1-2", 1))],
+    )
+    toolbox.rng = random.Random(7)
+    formation, odds = toolbox._random_formation(tc)
+    assert [(o["formation"], o["odds"]) for o in odds] == [("4-2-2-2", 0.6), ("4-3-2-1", 0.2), ("4-2-2-1-1", 0.1), ("4-1-4-1", 0.06), ("4-1-2-3", 0.04)]
+    drawn = Counter(toolbox._random_formation(tc)[0] for _ in range(2000))  # 6위(5-2-1-2)는 뽑히지 않는다
+    assert set(drawn) == {"4-2-2-2", "4-3-2-1", "4-2-2-1-1", "4-1-4-1", "4-1-2-3"} and 0.55 < drawn["4-2-2-2"] / 2000 < 0.65
 
 
 def test_recommend_squad_budget_swaps_cheapest_loss_first(toolbox):  # noqa: F811

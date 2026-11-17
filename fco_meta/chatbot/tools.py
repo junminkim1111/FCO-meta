@@ -7,6 +7,7 @@ import itertools
 import json
 import logging
 import math
+import random
 import re
 import sqlite3
 from collections import Counter, defaultdict
@@ -111,6 +112,7 @@ BUDGET_MIN_GRADE = 8  # 예산에 맞추느라 강화를 낮춰도 이 아래로
 SQUAD_MAX_GRADE = 11  # 스쿼드 추천은 11강까지: 12·13강은 돈이 있어도 사기 어려운 카드라 넣지 않는다 (가진 카드는 그대로)
 SPARE_SHARE = 0.10  # 11강을 못 채운 카드가 있어도(다음 강화가 너무 비쌈) 예산의 이만큼 이상 남으면 다른 자리를 더 좋게
 TOP_GRADE = 13  # 다 11강인데도 예산이 남으면 12·13강도 — 랭커 스쿼드에 그 강화로 있는 카드만 (없으면 매물이 없을 수 있다)
+RANDOM_FORMATIONS = 5  # 포메이션을 말하지 않은 스쿼드: 그 팀컬러 상위 이만큼에서 사용률 비례로 뽑는다
 TOP_GRADE_MIN_RANKERS = 2  # 12·13강은 랭커 이만큼 이상이 그 강화로 쓰는 카드만 (1명뿐이면 매물이 거의 없다)
 # invest(돈을 몰 자리): 투자 자리들 합계 한도 = 예산 × (90% − 40% × ½^(자리 수 − 1)) → 1자리 50%, 2자리 70%, 3자리 80%, 4자리 85% …
 INVEST_CEILING, INVEST_FIRST_GAP = 0.90, 0.40
@@ -381,6 +383,7 @@ class _Squad:
     must_season: dict[str, str] = field(default_factory=dict)  # 넣을 선수 중 시즌을 정한 선수 (이름 → 시즌)
     setup_notes: list[str] = field(default_factory=list)  # 인자를 그대로 반영하지 못한 것 (결과의 note에)
     must_roles: dict[str, dict[str, int]] = field(default_factory=dict)  # 넣을 선수를 랭커들이 쓴 자리 (이름 → 역할 → 랭커 수)
+    picked: dict[str, Any] = field(default_factory=dict)  # 말하지 않아 사용률 비례로 뽑은 팀컬러·포메이션
 
 
 MAX_UPGRADES = 2  # recommend_squad의 upgrades: 자리마다 보여 줄 강화·시즌 선택지 수
@@ -920,6 +923,7 @@ class Toolbox:
     ):
         self.conn = conn
         self.min_sample = min_sample  # 이보다 표본이 적으면 팀컬러 전체 포메이션으로 폴백
+        self.rng = random.Random()  # 팀컬러·포메이션을 말하지 않은 스쿼드: 사용률 비례로 뽑는다 (테스트는 시드를 고정)
         self.conn.row_factory = sqlite3.Row
         UsageStore(conn)
         self.conn.executescript(MARKET_SCHEMA)  # 시세 미수집이어도 조인이 되도록
@@ -1569,6 +1573,41 @@ class Toolbox:
             f"SELECT 1 FROM card WHERE spid IN ({marks}) AND salary IS NOT NULL LIMIT 1", ids
         ).fetchone() is not None
 
+    def _random_team_color(self) -> dict[str, Any] | None:
+        """A club or national team color drawn in proportion to how many rankers use it now (only those with squads
+        collected), with its share and usage rank — so an unnamed team color is not always the top one."""
+        snaps = self._unfiltered_snapshots()
+        if not snaps:
+            return None
+        counts = self._team_color_counts(*snaps[0])
+        kinds = {t.id: t.category for t in self.catalog.entries}
+        have = {r[0] for r in self.conn.execute(
+            "SELECT DISTINCT team_color_id FROM usage_sample WHERE strict = 0 AND formation = '*' AND squads > 0"
+            " AND data_as_of = (SELECT MAX(data_as_of) FROM usage_sample)")}  # fmt: skip
+        pool = sorted(((tc, n) for tc, n in counts.items() if kinds.get(tc) in ("club", "nationality") and tc in have),
+                      key=lambda x: -x[1])  # fmt: skip
+        if not pool:
+            return None
+        tc = self.rng.choices([t for t, _ in pool], weights=[n for _, n in pool])[0]
+        total = sum(n for _, n in pool)
+        return {"id": tc, "share": round(counts[tc] / total, 4), "usage_rank": [t for t, _ in pool].index(tc) + 1}
+
+    def _random_formation(self, team_color_id: int) -> tuple[str | None, list[dict[str, Any]]]:
+        """One of the team color's top RANDOM_FORMATIONS formations, drawn by their normalized shares (30·10·5·3·2% →
+        60·20·10·6·4%); the candidates with those odds."""
+        rows = self.conn.execute(
+            "SELECT formation, squads FROM usage_sample WHERE team_color_id = ? AND strict = 0 AND formation != '*'"
+            " AND data_as_of = (SELECT MAX(data_as_of) FROM usage_sample WHERE team_color_id = ?)"
+            " ORDER BY squads DESC, formation LIMIT ?",
+            (team_color_id, team_color_id, RANDOM_FORMATIONS),
+        ).fetchall()
+        rows = [(f, n) for f, n in rows if n]
+        if not rows:
+            return None, []
+        total = sum(n for _, n in rows)
+        odds = [{"formation": f, "odds": round(n / total, 4)} for f, n in rows]
+        return self.rng.choices([f for f, _ in rows], weights=[n for _, n in rows])[0], odds
+
     def _most_used_formation(self, team_color_id: int) -> str | None:
         row = self.conn.execute(
             "SELECT formation FROM usage_sample WHERE team_color_id = ? AND strict = 0 AND formation != '*'"
@@ -1619,7 +1658,7 @@ class Toolbox:
         if min_total_salary:
             knobs["min_total_salary"] = int(min_total_salary)
         sq = self._squad_setup(
-            team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs
+            team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs, pick=True
         )
         if isinstance(sq, dict):
             return sq
@@ -1650,6 +1689,9 @@ class Toolbox:
         if knobs.get("invest") and budget and spend is not False:  # 짠 뒤에 투자 자리를 한도 안의 더 좋은 카드로 고정하고 나머지를 다시
             sq, chosen, invested = self._invest(sq, base if moved is not None else chosen, knobs)  # 예산 없으면 진짜 기본 스쿼드에서
         out = self._squad_result(sq, chosen)
+        if sq.picked:  # 말하지 않은 팀컬러·포메이션을 사용률 비례로 뽑았다
+            out["picked"] = {**sq.picked, "note": "사용자가 말하지 않아 랭커 사용률에 비례해 무작위로 고름. 답 첫 줄에 어느 팀컬러·포메이션으로 짰는지 밝히고,"
+                                                  " 이어서 다시 부를 때는 결과의 team_color·formation을 그대로 넘길 것"}
         if invested is not None:
             out["invest"] = invested
         if (floor := knobs.get("min_total_salary")) and out["total_salary"] < min(floor, sq.limits.get("salary", floor)):
@@ -2458,7 +2500,7 @@ class Toolbox:
 
     def _squad_setup(
         self, team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include,
-        names: Iterable[str] = (), knobs: dict[str, Any] | None = None,
+        names: Iterable[str] = (), knobs: dict[str, Any] | None = None, pick: bool = False,
     ) -> _Squad | dict[str, Any]:
         """Scope, slots, rules and options shared by the squad tools; a dict = nothing to choose from (the tool's
         result as it is). `names` (띄어쓰기 없는 이름): players to look up beyond the usual top candidates (check_squad)."""
@@ -2495,8 +2537,14 @@ class Toolbox:
         derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
         if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
             team_color = derived.id
+        picked: dict[str, Any] = {}
+        if pick and team_color is None and not must and not chem and not slots and (drawn := self._random_team_color()):
+            team_color = drawn["id"]  # 팀컬러를 말하지 않은 스쿼드: 랭커 사용 인원에 비례해 클럽·국가 팀컬러 하나
+            picked["team_color"] = {"share": drawn["share"], "usage_rank": drawn["usage_rank"]}
         tc_id, tc_name = self._scope(team_color)
         tc = next((t for t in self.catalog.entries if t.id == tc_id), None)
+        if "team_color" in picked:
+            picked["team_color"]["name"] = tc_name
         # 팀컬러 규칙: 클럽·국가는 11명 전원 그 소속 카드만, 시즌 단일(스페셜)은 11명을 노리되 발동 인원 이상
         fits = self._team_color_cards(tc) if tc else None
         season_rule = tc is not None and tc.category == "special"
@@ -2510,6 +2558,11 @@ class Toolbox:
             layout = self._slots(slots)
             source = "slots"
         else:
+            if formation is None and pick:  # 상위 5개 포메이션에서 사용률 비례로 (늘 1위만 나오지 않게)
+                formation, odds = self._random_formation(usage_id)
+                source = "random_top5"
+                if formation:
+                    picked["formation"] = {"name": formation, "from": odds}
             if formation is None:
                 formation, source = self._most_used_formation(usage_id), "most_used"
             if formation is None:
@@ -2638,7 +2691,7 @@ class Toolbox:
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
             include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
             strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first, must_season=wanted_season,
-            setup_notes=setup_notes,
+            setup_notes=setup_notes, picked=picked,
             must_roles={name: {role: max(o["entry"]["rankers"] for o in mine) for role, opts in dict(slot_options).items()
                                if (mine := [o for o in opts if name in "".join((o["entry"]["name"] or "").split())])} for name in must},
         )  # fmt: skip

@@ -667,7 +667,9 @@ def create_app(
                 session.answered(key, ask, turn.text, req.message, turn.tool_calls)  # 팀 블록째 남겨 이어지는 질문도 그 팀을 안다
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
-            if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP":  # 잘리거나 도구 한도에 걸린 답은 캐시하지 않는다
+            drawn = any(n == "recommend_squad" and not a.get("slots") and not (a.get("team_color") and a.get("formation")) for n, a in turn.tool_calls)
+            # 잘리거나 도구 한도에 걸린 답, 팀컬러·포메이션을 무작위로 뽑은 스쿼드는 캐시하지 않는다 (같은 질문에 늘 같은 팀이 나오지 않게)
+            if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP" and not drawn:
                 answers.put(req.message, turn.text)
             entry.update(outcome="unverified_squad" if turn.finish_reason == "unverified_squad" else "ok", model=bot.last_model, provider=getattr(bot, "last_provider", None), tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
@@ -838,6 +840,9 @@ class _SessionTools(_LockedTools):
                 for p in lineup
             ]
             self.session.turn_squad = {k: v for k, v in tool_input.items() if k != "picks"}
+            for k in ("team_color", "formation"):  # 도구가 무작위로 고른 팀컬러·포메이션도 다음 질문의 조건으로 (다시 뽑히지 않게)
+                if not tool_input.get(k) and result.get(k) and not tool_input.get("slots"):
+                    self.session.turn_squad[k] = result[k]
         return content, is_error
 
 

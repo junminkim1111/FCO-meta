@@ -929,3 +929,19 @@ def test_admin_locks_for_an_hour_after_many_wrong_passwords_from_any_ip():
     assert status("secret", "10.9.9.9") == 429  # 잠긴 동안은 맞는 비밀번호도 안 된다
     clock[0] = 3601
     assert status("secret", "10.9.9.9") == 200  # 1시간 지나면 풀린다
+
+
+def test_drawn_team_color_and_formation_become_the_next_questions_conditions():
+    import json
+    import threading
+    from types import SimpleNamespace
+
+    from fco_meta.web.app import _Session, _SessionTools
+
+    s = _Session()
+    result = {"team_color": "첼시", "formation": "4-2-2-2", "lineup": [{"role": "ST", "player": "드록바", "card": {}}]}
+    box = SimpleNamespace(run=lambda *a: (json.dumps(result, ensure_ascii=False), False))
+    tools = _SessionTools(SimpleNamespace(toolbox=box, lock=threading.Lock()), s)
+    tools.run("recommend_squad", {"max_total_price_bp": "20억"})  # 팀컬러·포메이션을 말하지 않아 도구가 뽑음
+    s.answered(None, "20억으로 짜줘", "답")
+    assert s.squad == {"max_total_price_bp": "20억", "team_color": "첼시", "formation": "4-2-2-2"}  # 다음 질문은 같은 팀으로 이어진다
