@@ -15,7 +15,7 @@
 [aria-expanded="false"] + .trace-fold { grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows .25s var(--trace-ease), opacity .25s var(--trace-ease), visibility .25s; }
 .trace-fold > * { min-height: 0; overflow: hidden; }
 .trace-time { flex-shrink: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.trace-steps { min-height: 0; overflow: hidden; list-style: none; padding: 0; margin: 0; }
+.trace-steps { min-height: 0; overflow: hidden; list-style: none; padding: 0 0 0 30px; margin: 0; } /* 단계 목록은 머리줄 글자 시작(오브 20px + 간격 10px)만큼 들인다 */
 .trace-steps > li { position: relative; display: flex; gap: 8px; padding-top: 10px; }
 .trace-steps > li:not(:last-child)::before, .trace-steps > li:not(:last-child)::after { content: ""; position: absolute; left: 7.5px; top: 28px; bottom: -12px; width: 1px; background: var(--line-strong); }
 .trace-steps > li:not(:last-child)::after { background: var(--muted); transform: scaleY(0); transform-origin: top; transition: transform .5s var(--trace-ease); }
