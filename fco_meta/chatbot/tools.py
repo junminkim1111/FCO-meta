@@ -832,6 +832,8 @@ _KNOBS = {
     "invest": {"type": "string", "description": "돈(시세·강화)을 많이 쓸 자리 (예: 'ST,RW,LW', '공격수', 'CB,LB,RB'). 급여가 아님 — 급여는 high_salary. "
                "먼저 짠 뒤 이 자리들을 예산의 50%(2자리 70%, 3자리 80%, 4자리 85%…) 안에서 사용률 높은 더 비싼 카드로 고정하고 나머지를 다시 짠다. "
                "예산이 없으면 기본 스쿼드 총액을 기준으로 돈을 이 자리로 옮긴다. 결과의 invest.changed가 바꾼 카드"},
+    "min_total_salary": {"type": "integer", "description": "총 급여 하한 ('급여 꽉 채워' → 315 또는 max_total_salary와 같은 값, '급여 313 이상' → 313). "
+                         "짠 뒤 사용률이 가장 적게 줄어드는 교체로 급여를 올린다 (예산·급여 상한·케미는 지킴). 못 맞추면 결과의 salary_floor"},
     "high_salary": {"type": "string", "description": "급여가 높은 카드를 쓸 자리, 쉼표로 ('고급여 키퍼' → 'GK'). '자리:숫자'면 그 급여 이상 카드만 "
                     "('급여 25 이상 키퍼' → 'GK:25'). 돈(시세)이 아니라 카드 급여. 총 급여 한도는 다른 자리 급여를 낮춰 맞춘다"},
     "prefer": {"type": "string", "description": "자리별로 원하는 능력치 '자리:능력치', 쉼표로 (예: 'ST:키', 'RW:속력,LW:속력'). "
@@ -1611,8 +1613,11 @@ class Toolbox:
         traits: str | None = None,
         can_add_trait: bool = False,
         high_salary: str | None = None,
+        min_total_salary: int | None = None,
     ) -> dict[str, Any]:
         knobs = self._squad_knobs(exclude, owned, min_grade, save, invest, prefer, traits, can_add_trait, high_salary)
+        if min_total_salary:
+            knobs["min_total_salary"] = int(min_total_salary)
         sq = self._squad_setup(
             team_color, formation, strict, max_total_price_bp, max_total_salary, slots, chemistry, include, knobs=knobs
         )
@@ -1629,6 +1634,7 @@ class Toolbox:
             sq.slot_options = self._budget_grades(sq.slot_options, knobs)
         sq.slot_options = _pin_includes(sq.slot_options, sq.must)  # 넣을 선수는 한 자리를 그 선수로 고정하고 나머지를 맞춘다
         chosen, loose = _choose_floored(sq.slot_options, sq.limits, sq.reqs)
+        chosen = self._raise_salary(sq, chosen, knobs)  # 급여 하한: 사용률을 가장 적게 잃는 교체로 급여를 올린다
         if not loose:  # 하한 안에서 맞췄으면 예산 넘기기·강화 올리기도 그 카드들 안에서
             sq.slot_options = _card_floor(sq.slot_options)
         wider = self._stretch(sq, chosen) if budget else None
@@ -1636,12 +1642,18 @@ class Toolbox:
             chosen = self._spend(sq, chosen, knobs)
             chosen = self._better_cards(sq, chosen, knobs)  # 다 11강인데도 남으면 더 좋은 카드로
             chosen = self._top_grades(sq, chosen, knobs)  # 그래도 남으면 키퍼 → 풀백 → 윙어 → 볼란치 → 나머지 12·13강
+        if (floor := knobs.get("min_total_salary")) and sum(c["salary"] or 0 for c in chosen if c) < floor:  # 강화·카드를 바꾸다 내려갔으면 한 번 더
+            chosen = self._raise_salary(sq, chosen, knobs)
+            if budget and spend is not False:
+                chosen = self._spend(sq, chosen, knobs)
         invested = None
         if knobs.get("invest") and budget and spend is not False:  # 짠 뒤에 투자 자리를 한도 안의 더 좋은 카드로 고정하고 나머지를 다시
             sq, chosen, invested = self._invest(sq, base if moved is not None else chosen, knobs)  # 예산 없으면 진짜 기본 스쿼드에서
         out = self._squad_result(sq, chosen)
         if invested is not None:
             out["invest"] = invested
+        if (floor := knobs.get("min_total_salary")) and out["total_salary"] < min(floor, sq.limits.get("salary", floor)):
+            out["salary_floor"] = (f"총 급여 {floor} 이상을 맞추지 못하고 {out['total_salary']} (급여가 더 높은 카드로 바꾸면 예산·급여 상한·케미 조건을 넘음)")
         if moved is not None and invested is not None:
             out["invest"]["budget_from_base"] = (f"예산을 주지 않아 기본 스쿼드 총액 {format_bp(moved)}을 기준으로 투자 자리로 돈을 옮김."
                                                  " 사용자가 예산을 말하지 않았으니 답에 예산·남은 금액을 쓰지 말 것")  # fmt: skip
@@ -1671,6 +1683,40 @@ class Toolbox:
             if hs := knobs.get("high_salary"):
                 out["applied"]["high_salary"] = {r: f"급여 {f} 이상" if f else "급여 높은 카드 우선" for r, f in hs.items()}
         return out
+
+    def _raise_salary(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> list[dict[str, Any] | None]:
+        """min_total_salary ("급여 꽉 채워"): while the total salary is under the floor (never above the salary limit), swap
+        one slot to a higher-salary card rankers use there — the swap that loses the least usage per salary point gained,
+        keeping every limit and requirement. Owned and pinned cards stay."""
+        floor = knobs.get("min_total_salary")
+        if not floor:
+            return chosen
+        floor, chosen = min(floor, sq.limits.get("salary", floor)), list(chosen)
+
+        def total(lineup) -> int:
+            return sum(c["salary"] or 0 for c in lineup if c)
+
+        while total(chosen) < floor:
+            best = None
+            for i, (_, options) in enumerate(sq.slot_options):
+                now = chosen[i]
+                if now is None or now.get("owned") or now.get("fixed_grade"):
+                    continue
+                used = {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i}
+                for o in options:
+                    if o["entry"]["pid"] in used or (o["salary"] or 0) <= (now["salary"] or 0):
+                        continue
+                    combo = chosen[:i] + [o] + chosen[i + 1:]
+                    if not _fits(combo, sq.limits, sq.reqs):
+                        continue
+                    gain = min(o["salary"] - (now["salary"] or 0), floor - total(chosen))  # 하한을 넘는 급여는 쳐 주지 않는다
+                    key = (max(_score(now) - _score(o), 0) / gain, -gain)
+                    if best is None or key < best[0]:
+                        best = (key, i, o)
+            if best is None:
+                return chosen
+            chosen[best[1]] = best[2]
+        return chosen
 
     def _invest(self, sq: _Squad, chosen: list[dict[str, Any] | None], knobs: dict[str, Any]) -> tuple[_Squad, list[dict[str, Any] | None], dict[str, Any]]:
         """invest ("공격수에 돈을 많이"): after the usual lineup, each invest slot (the most used first) takes the most used
@@ -1711,6 +1757,7 @@ class Toolbox:
                 if not _fits(got, sq.limits, sq.reqs):
                     continue
                 tsq = replace(sq, slot_options=trial)
+                got = self._raise_salary(tsq, got, knobs)
                 got = self._top_grades(tsq, self._better_cards(tsq, self._spend(tsq, got, knobs), knobs), knobs)
                 if spent(got) > ceiling:  # 다시 짜며 남은 돈이 다른 투자 자리까지 올려 합계 한도를 넘으면 다음 후보
                     continue

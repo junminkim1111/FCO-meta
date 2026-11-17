@@ -833,6 +833,24 @@ def test_invest_pins_a_dearer_card_within_the_ceiling_and_rebuilds_the_rest(tool
     assert "기본 스쿼드 총액" in r["invest"]["budget_from_base"]
 
 
+def test_min_total_salary_raises_the_salary_with_the_smallest_usage_loss(toolbox):  # noqa: F811
+    # 볼란치L ICON 급여 15(많이 씀) / 볼란치R 급여 20. 기본은 L, 하한 18이면 R로 (L로는 못 맞춤), 30이면 못 맞췄다고 알린다
+    toolbox.conn.executemany(
+        "INSERT INTO card (spid, pid, season_id, name, salary, updated_at) VALUES (?, ?, ?, ?, ?, 'x')",
+        [(250000009, 9, 250, "볼란치R", 20), (101000011, 11, 101, "볼란치L", 15)],
+    )
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM"}
+    assert run(toolbox, "recommend_squad", args)["total_salary"] == 15
+    r = run(toolbox, "recommend_squad", {**args, "min_total_salary": 18})
+    assert (r["lineup"][0]["player"], r["total_salary"]) == ("볼란치R", 20) and "salary_floor" not in r
+    r = run(toolbox, "recommend_squad", {**args, "min_total_salary": 30})
+    assert r["total_salary"] == 20 and "30 이상을 맞추지 못하고 20" in r["salary_floor"]
+    # 급여 상한이 하한보다 낮으면 상한까지만 (상한을 넘기지 않는다)
+    r = run(toolbox, "recommend_squad", {**args, "max_total_salary": 17, "min_total_salary": 30})
+    assert r["total_salary"] == 15
+
+
 def test_squad_trait_knob_keeps_only_cards_with_the_traits(toolbox):  # noqa: F811
     # 볼란치L ICON만 트릭스터가 달려 있다. 라브까지 "달 수 있는"이면 8강 이상에서 하나를 새로 단다
     toolbox.conn.execute("UPDATE card_detail SET traits = '[\"트릭스터\"]' WHERE spid = 101000011")
