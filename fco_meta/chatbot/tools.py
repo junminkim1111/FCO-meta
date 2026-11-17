@@ -1680,11 +1680,19 @@ class Toolbox:
         slots = [i for i, ((role, _), c) in enumerate(zip(sq.slot_options, chosen))
                  if role in knobs["invest"] and c and c["price"] is not None and not c.get("owned") and not c.get("fixed_grade")]  # fmt: skip
         ceiling = int(sq.limits["price"] * (INVEST_CEILING - INVEST_FIRST_GAP * 0.5 ** (len(slots) - 1))) if slots else 0
-        seen, used, changed = self._ranker_top_grades(), 0, []
-        for i in sorted(slots, key=lambda i: -_card_usage(chosen[i])):
+        seen, changed = self._ranker_top_grades(), []
+
+        def spent(lineup) -> int:  # 투자 자리 전체 합계 (한도는 이 합계로 본다)
+            return sum(lineup[j]["price"] or 0 for j in slots)
+
+        already = slots and spent(chosen) >= ceiling  # 기본 스쿼드가 이미 한도 이상을 투자 자리에 쓴다
+        done: set[int] = set()  # 이미 고정한 투자 자리 (그 선수는 다른 투자 자리 후보에서 뺀다)
+        for i in [] if already else sorted(slots, key=lambda i: -_card_usage(chosen[i])):
+            done.add(i)
             role, options = sq.slot_options[i]
-            # 다른 투자 자리의 선수도 후보 (그 자리는 다시 고른다): 빼면 가장 많이 쓰는 비싼 카드를 놓친다 (리버풀 ST 마네)
-            now, others = chosen[i], {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i and j not in slots}
+            # 아직 고정하지 않은 다른 투자 자리의 선수도 후보 (그 자리는 다시 고른다): 빼면 가장 많이 쓰는 비싼 카드를 놓친다 (리버풀 ST 마네)
+            now = chosen[i]
+            others = {c["entry"]["pid"] for j, c in enumerate(chosen) if c and j != i and (j not in slots or j in done)}
             cands = []
             for o in options:
                 if o["entry"]["pid"] in others or o.get("owned"):
@@ -1693,7 +1701,7 @@ class Toolbox:
                     if grade > SQUAD_MAX_GRADE and (seen.get((o["card"]["sp_id"], grade)) or 0) < TOP_GRADE_MIN_RANKERS:
                         continue
                     price = self._price(o["card"]["sp_id"], grade)
-                    if price and now["price"] < price["price_bp"] <= ceiling - used:
+                    if price and now["price"] < price["price_bp"] and spent(chosen) - now["price"] + price["price_bp"] <= ceiling:
                         cands.append((_card_usage(o), price["price_bp"], o, price))
             for _, bp, o, price in sorted(cands, key=lambda t: (-t[0], -t[1]))[:INVEST_TRIES]:  # 많이 쓰는 카드, 같으면 높은 강화
                 new = {**o, "price": bp, "fixed_grade": True, "card": {**o["card"], "most_used_grade": price["grade"], "price_at_most_used_grade": price}}
@@ -1704,12 +1712,18 @@ class Toolbox:
                     continue
                 tsq = replace(sq, slot_options=trial)
                 got = self._top_grades(tsq, self._better_cards(tsq, self._spend(tsq, got, knobs), knobs), knobs)
-                sq, chosen, used = tsq, got, used + bp
+                if spent(got) > ceiling:  # 다시 짜며 남은 돈이 다른 투자 자리까지 올려 합계 한도를 넘으면 다음 후보
+                    continue
+                sq, chosen = tsq, got
                 changed.append(f"{role} {now['entry']['name']} {format_bp(now['price'])} → {o['entry']['name']} "
                                f"{(o['card']['season'] or '').split(' (')[0]} {price['grade']}강 {format_bp(bp)}")  # fmt: skip
                 break
-        note = {"ceiling": format_bp(ceiling), "slots": len(slots), "changed": changed}
-        if slots and not changed:
+        total, budget = spent(chosen), sq.limits["price"]
+        note = {"ceiling": format_bp(ceiling), "slots": len(slots), "changed": changed,
+                "spent": f"{format_bp(total)} · 예산의 {round(100 * total / budget)}%" if budget else format_bp(total)}  # fmt: skip
+        if already:
+            note["note"] = f"기본 스쿼드가 이미 투자 자리에 예산의 {round(100 * total / budget)}%를 써서(한도 {format_bp(ceiling)}) 그대로 둠"
+        elif slots and not changed:
             note["note"] = "투자 자리에 지금보다 비싸면서 한도 안에 드는 카드가 없거나, 넣으면 나머지를 예산 안에 맞출 수 없어 그대로 둠"
         return sq, chosen, note
 

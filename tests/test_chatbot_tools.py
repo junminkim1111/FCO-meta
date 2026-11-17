@@ -823,7 +823,11 @@ def test_invest_pins_a_dearer_card_within_the_ceiling_and_rebuilds_the_rest(tool
     assert (r["lineup"][0]["player"], r["lineup"][0]["card"]["most_used_grade"], r["total_price_bp"]) == ("볼란치R", 8, 1_050_000_000)
     # 한도 안에 더 비싼 카드가 없으면 그대로 두고 알린다
     r = run(toolbox, "recommend_squad", {**args, "max_total_price_bp": 1_200_000_000, "invest": "DM"})
-    assert not r["invest"]["changed"] and "그대로 둠" in r["invest"]["note"]
+    assert not r["invest"]["changed"] and "이미 투자 자리에 예산의 75%" in r["invest"]["note"]  # 기본이 이미 한도(6억) 넘게 씀
+    # 두 자리면 한도 70%를 투자 자리 합계로 본다: 21억 → 14억 7천만. R을 8강(10억 5천만)으로 올리면 L 9억과 합쳐 19억 5천만이라 안 됨
+    two = run(toolbox, "recommend_squad", {**args, "slots": "DM,DM", "invest": "DM"})
+    assert two["invest"]["ceiling"] == "14억 7,000만" and not two["invest"]["changed"] and two["invest"]["spent"].endswith("예산의 57%")
+    assert len({p["player"] for p in two["lineup"]}) == 2
     # 예산이 없으면 기본 스쿼드 총액을 기준으로 옮긴다 (답에 예산을 쓰지 말라는 안내와 함께)
     r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "invest": "DM"})
     assert "기본 스쿼드 총액" in r["invest"]["budget_from_base"]
