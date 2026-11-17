@@ -10,9 +10,11 @@ Values already set in the environment win over the file. Values are never printe
 from __future__ import annotations
 
 import os
+from datetime import timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+KST = timezone(timedelta(hours=9))
 
 
 def _parse(text: str) -> dict[str, str]:

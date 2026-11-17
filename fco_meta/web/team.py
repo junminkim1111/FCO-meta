@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from ..config import KST
 from ..market.money import format_bp
 from ..market.roles import ROLES
 from ..openapi.errors import NotFoundError
@@ -24,7 +25,6 @@ from ..pipeline.formation import POSITION_NAMES, SUB, FormationTable
 from ..pipeline.squads import match_id_time
 from ..pipeline.store import parse_match_date
 
-KST = timezone(timedelta(hours=9))
 MATCH_TYPES = {50: "공식경기", 60: "공식 친선", 30: "리그 친선"}  # 1vs1에서 자기 스쿼드로 하는 경기 (클래식 1on1은 고정 스쿼드라 뺌)
 OLD_AFTER = timedelta(days=30)  # 이보다 오래된 경기면 모델에게 그렇다고 알린다
 TEAM_COLOR_MIN = 5  # 클럽·국적 팀컬러: 이 인원 이상 겹쳐야 그 팀의 팀컬러로 본다 (발동 인원은 데이터에 없음)

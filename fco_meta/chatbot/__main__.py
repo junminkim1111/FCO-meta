@@ -105,7 +105,7 @@ def _gemini(toolbox: Toolbox, args: argparse.Namespace):
     try:
         from google import genai
     except ImportError:
-        print('google-genai가 필요합니다: pip install -e ".[web]"', file=sys.stderr)
+        print('google-genai가 필요합니다: pip install -e .', file=sys.stderr)
         return None
     from .gemini import GeminiChat, describe_error, models_from_env
 

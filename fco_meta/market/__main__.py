@@ -11,10 +11,10 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
-from ..config import load_env
+from ..config import KST, load_env
 from ..crawler.client import DatacenterClient
 from ..crawler.teamcolors import TeamColorCatalog
 from .collector import fetch_price_history, search_all
@@ -26,7 +26,6 @@ from .search import PlayerSearch
 from .storage import MarketStorage
 
 DEFAULT_DB = Path("data/fco_meta.sqlite")
-KST = timezone(timedelta(hours=9))
 
 
 def main(argv: list[str] | None = None) -> int:

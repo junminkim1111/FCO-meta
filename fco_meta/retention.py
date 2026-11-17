@@ -7,7 +7,6 @@
 - 시세 기록(card_price): PRICE_DAYS일
 - 사용률 집계(usage_stats·usage_sample): USAGE_DAYS일 (메타 동향이 7일 전과 비교, 10,000명이면 스냅샷당 약 55MB)
 - 가장 최신 스냅샷(스쿼드·랭킹·집계)과 카드별 최신 시세는 날짜와 상관없이 남긴다.
-- 예전 방식으로 저장된 경기 기록은 지금 방식(선발 기록과 스코어만)으로 줄인다.
 매일 수집 끝에 실행하고, 지운 만큼 파일이 줄도록 VACUUM 한다.
 """
 
@@ -16,11 +15,12 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from .config import KST
+
 RAW_DAYS = 3
 RANKING_DAYS = 30
 PRICE_DAYS = 30
 USAGE_DAYS = 8
-KST = timezone(timedelta(hours=9))
 
 
 def _cutoff(now: datetime, days: int) -> str:
@@ -37,16 +37,6 @@ def prune(conn: sqlite3.Connection, now: datetime | None = None, vacuum: bool = 
     def run(table: str, sql: str, *args: object, key: str | None = None) -> None:
         if table in tables:
             deleted[key or table] = conn.execute(sql, args).rowcount
-
-    # 예전 방식으로 저장된 경기 기록 줄이기 (지금 수집은 처음부터 이렇게 저장한다, pipeline/store.py save_match)
-    run("match_player", "UPDATE match_player SET stats = NULL WHERE starter = 0 AND stats IS NOT NULL", key="교체 선수 기록 비움")
-    run(
-        "match_team",
-        "UPDATE match_team SET shots = NULL,"
-        " detail = json_object('shoot', json_object('goalTotal', json_extract(detail, '$.shoot.goalTotal')))"
-        " WHERE shots IS NOT NULL",
-        key="팀 상세를 스코어만 남김",
-    )
 
     raw, ranking = _cutoff(now, RAW_DAYS), _cutoff(now, RANKING_DAYS)
     if "ranker_squad" in tables:

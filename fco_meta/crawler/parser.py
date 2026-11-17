@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from selectolax.parser import HTMLParser, Node
 
+from ..config import KST
 from .models import RankerRow, RankPage, RankSummary, RateEntry, TeamColor
-
-KST = timezone(timedelta(hours=9))
 
 _TOTAL_RE = re.compile(r"([\d,]+)명의 구단주님이 검색 되었습니다")
 _AS_OF_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 기준")

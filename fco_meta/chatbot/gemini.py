@@ -12,13 +12,14 @@ import itertools
 from collections import Counter
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .numbers import RECHECK_AT, unsupported_numbers
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
+from ..config import KST
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ _NOT_CHAT = (
 )  # fmt: skip
 OVERLOAD_COOLDOWN = 120.0  # 재시도해도 혼잡(5xx)이던 모델은 잠시 건너뜀 (초)
 QUOTA_RESET_TZ = ZoneInfo("America/Los_Angeles")  # Gemini API 하루 한도는 태평양 시간 자정에 초기화
-KST = timezone(timedelta(hours=9))
 # 모델 → 이 시각(epoch 초)까지 건너뜀. 한도 소진·사용 불가 모델을 도구 호출마다 다시 부르지 않도록 프로세스 전체가 공유한다
 _COOLDOWN: dict[str, float] = {}
 
@@ -205,7 +205,7 @@ def unavailable_reason() -> str | None:
     try:
         import google.genai  # noqa: F401
     except ImportError:
-        return 'google-genai가 설치되지 않았습니다 (pip install -e ".[web]")'
+        return 'google-genai가 설치되지 않았습니다 (pip install -e .)'
     if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
         return "GEMINI_API_KEY가 없습니다 (.env에 GEMINI_API_KEY=... 추가)"
     return None

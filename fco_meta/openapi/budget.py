@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
+from ..config import KST
 from .errors import BudgetExceededError
-
-KST = timezone(timedelta(hours=9))
 
 SCHEMA = """
 -- Open API 호출 수 (KST 날짜별·엔드포인트별). 재시도·실패 요청도 모두 센다.

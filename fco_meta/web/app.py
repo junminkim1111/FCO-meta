@@ -14,7 +14,7 @@ import uuid
 from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Iterable
 from contextlib import asynccontextmanager, closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,6 +33,7 @@ from ..chatbot.tools import Toolbox
 from .chatlog import ChatLog
 from .squadfeed import FeedError, squad_link, squad_view
 from .team import Team, TeamNotFound, fetch_feed, fetch_team
+from ..config import KST
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +42,6 @@ GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send", "data")  # 
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
-KST = timezone(timedelta(hours=9))
 FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
 DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(/model 없을 때), /model deepseek (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
 LUNA_MODEL = "openai/gpt-6-luna"  # /model gpt (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)

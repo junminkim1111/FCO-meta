@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import load_env
+from .config import KST, load_env
 from .retention import prune
 from .analytics import UsageStore
 from .crawler import DatacenterClient, RankQuery, crawl_rankings
@@ -47,7 +47,6 @@ from .storage import Storage, latest_unfiltered_snapshot
 
 log = logging.getLogger(__name__)
 
-KST = timezone(timedelta(hours=9))
 DEFAULT_DB = Path("data/fco_meta.sqlite")
 META_RESERVE = 3  # 메타데이터 갱신용으로 남겨 둘 호출 수
 DEFAULT_TOP = 10_000  # 스쿼드를 받을 랭커 수 (랭커당 2~3회 호출). 일일 한도가 모자라면 남은 랭커는 다음 날 이어서 수집

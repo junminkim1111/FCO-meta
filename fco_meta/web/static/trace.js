@@ -29,6 +29,8 @@ const ICONS = {
   tool: ["-0.95 0.95", "M18.03 3.64C16.07 2.66 13.7 3.01 12.1 4.52C10.51 6.02 10.03 8.37 10.9 10.38L5.58 15.7C4.83 16.45 4.83 17.66 5.58 18.42C6.33 19.17 7.55 19.17 8.3 18.42L13.62 13.1C15.63 13.97 17.98 13.49 19.48 11.9C20.99 10.3 21.34 7.93 20.36 5.97L17.25 9.08L14.92 6.75L18.03 3.64Z"],
   write: ["-0.05 0", "M12 3.25A8.75 8.75 0 1 1 7.9 19.7L3.5 20.5L4.3 16.1A8.75 8.75 0 0 1 12 3.25Z"],
   recheck: ["0.03 0.35", "M19.05 14.56A7.5 7.5 0 1 1 17.3 6.7L18.96 8.36", "M19.43 3.82L19.43 6.87C19.43 8.23 18.84 8.82 17.48 8.82L14.43 8.82"],
+  failed: ["0 0", "M12 2.75A9.25 9.25 0 1 1 12 21.25A9.25 9.25 0 1 1 12 2.75Z", "M9.25 9.25L14.75 14.75", "M14.75 9.25L9.25 14.75"], // 실패한 단계 (close-circle-rounded)
+  stopped: ["0 0", "M12 2.75A9.25 9.25 0 1 1 12 21.25A9.25 9.25 0 1 1 12 2.75Z", "M12 11V16.5", "M12 7.75h.01"], // 사용자가 멈춘 단계 (info-circle-rounded)
   blocked: ["0 -0.18", "M9.75 6.91C11.32 4.17 12.68 4.17 14.25 6.91L19.26 15.6C20.83 18.33 20.15 19.5 17 19.5L7 19.5C3.85 19.5 3.17 18.33 4.74 15.6L9.75 6.91Z", "M12 9V13", "M12 16.25h.01"],
 };
 // 도구 단계 이름: 하는 동안 "… 중...", 끝나면 "…함"
@@ -57,10 +59,10 @@ export function traceBox() {
     step.status = value;
     step.row.dataset.status = value;
     step.icon.replaceChildren();
-    if (value === "done") {
+    if (value !== "running") {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 24 24");
-      const [shift, ...paths] = ICONS[step.kind];
+      const [shift, ...paths] = ICONS[value === "error" ? "failed" : value === "stopped" ? "stopped" : step.kind];
       const g = document.createElementNS(svg.namespaceURI, "g");
       g.setAttribute("transform", `translate(${shift})`);
       for (const d of paths) {
@@ -71,8 +73,6 @@ export function traceBox() {
       }
       svg.append(g);
       step.icon.append(svg);
-    } else if (value === "error" || value === "stopped") step.icon.textContent = value === "error" ? "×" : "−";
-    if (value !== "running") {
       step.time.textContent = `${((performance.now() - step.started) / 1000).toFixed(1)}초`;
       step.label.textContent = step.done;
       step.open(false);
@@ -124,11 +124,12 @@ export function traceBox() {
         closeTransient();
         const step = add(`${TOOL_LABELS[ev.name] || "도구 호출"} 중...`, "tool", ev.name);
         log(step, `1 도구 호출 ${ev.name}()`);
+        step.open(false); // 도구는 이름 줄만 (눌러야 호출·결과가 보인다)
       } else if (ev.kind === "result") {
         const step = steps.find((s) => s.name === ev.name && s.status === "running");
         if (step) {
           status(step, ev.ok ? "done" : "error");
-          log(step, `\n2 도구 결과 ${ev.name}()${ev.ok ? "" : " (오류)"}`, true);
+          log(step, `\n2 도구 결과 ${ev.name}()${ev.ok ? "" : " (실패)"}`, true);
         }
       } else if (ev.kind === "recheck") { // 답의 수치를 고쳐 쓰는 중 (다음 답 글이 오면 끝)
         closeTransient();

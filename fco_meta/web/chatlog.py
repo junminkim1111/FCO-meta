@@ -18,12 +18,13 @@ import uuid
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
+
+from ..config import KST
 
 log = logging.getLogger(__name__)
 
-KST = timezone(timedelta(hours=9))
 FLUSH_EVERY = 600.0  # 초: 이만큼마다 모아 둔 기록을 데이터셋에 올린다 (서버가 꺼질 때도)
 MAX_PENDING = 2000  # 올리지 못한 기록을 이 이상 쌓지 않는다 (오래된 것부터 버림)
 RECENT = 300  # 관리자 페이지에 보여 줄 최근 기록 수

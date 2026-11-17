@@ -387,7 +387,7 @@ const headers = () => ({ "Content-Type": "application/json" });
 let inflight = null;
 function setBusy(ctrl) {
   inflight = ctrl;
-  if (ctrl) setHint(""); else randomHint(); // 답을 만드는 동안엔 예시를 비운다 (끝나면 send가 다음 질문으로 덮어쓸 수 있다)
+  setHint(ctrl ? "" : DEFAULT_HINT); // 답을 만드는 동안엔 비우고, 끝나면 기본 안내 (send가 답의 다음 질문으로 덮어쓴다). 무작위 예시는 대화 전 첫 화면만
   beam.set(!!ctrl);
   $("send").type = ctrl ? "button" : "submit";
   $("send").toggleAttribute("data-busy", !!ctrl); // 위쪽 화살표 ↔ 정지 사각형
@@ -530,7 +530,7 @@ async function send(text) {
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
   const next = !ctrl.signal.aborted && splitNext(answer)[1];
-  if (next) setHint(next, true); // 다음 질문이 없으면 setBusy(null)이 고른 무작위 안내 그대로
+  if (next) setHint(next, true); // 다음 질문이 없으면 기본 안내 그대로 (대화와 상관없는 예시를 띄우지 않는다)
   if (used) bubble.after(el("div", { class: "applied", text: modelText(used) }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
   if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId, built));
