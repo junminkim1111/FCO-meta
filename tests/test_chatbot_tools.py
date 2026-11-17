@@ -788,6 +788,47 @@ def test_squad_knobs_turn_wishes_into_the_search(toolbox):  # noqa: F811
     assert toolbox.run("recommend_squad", {**args, "prefer": "DM:없는능력치"})[1] is True
 
 
+def test_high_salary_knob_picks_the_higher_salary_card_not_the_pricier_one(toolbox):  # noqa: F811
+    # "고급여 키퍼"는 돈(invest)이 아니라 카드 급여: 볼란치L ICON(급여 15, 많이 씀) 대신 볼란치R(급여 20)
+    toolbox.conn.executemany(
+        "INSERT INTO card (spid, pid, season_id, name, salary, updated_at) VALUES (?, ?, ?, ?, ?, 'x')",
+        [(250000009, 9, 250, "볼란치R", 20), (101000011, 11, 101, "볼란치L", 15)],
+    )
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM"}
+    pick = lambda r: (r["lineup"][0]["player"], r["lineup"][0]["card"]["salary"])  # noqa: E731
+    assert pick(run(toolbox, "recommend_squad", args)) == ("볼란치L", 15)
+    r = run(toolbox, "recommend_squad", {**args, "high_salary": "DM"})
+    assert pick(r) == ("볼란치R", 20) and r["applied"]["high_salary"] == {"DM": "급여 높은 카드 우선"}
+    r = run(toolbox, "recommend_squad", {**args, "high_salary": "DM:18"})  # 하한: 그 급여 이상 카드만
+    assert pick(r) == ("볼란치R", 20) and r["applied"]["high_salary"] == {"DM": "급여 18 이상"}
+    r = run(toolbox, "recommend_squad", {**args, "high_salary": "DM:30"})  # 그런 카드가 없으면 알리고 가장 높은 급여로
+    assert pick(r) == ("볼란치R", 20) and "급여 30 이상 카드가" in r["note"]
+    assert toolbox.run("recommend_squad", {**args, "high_salary": "DM:많이"})[1] is True  # 형식 오류는 도구 오류
+
+
+def test_invest_pins_a_dearer_card_within_the_ceiling_and_rebuilds_the_rest(toolbox):  # noqa: F811
+    # 볼란치L ICON 5강 9억(많이 씀, 더 높은 강화 시세 없음) / 볼란치R S250 5강 3억, 8강 10억 5천만
+    from fco_meta.chatbot.tools import INVEST_CEILING, INVEST_FIRST_GAP
+
+    assert [round(INVEST_CEILING - INVEST_FIRST_GAP * 0.5 ** (n - 1), 3) for n in (1, 2, 3, 4)] == [0.5, 0.7, 0.8, 0.85]
+    toolbox.conn.execute("INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (250000009, 8, 1050000000, '2026-09-28T12:00:00+00:00')")
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM", "max_total_price_bp": 2_100_000_000}
+    base = run(toolbox, "recommend_squad", args)
+    assert (base["lineup"][0]["player"], base["total_price_bp"]) == ("볼란치L", 900_000_000) and "invest" not in base
+    # DM 한 자리: 한도 50% = 10억 5천만 → 지금(9억)보다 비싸고 한도 안인 카드 (볼란치R 8강)로 고정
+    r = run(toolbox, "recommend_squad", {**args, "invest": "DM"})
+    assert r["invest"]["ceiling"] == "10억 5,000만" and len(r["invest"]["changed"]) == 1
+    assert (r["lineup"][0]["player"], r["lineup"][0]["card"]["most_used_grade"], r["total_price_bp"]) == ("볼란치R", 8, 1_050_000_000)
+    # 한도 안에 더 비싼 카드가 없으면 그대로 두고 알린다
+    r = run(toolbox, "recommend_squad", {**args, "max_total_price_bp": 1_200_000_000, "invest": "DM"})
+    assert not r["invest"]["changed"] and "그대로 둠" in r["invest"]["note"]
+    # 예산이 없으면 기본 스쿼드 총액을 기준으로 옮긴다 (답에 예산을 쓰지 말라는 안내와 함께)
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "invest": "DM"})
+    assert "기본 스쿼드 총액" in r["invest"]["budget_from_base"]
+
+
 def test_squad_trait_knob_keeps_only_cards_with_the_traits(toolbox):  # noqa: F811
     # 볼란치L ICON만 트릭스터가 달려 있다. 라브까지 "달 수 있는"이면 8강 이상에서 하나를 새로 단다
     toolbox.conn.execute("UPDATE card_detail SET traits = '[\"트릭스터\"]' WHERE spid = 101000011")
@@ -927,6 +968,8 @@ def test_leftover_after_11_swaps_to_better_cards_then_ranker_owned_top_grades_in
     toolbox._ranker_top_grades = lambda: {(4, 12): 4, (3, 12): 2, (3, 13): 2}
     chosen = toolbox._top_grades(sq, chosen, {})
     assert [c["card"]["most_used_grade"] for c in chosen] == [11, 12, 12] and chosen[2]["top_grade_rankers"] == 4
+    toolbox._ranker_top_grades = lambda: {(4, 12): 1, (3, 12): 1}  # 랭커 1명뿐인 12·13강은 매물이 거의 없어 올리지 않는다
+    assert [c["card"]["most_used_grade"] for c in toolbox._top_grades(sq, [st_better, rb, gk], {})] == [11, 11, 11]
     toolbox._ranker_top_grades = lambda: {}  # 그 강화로 쓰는 랭커가 없으면 올리지 않는다
     assert [c["card"]["most_used_grade"] for c in toolbox._top_grades(sq, [st_better, rb, gk], {})] == [11, 11, 11]
     lower = {**st_now, "card": {"sp_id": 1, "most_used_grade": 10}}

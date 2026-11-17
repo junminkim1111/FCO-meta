@@ -345,7 +345,16 @@
             "GK": 25
           }
         }
-      }
+      },
+      "oracle": [
+        [
+          "recommend_squad",
+          {
+            "team_color": "대한민국",
+            "high_salary": "GK:25"
+          }
+        ]
+      ]
     },
     {
       "q": "급여 315로 맨유 스쿼드 짜줘",
