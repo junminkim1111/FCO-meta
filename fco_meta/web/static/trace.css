@@ -1,21 +1,29 @@
 /* Kokonut UI AI Loading motion, adapted for FCLM (MIT). */
-.trace { --trace-ease: cubic-bezier(.23, 1, .32, 1); color: var(--muted); font-size: 13px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.trace { --trace-ease: cubic-bezier(.23, 1, .32, 1); color: var(--muted); font-size: 13px; }
 .trace .trace-head, .trace .trace-line { width: 100%; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; font-size: inherit; font-weight: 400; }
 .trace .trace-head { color: var(--text); font-weight: 500; }
+.trace .trace-head { display: flex; align-items: center; gap: 8px; }
+.trace-wait { display: inline-flex; align-items: center; gap: 10px; min-width: 0; color: var(--muted); font-weight: 400; }
+.trace-wait canvas { flex: none; }
+/* 끝나면: 흐린 머리줄 + › + 아래 연한 구분선 */
+.trace-done .trace-head { color: var(--muted); font-weight: 400; padding-bottom: 8px; border-bottom: 1px solid var(--line); border-radius: 0; }
+.trace-done .trace-head::after { content: "›"; content: "›" / ""; transition: transform .2s var(--trace-ease); }
+.trace-done .trace-head[aria-expanded="true"]::after { transform: rotate(90deg); }
+.trace-wait .shimmer { display: inline-block; }
 .trace button:disabled { opacity: 1; cursor: default; }
 .trace-fold { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows .25s var(--trace-ease), opacity .25s var(--trace-ease); }
 [aria-expanded="false"] + .trace-fold { grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows .25s var(--trace-ease), opacity .25s var(--trace-ease), visibility .25s; }
 .trace-fold > * { min-height: 0; overflow: hidden; }
 .trace-time { flex-shrink: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .trace-steps { min-height: 0; overflow: hidden; list-style: none; padding: 0; margin: 0; }
-.trace-steps > li { position: relative; display: flex; gap: 12px; padding-top: 14px; }
-.trace-steps > li:not(:last-child)::before, .trace-steps > li:not(:last-child)::after { content: ""; position: absolute; left: 7.5px; top: 34px; bottom: -10px; width: 1px; background: var(--line-strong); }
-.trace-steps > li:not(:last-child)::after { background: var(--accent); transform: scaleY(0); transform-origin: top; transition: transform .5s var(--trace-ease); }
+.trace-steps > li { position: relative; display: flex; gap: 8px; padding-top: 10px; }
+.trace-steps > li:not(:last-child)::before, .trace-steps > li:not(:last-child)::after { content: ""; position: absolute; left: 7.5px; top: 28px; bottom: -12px; width: 1px; background: var(--line-strong); }
+.trace-steps > li:not(:last-child)::after { background: var(--muted); transform: scaleY(0); transform-origin: top; transition: transform .5s var(--trace-ease); }
 .trace-steps > li[data-status="done"]::after { transform: scaleY(1); }
-.trace-icon { width: 16px; height: 16px; flex-shrink: 0; display: grid; place-items: center; color: var(--accent); margin-top: 2px; }
+.trace-icon { width: 16px; height: 16px; flex-shrink: 0; display: grid; place-items: center; color: var(--muted); margin-top: 2px; }
 [data-status="running"] > .trace-icon { border: 1.5px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: trace-spin .8s linear infinite; }
-.trace-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; animation: trace-icon-in .18s var(--trace-ease); }
-.trace-icon path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: trace-check .3s .05s var(--trace-ease) forwards; }
+.trace-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; animation: trace-icon-in .3s var(--trace-ease); }
+.trace-icon path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: trace-check .5s .05s var(--trace-ease) forwards; }
 .trace-body { flex: 1; min-width: 0; }
 .trace-line { display: flex; align-items: baseline; gap: 8px; }
 .trace-label { overflow-wrap: anywhere; }
@@ -28,7 +36,7 @@
 @keyframes trace-spin { to { transform: rotate(360deg); } }
 @keyframes trace-wave { 50% { opacity: .3; } }
 @keyframes trace-check { to { stroke-dashoffset: 0; } }
-@keyframes trace-icon-in { from { opacity: 0; filter: blur(2px); } }
+@keyframes trace-icon-in { from { opacity: 0; transform: scale(.6); filter: blur(2px); } }
 @keyframes trace-log-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .trace *, .trace *::after { animation: none !important; transition: none !important; }

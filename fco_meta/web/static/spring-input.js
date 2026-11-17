@@ -1,5 +1,5 @@
 // Adapted from DesignBookmark Springy Input: https://designbookmark.com/motion-src/springy-input/
-export function mountSpringInput(input) {
+export function mountSpringInput(input, { animateTyping = true } = {}) {
   const field = input.parentElement, reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const make = (tag, cls) => { const n = document.createElement(tag); n.className = cls; field.append(n); return n; };
   const view = make('div', 'spring-view');
@@ -32,7 +32,7 @@ export function mountSpringInput(input) {
     const i = Array.from(input.value.slice(0, input.selectionEnd ?? input.value.length)).length;
     C.t = spans[i]?.offsetLeft ?? (spans.length ? spans.at(-1).offsetLeft + spans.at(-1).offsetWidth : 0);
     for (let n = 0; n < 4; n++) for (const s of [C, W, shake]) {
-      if (reduced.matches) { s.x = s.t; s.v = 0; }
+      if (reduced.matches || (!animateTyping && s === C)) { s.x = s.t; s.v = 0; }
       else { s.v += (-s.k * (s.x - s.t) - s.c * s.v) * dt / 4; s.x += s.v * dt / 4; }
     }
     const scroll = input.scrollLeft;

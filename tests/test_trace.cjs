@@ -27,7 +27,8 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('.trace li[data-status="running"]').count(), 1);
     assert.equal(await page.locator('.trace script').count(), 0);
     assert.match(await page.locator('.trace-detail').first().textContent(), /안전한 텍스트.*\n아스널/);
-    assert.equal(await page.locator('.trace-head').textContent(), '3단계');
+    assert.equal(await page.locator('.trace-head .trace-time').textContent(), '0초');
+    await page.waitForFunction(() => document.querySelector('.trace-head .trace-time').textContent === '1초');
     assert.equal(await page.locator('.trace-line').first().getAttribute('aria-expanded'), 'false');
     assert.equal(await page.locator('.trace-line').last().getAttribute('aria-expanded'), 'true');
     assert.equal(await page.locator('.trace-detail').last().textContent(), '1 도구 호출 recommend_squad()');
@@ -42,16 +43,19 @@ const assert = require('node:assert/strict');
       traceTest.finish('done');
     });
     assert.equal(await page.locator('.trace li').count(), 6);
+    // 끝난 단계 아이콘: 생각 = 뇌(선 6개), 도구 = 렌치, 답변 = 말풍선
+    assert.deepEqual(await page.locator('.trace li').evaluateAll(rows => rows.map(r => r.querySelectorAll('.trace-icon path').length)), [6, 1, 1, 1, 1, 1]);
+    assert.match(await page.locator('.trace li').last().locator('path').getAttribute('d'), /^M12 3\.25A8\.75/);
     assert.equal(await page.locator('.trace details').count(), 0);
     assert.match(await page.locator('.trace-head').textContent(), /^\d+\.\d초 동안 작업 · 6단계$/);
     assert.equal(await page.locator('.trace-head').getAttribute('aria-expanded'), 'false');
     await page.locator('.trace-head').focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('.trace-head').getAttribute('aria-expanded'), 'true');
-    assert.equal(await page.locator('.trace-label').first().textContent(), '생각중...');
-    assert.equal(await page.locator('.trace-label').nth(1).textContent(), '도구 호출');
+    assert.equal(await page.locator('.trace-label').first().textContent(), '생각함');
+    assert.equal(await page.locator('.trace-label').nth(1).textContent(), '스쿼드 구성함');
     assert.equal(await page.locator('.trace li').nth(1).locator('.trace-detail').textContent(), '1 도구 호출 recommend_squad()\n2 도구 결과 recommend_squad()');
-    assert.equal(await page.locator('.trace-label').last().textContent(), '답변 작성 중...');
+    assert.equal(await page.locator('.trace-label').last().textContent(), '답변 작성함');
     assert.equal(await page.locator('.trace-line').first().getAttribute('aria-expanded'), 'false');
     await page.locator('.trace-line').first().focus();
     await page.keyboard.press('Enter');
@@ -73,6 +77,21 @@ const assert = require('node:assert/strict');
     });
     assert.match(await page.locator('.trace').last().textContent(), /2 도구 결과 check_squad\(\) \(오류\)/);
     assert.equal(await page.locator('.trace').last().locator('[data-status="error"]').count(), 1);
+    // 수치 재검토 → 다음 답 글이 오면 끝. 거절 → '답변 거절됨' (답변 작성 단계는 따로 안 생김)
+    await page.evaluate(() => {
+      window.traceTest = makeTrace();
+      traceTest.writing();
+      traceTest.event({ kind: 'recheck' });
+      traceTest.writing();
+      traceTest.finish('done');
+      window.traceTest = makeTrace();
+      traceTest.event({ kind: 'blocked' });
+      traceTest.writing();
+      traceTest.finish('done');
+    });
+    assert.deepEqual(await page.locator('.trace').nth(-2).locator('.trace-label').allTextContents(), ['생각함', '답변 작성함', '수치 재검토함', '답변 작성함']);
+    assert.deepEqual(await page.locator('.trace').last().locator('.trace-label').allTextContents(), ['답변 거절됨']);
+    assert.match(await page.locator('.trace').last().locator('li').last().locator('path').first().getAttribute('d'), /^M9\.75 6\.91/);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.evaluate(() => {
@@ -95,6 +114,7 @@ const assert = require('node:assert/strict');
         { type: 'delta', text: '테스트 답변입니다.' },
         { type: 'done', ...(requests === 1 ? {} : { error: 'unavailable' }) },
       ];
+      await new Promise(resolve => setTimeout(resolve, 800)); // 기다리는 머리줄을 볼 시간
       await route.fulfill({ contentType: 'application/x-ndjson', body: events.map(e => JSON.stringify(e)).join('\n') + '\n' });
     });
     async function submit(text) {
@@ -103,6 +123,9 @@ const assert = require('node:assert/strict');
     }
     await submit('/trace');
     await submit('아스널 선수 추천');
+    await page.locator('.trace-head canvas').waitFor();
+    assert.equal(await page.locator('.trace-head .shimmer').first().textContent(), '랭커데이터를 살펴보고 있어요...');
+    assert.equal(await page.locator('#log .msg.pending').count(), 0);
     await page.waitForFunction(() => document.querySelector('.trace-head')?.textContent.includes('초 동안 작업'));
     assert.equal(await page.locator('.trace-head').getAttribute('aria-expanded'), 'false');
     assert.match(await page.locator('.trace').textContent(), /1 도구 호출 recommend_players\(\)\n2 도구 결과 recommend_players\(\)/);

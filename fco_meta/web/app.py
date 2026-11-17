@@ -276,6 +276,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
                 yield _event(type="trace", kind="tool", name=piece.name, **extra)
         elif isinstance(piece, Recheck):  # 수치를 다시 쓰는 중 (화면에는 진행 문구)
             yield _event(type="tool", name="check_numbers", args={}, **extra)
+            if trace:
+                yield _event(type="trace", kind="recheck", **extra)
             line = {"kind": "recheck", "text": "결과에 없는 수치: " + ", ".join(piece.numbers)}
         elif isinstance(piece, Escalate):
             yield _event(type="tool", name="escalate", args={}, **extra)
@@ -501,6 +503,10 @@ def create_app(
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/ai", include_in_schema=False)
+    def ai_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "ai" / "index.html")
+
     @app.get("/api/meta")
     def meta() -> dict[str, Any]:
         """수집 범위와 챗봇 방식 (화면 머리말)."""
@@ -599,6 +605,8 @@ def create_app(
                     entry.update(outcome="blocked", route=f"{route.scope} ({route.describe()})")
                     keep.add("route", text=f"{route.describe()} → 거절 문구 (모델 호출 없음)")
                     keep.answer = REFUSAL
+                    if req.trace:
+                        yield _event(type="trace", kind="blocked")
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return

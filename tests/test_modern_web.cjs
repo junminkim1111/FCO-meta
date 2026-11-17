@@ -3,7 +3,7 @@
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const source = fs.readFileSync('fco_meta/web/static/index.html', 'utf8');
+const source = fs.readFileSync('fco_meta/web/static/web-ui.js', 'utf8');
 const tooltip = source.split('// --- tooltip ---')[1].split('// --- 분포:')[0];
 (async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
