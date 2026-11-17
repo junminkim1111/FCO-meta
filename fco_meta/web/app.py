@@ -503,10 +503,6 @@ def create_app(
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
-    @app.get("/ai", include_in_schema=False)
-    def ai_page() -> FileResponse:
-        return FileResponse(STATIC_DIR / "ai" / "index.html")
-
     @app.get("/api/meta")
     def meta() -> dict[str, Any]:
         """수집 범위와 챗봇 방식 (화면 머리말)."""

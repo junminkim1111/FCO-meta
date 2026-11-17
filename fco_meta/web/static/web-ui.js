@@ -8,10 +8,7 @@ const NEXT_Q = /\n[ \t>*_#-]*다음 질문\s*[:：][ \t*_]*([^\n]*?)[ \t*_]*$/;
 const splitNext = (text) => { const m = text.match(NEXT_Q); return m ? [text.slice(0, m.index), m[1].replace(/^["“]|["”]$/g, "").trim() || null] : [text, null]; };
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
 const $ = (id) => document.getElementById(id);
-const aiView = document.body.dataset.view === "ai";
-const beam = mountBeam(aiView ? $("ai-beam") : $("msg-beam"));
-let motionUI = {};
-export function configureMotion(ui) { motionUI = ui; }
+const beam = mountBeam($("msg-beam"));
 
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
@@ -303,8 +300,7 @@ async function showDetail(name) {
         tile("평균 구단가치", r.avg_squad_value || "-", ""),
         tile("최고 순위", `${r.best_rank}위`, "")));
     }
-    if (aiView) $("pitch-detail").replaceChildren(renderPitchArea(d));
-    else out.push(renderPitchArea(d));
+    out.push(renderPitchArea(d));
     if (isForm) out.push(el("h3", { text: "상대 포메이션별 전적" }), ...renderMatchups(d.matchups));
     if (r) {
       // 포메이션 보기: 그 포메이션을 쓰는 팀컬러 / 팀컬러 보기: 그 팀컬러가 쓰는 포메이션
@@ -410,7 +406,6 @@ const shimmer = (text, cls = "") => {
 };
 // 답을 기다리는 말풍선: 오브 + "랭커데이터를 살펴보고 있어요...". 멈추는 함수를 돌려준다
 function thinking(bubble) {
-  if (aiView && motionUI.thinking) return motionUI.thinking(bubble);
   bubble.className = "msg bot pending";
   bubble.title = "답을 만드는 동안 왼쪽 포메이션을 둘러보세요";
   return orbStatus(bubble);
@@ -423,14 +418,13 @@ function orbStatus(box) {
 // 서버는 답을 몇 단어씩 묶어 보낸다(/api/chat, 한 줄에 JSON 이벤트 하나). 받은 글은 프레임마다 몇 글자씩 풀어 그린다
 async function send(text) {
   if (inflight) return;
-  if (aiView) document.body.classList.add("conversing");
-  else $("msg").rows = 1; // 메인: 질문을 보내면 입력창은 한 줄로
+  $("msg").rows = 1; // 질문을 보내면 입력창은 한 줄로
   const ctrl = new AbortController();
   setBusy(ctrl);
   document.querySelector("#log .msg.intro")?.remove(); // 시세 안내 문구는 첫 질문 전까지만
   const question = mention(say("me", text));
   const used = model, mode = modeOf(used); // 답 도중에 모델을 바꿔도 이 답의 표시는 그대로
-  const trace = traceOn ? (motionUI.trace || traceBox)() : null;
+  const trace = traceOn ? traceBox() : null;
   if (trace) $("log").append(trace.element);
   const bubble = el("div");
   $("log").append(bubble);
@@ -442,9 +436,9 @@ async function send(text) {
   const finishTrace = () => { stopHead?.(); trace?.finish(ctrl.signal.aborted ? "cancelled" : traceOutcome); };
   let stopOrb = wait(), answer = "", shown = 0, frame = 0, answerId = null, squad = false, built = null, mine = null;
   const draw = () => {
-    shown = aiView ? answer.length : Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
+    shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
-    (aiView && motionUI.markdown ? motionUI.markdown : renderMarkdown)(bubble, splitNext(answer.slice(0, shown))[0]);
+    renderMarkdown(bubble, splitNext(answer.slice(0, shown))[0]);
     fillPin();
     if (stick) log.scrollTop = log.scrollHeight;
     else $("jump").hidden = false;
@@ -458,7 +452,6 @@ async function send(text) {
     waitLine = line;
     const waited = (performance.now() - started) / 1000;
     const text = line === RECHECK ? line : waited >= 90 ? ALMOST : waited >= 60 ? longWait : line;
-    if (aiView && motionUI.status) { motionUI.status(bubble, text); return; }
     const box = (head || bubble).querySelector(".status"), node = box?.lastElementChild; // 답이 나오기 시작했으면 없다
     if (!node || node.textContent === text) return;
     node.className = "shimmer out"; // 이전 문구는 흐려지며 사라지고 새 문구가 떠오른다
@@ -495,7 +488,7 @@ async function send(text) {
             if (shownSquad?.players.length) mine = shownSquad, squadStatus(TOOL_STATUS[ev.name](ev.args || {}));
             else showSquad(mine = { players: [] }, { status: TOOL_STATUS[ev.name](ev.args || {}) });
             // 왼쪽에서 어딜 보고 있었든 스쿼드 칸을 화면 가운데로 (모바일은 칸이 챗봇 아래라 답을 읽던 자리를 지킨다)
-            if (!aiView && matchMedia("(min-width: 861px)").matches)
+            if (matchMedia("(min-width: 861px)").matches)
               $("squad-panel").scrollIntoView({ block: $("squad-panel").offsetHeight > innerHeight - 32 ? "start" : "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
           }
           else squadStatus(TOOL_STATUS[ev.name](ev.args || {}));
@@ -564,7 +557,7 @@ function showSquad(sq, { status = null, prev = null } = {}) {
   const panel = $("squad-panel");
   shownSquad = sq;
   panel.hidden = !sq;
-  if (!aiView) $("fdetail").hidden = !!sq;
+  $("fdetail").hidden = !!sq;
   syncSquadButtons(...document.querySelectorAll(".squad-toggle"));
   if (!sq) return;
   const close = el("button", { type: "button", text: "✕", ariaLabel: "스쿼드 닫기", title: "닫기" });
@@ -710,22 +703,24 @@ $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Ente
     $("msg").dispatchEvent(new Event("input"));
   }
 });
-// 입력창 안내: 20% 명령어·팀 안내, 10% 한 줄 소개, 70% 예시 질문(static/examples.txt) 중 하나. Tab으로 채우는 건 예시 질문만
+// 입력창 안내: 20% 가이드, 10% 홍보(static/hints.txt의 '# 가이드'·'# 홍보' 아래 줄), 70% 예시 질문(static/examples.txt) 중 하나.
+// 칸이 비어 있으면 예시 질문으로. Tab으로 채우는 건 예시 질문만
 const DEFAULT_HINT = $("msg").placeholder; // 예시를 못 불러왔을 때 ("무엇이든 물어보세요")
-let examples = [], tabFill = "";
+let examples = [], hints = { 가이드: [], 홍보: [] }, tabFill = "";
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
 function setHint(text, fill = false) { $("msg").placeholder = text; tabFill = fill ? text : ""; }
 function randomHint() {
   const r = Math.random();
-  if (r < 0.2) return setHint("/로 명령어를 실행하고 @구단주명 또는 #스쿼드ID로 팀을 첨부할 수 있어요.");
-  if (r < 0.3) return setHint("FCLM과 함께 더욱 강력한 팀을 구성하세요");
+  const own = r < 0.2 ? hints.가이드 : r < 0.3 ? hints.홍보 : [];
+  if (own.length) return setHint(pick(own));
   if (!examples.length) return setHint(DEFAULT_HINT);
-  setHint(examples[Math.floor(Math.random() * examples.length)], true);
+  setHint(pick(examples), true);
 }
 // @닉네임: 빈 입력창에 @를 치면 위에 작은 칸이 뜨고, 그 유저의 최근 경기 선발 11명을 불러와 다음 질문에 붙인다 (멘션처럼 그 질문 한 번)
 // #피드ID: 같은 칸으로 스쿼드메이커 피드의 선발 11명을 붙인다
 let team = null; // 붙인 팀 { nickname, mention, label }
 let teamMark = "@";
-const teamInput = mountSpringInput($("team-name"), { animateTyping: !aiView });
+const teamInput = mountSpringInput($("team-name"));
 function openTeamBox(mark = "@") {
   teamMark = mark;
   $("team-box").hidden = false; $("team-hint").textContent = ""; $("team-hint").className = "hint";
@@ -873,11 +868,17 @@ $("chat-form").addEventListener("submit", (ev) => {
   if (text.startsWith("/")) return command(text);
   send(text);
 });
-fetch("/static/examples.txt").then((r) => r.text()).then((t) => {
-  examples = t.split("\n").filter((q) => q.trim());
+const lines = (url) => fetch(url).then((r) => r.text()).then((t) => t.split("\n").map((q) => q.trim()).filter(Boolean));
+Promise.all([lines("/static/examples.txt"), lines("/static/hints.txt").catch(() => [])]).then(([ex, hs]) => {
+  examples = ex;
+  let section = null;
+  for (const line of hs) {
+    if (line.startsWith("#")) section = hints[line.slice(1).trim()]; // '# 가이드' / '# 홍보'
+    else section?.push(line);
+  }
   if (!inflight) randomHint();
 }).catch(() => {});
-if (!aiView) say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다.");
+say("bot intro", "시세와 게임 데이터는 수집 시각 기준이며 이적시장에 따라 소폭 변동될 수 있습니다.");
 
 mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }, { value: "team", label: "팀컬러 분포" }], {
   ariaLabel: "분포 보기 전환",
@@ -919,4 +920,3 @@ if (split) {
   addEventListener("resize", () => left && set(left)); // 창이 줄어 반을 넘으면 반반으로
 }
 
-export { openTeamBox, pickModel, mountOrb, renderMarkdown, traceBox };

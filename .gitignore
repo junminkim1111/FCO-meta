@@ -57,8 +57,4 @@ docs/TROUBLESHOOTING.md
 !tests/test_spring_input.cjs
 !tests/test_modern_web.cjs
 
-!tests/test_ai_web.cjs
-
-frontend/ai/node_modules/
-
 !tests/test_split.cjs

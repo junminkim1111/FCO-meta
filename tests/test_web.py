@@ -60,16 +60,8 @@ def test_index_and_static(client):
     assert res.headers["x-frame-options"] == "DENY"
     examples = [q for q in client.get("/static/examples.txt").text.splitlines() if q.strip()]  # 입력창 예시 질문
     assert len(examples) >= 30
-
-
-def test_ai_page(client):
-    res = client.get("/ai")
-    assert res.status_code == 200
-    assert 'data-view="ai"' in res.text
-    assert 'id="root"' in res.text
-    assert '/static/ai/assets/' in res.text
-    assert client.get("/static/ai/index.html").status_code == 200
-    assert client.get("/static/web-ui.js").status_code == 200
+    hints = client.get("/static/hints.txt").text.splitlines()  # 입력창 가이드·홍보 문구 (칸 제목은 web-ui.js가 읽는 그대로)
+    assert "# 가이드" in hints and "# 홍보" in hints
 
 
 def test_guide_pages_and_their_files(client):
