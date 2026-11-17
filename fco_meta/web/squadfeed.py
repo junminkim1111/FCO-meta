@@ -22,11 +22,12 @@ class FeedError(Exception):
 
 
 def lineup_of(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """recommend_squad / check_squad result → [{role, player, season, sp_id, grade, pid, season_img}] (the grade its price is quoted at)."""
+    """recommend_squad / check_squad result → [{role, player, season, sp_id, grade, pid, season_img}] (the grade its price is quoted at).
+    The tool marks chemistry players '이름 ★' for the answer's table; the pitch and the squad maker get the bare name."""
     if result.get("ok") is False or not result.get("lineup") or any(p.get("player") is None for p in result["lineup"]):
         raise FeedError("규칙을 다 맞춘 스쿼드만 스쿼드메이커로 보낼 수 있어요.")
     return [
-        {"role": p["role"], "player": p["player"], "season": (p["card"].get("season") or "").split(" (")[0], "sp_id": p["card"]["sp_id"],
+        {"role": p["role"], "player": p["player"].replace("★", "").strip(), "season": (p["card"].get("season") or "").split(" (")[0], "sp_id": p["card"]["sp_id"],
          "pid": p.get("pid"), "season_img": p["card"].get("season_img"), "ovr": p.get("ovr"),
          "grade": (p["card"].get("price_at_most_used_grade") or {}).get("grade") or p["card"].get("most_used_grade") or 1}
         for p in result["lineup"]
