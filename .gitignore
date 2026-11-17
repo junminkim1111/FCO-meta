@@ -60,3 +60,5 @@ docs/TROUBLESHOOTING.md
 !tests/test_ai_web.cjs
 
 frontend/ai/node_modules/
+
+!tests/test_split.cjs

@@ -885,4 +885,38 @@ mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }
 });
 loadChart();
 
+// 두 칸 사이 손잡이 (메인, 넓은 화면): 왼쪽으로 끌면 채팅창이 넓어진다. 왼쪽 칸은 스쿼드 경기장(최대 494px + 칸 여백)까지만 줄고,
+// 오른쪽으로는 반반까지. 키보드: ←→ 40px. 새로고침하면 반반으로
+const split = $("split");
+if (split) {
+  const main = document.querySelector("main"), MIN = 536, STEP = 40;
+  let left = null; // null = 반반 (기본)
+  const half = () => (main.clientWidth - 32 - 16) / 2; // main 좌우 여백 16px씩, 두 칸 사이 16px
+  const set = (px) => {
+    const h = half();
+    left = Math.max(MIN, px) >= h ? null : Math.max(MIN, px); // 화면이 좁아 최소 폭이 반을 넘으면 반반 그대로
+    if (left === null) main.style.removeProperty("--left"); else main.style.setProperty("--left", `${left}px`);
+    split.setAttribute("aria-valuenow", String(Math.round(((left ?? h) / (2 * h)) * 100)));
+  };
+  split.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    split.setPointerCapture(e.pointerId);
+    split.classList.add("dragging");
+    document.body.classList.add("resizing");
+  });
+  split.addEventListener("pointermove", (e) => {
+    if (split.hasPointerCapture(e.pointerId)) set(e.clientX - main.getBoundingClientRect().left - 16 - 8); // 손잡이 가운데 = 왼쪽 칸 끝 + 8px
+  });
+  const end = () => { split.classList.remove("dragging"); document.body.classList.remove("resizing"); };
+  split.addEventListener("lostpointercapture", end);
+  split.addEventListener("keydown", (e) => {
+    const now = left ?? half();
+    if (e.key === "ArrowLeft") set(now - STEP);
+    else if (e.key === "ArrowRight") set(now + STEP);
+    else return;
+    e.preventDefault();
+  });
+  addEventListener("resize", () => left && set(left)); // 창이 줄어 반을 넘으면 반반으로
+}
+
 export { openTeamBox, pickModel, mountOrb, renderMarkdown, traceBox };
