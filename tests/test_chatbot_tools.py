@@ -1026,3 +1026,35 @@ def test_player_detail_keeps_scope_definitions_in_model_view(toolbox):
     assert {"season_card", "players_scope", "usage_scope"} <= visible["definitions"].keys()
     missing = run(toolbox, "get_player_detail", {"name": "없는선수xyz", "season": "없는시즌"})
     assert "usage_scope" in missing["definitions"] and not missing["usage"]
+
+
+def test_diagnose_team_reuses_role_candidates_without_duplicate_cards(toolbox, monkeypatch):  # noqa: F811
+    from collections import Counter
+
+    sq = toolbox._squad_setup("아스널", None, False, None, None, "DM,DM", None, None)
+    options = sq.slot_options[0][1]
+    options.extend(list(options))  # 같은 카드 후보가 여러 경로로 들어와도 순위는 한 번만 센다.
+    fits, calls = sq.fits, Counter()
+
+    def counted(sp_id):
+        calls[sp_id] += 1
+        return fits(sp_id)
+
+    sq.fits = counted
+    monkeypatch.setattr(toolbox, "_squad_setup", lambda *args, **kwargs: sq)
+    pick = {"role": "DM", "player": "볼란치L", "season": "ICON"}
+    single = toolbox.diagnose_team([pick], team_color="아스널")
+    assert single["slots"][0]["usage_rank"] == 1
+    expected_calls = calls.copy()
+    calls.clear()
+    double = toolbox.diagnose_team([pick, pick], team_color="아스널")
+    assert double["slots"] == single["slots"] * 2
+    assert calls == expected_calls and all(n == 1 for n in calls.values())
+
+
+def test_owned_grade_keeps_market_price_but_costs_nothing(toolbox):  # noqa: F811
+    result = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM,DM", "owned": "볼란치L:ICON:5"})
+    owned = next(p for p in result["lineup"] if p["player"] == "볼란치L")
+    assert owned["card"]["most_used_grade"] == 5
+    assert owned["card"]["price_at_most_used_grade"]["price_bp"] == 900_000_000
+    assert result["total_price_bp"] == 300_000_000  # 보유 카드의 시세는 남기되 구매 비용에는 나머지 카드만.

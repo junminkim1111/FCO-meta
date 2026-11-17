@@ -1190,6 +1190,9 @@ class Toolbox:
             return None
         return {"grade": grade, "price_bp": row["price"], "price": format_bp(row["price"]), "fetched_at": row["fetched_at"]}
 
+    def _at_grade(self, card: dict[str, Any], grade: int) -> dict[str, Any]:
+        return {**card, "most_used_grade": grade, "price_at_most_used_grade": self._price(card["sp_id"], grade)}
+
     # --- tools -------------------------------------------------------------
 
     def resolve_terms(self, team_color: str | None = None, role: str | None = None) -> dict[str, Any]:
@@ -1763,12 +1766,7 @@ class Toolbox:
         OVR per BP (GRADE_OVR; the more used slot on a tie; the invest slots only when given, never the save slots or
         owned cards). Stops when no step fits the budget."""
         chosen = list(chosen)
-        invest, save = knobs.get("invest", set()), knobs.get("save", set())
-        slots = [
-            i for i, ((role, _), c) in enumerate(zip(sq.slot_options, chosen))
-            if c and c["price"] is not None and not c.get("owned") and not c.get("fixed_grade") and role not in save
-            and (not invest or role in invest)
-        ]  # fmt: skip
+        slots = self._free_slots(sq, chosen, knobs)
         slots.sort(key=lambda i: -_score(chosen[i]))
         while True:
             left = sq.limits["price"] - sum(c["price"] or 0 for c in chosen if c)
@@ -2191,15 +2189,18 @@ class Toolbox:
         # 사용자 카드의 급여: 랭커가 쓰지 않은 카드여도 카드 표에서 (없으면 아래에서 랭커 카드의 값)
         own = [self._season_card(n, str(p.get("season"))).get("salary") if n and p.get("season") else None for p, n in zip(picks, names)]
         slots, savers = [], []
+        used_by_role: dict[str, list[dict[str, Any]]] = {}
         for pick, name, role in zip(picks, names, roles):
-            # 그 자리에 쓰인 시즌 카드 전부, 많이 쓰인 순 (같은 선수도 시즌이 다르면 다른 카드). 스쿼드 후보는 선수당 가장 많이
-            # 쓰인 카드 하나뿐이라, 선수의 카드 목록(entry["cards"])을 펼친다
-            used: list[dict[str, Any]] = []
-            for o in by_role.get(role, []):
-                for c in o["entry"]["cards"]:
-                    if (not sq.fits or sq.season_rule or sq.fits(c["sp_id"])) and all(u["card"]["sp_id"] != c["sp_id"] for u in used):
-                        used.append({**o, "card": c, "salary": c["salary"]})  # 급여는 그 시즌 카드의 것
-            used.sort(key=_card_usage, reverse=True)
+            if role not in used_by_role:
+                # 같은 역할의 자리들은 시즌 카드 후보와 사용 순위를 함께 쓴다.
+                used, seen = [], set()
+                for o in by_role.get(role, []):
+                    for c in o["entry"]["cards"]:
+                        if c["sp_id"] not in seen and (not sq.fits or sq.season_rule or sq.fits(c["sp_id"])):
+                            seen.add(c["sp_id"])
+                            used.append({**o, "card": c, "salary": c["salary"]})
+                used_by_role[role] = sorted(used, key=_card_usage, reverse=True)
+            used = used_by_role[role]
             season = "".join(str(pick.get("season") or "").split()).casefold()
             at = next((i for i, o in enumerate(used) if same(o, name, season)), None)
             row: dict[str, Any] = {"role": role, "player": pick.get("player"), "season": pick.get("season"), "grade": pick.get("grade")}
@@ -2427,7 +2428,7 @@ class Toolbox:
                     matched = [c for c in cards if season in "".join((c["season"] or "").split()).casefold()]
                     if not matched:  # ponytail: 랭커가 안 쓴 카드는 8강(또는 min_grade)으로 셈 — 강화 지정 인자가 생기면 그 값으로
                         g = knobs.get("min_grade") or 8
-                        matched = [{**c, "most_used_grade": g, "price_at_most_used_grade": self._price(c["sp_id"], g)}
+                        matched = [self._at_grade(c, g)
                                    for c in self._owned_cards(p.key, season, fits if not season_rule else None)]  # fmt: skip
                     if not matched:  # 그 시즌 카드가 없으면 이 선수는 넣지 못함 (결과의 include가 null)
                         continue
@@ -2442,7 +2443,7 @@ class Toolbox:
                             note = f"가진 카드 '{p.name} {own['season'].upper()}'는 수집된 카드 목록에 없어 {cards[0]['season']} 카드의 급여로 셈"
                         cards = matched or cards[:1]
                     if own["grade"]:
-                        cards = [{**c, "most_used_grade": own["grade"], "price_at_most_used_grade": self._price(c["sp_id"], own["grade"])} for c in cards]
+                        cards = [self._at_grade(c, own["grade"]) for c in cards]
                     tags = wanted | ({"chem"} if p.key in members else set())
                     options += [{"entry": entry, "card": c, "price": 0, "salary": c["salary"], "tags": tags, "owned": True,
                                  **({"owned_note": note} if note else {})} for c in cards[:1]]  # fmt: skip
@@ -2453,15 +2454,15 @@ class Toolbox:
                         continue
                 cards = _common_cards(cards, entry["rankers"], keep=lambda c: season_rule and fits(c["sp_id"]))
                 cards = [c if (c["most_used_grade"] or 0) <= SQUAD_MAX_GRADE else
-                         {**c, "most_used_grade": SQUAD_MAX_GRADE, "price_at_most_used_grade": self._price(c["sp_id"], SQUAD_MAX_GRADE)}
+                         self._at_grade(c, SQUAD_MAX_GRADE)
                          for c in cards]  # fmt: skip
                 if knobs.get("min_grade"):  # 이 강화 이상: 덜 강화해 쓴 카드는 그 강화 시세로
                     g = knobs["min_grade"]
                     cards = [c if (c["most_used_grade"] or 0) >= g else
-                             {**c, "most_used_grade": g, "price_at_most_used_grade": self._price(c["sp_id"], g)} for c in cards]  # fmt: skip
+                             self._at_grade(c, g) for c in cards]  # fmt: skip
                 fixed = next((wanted_grade[n] for n in must if f"include:{n}" in wanted and n in wanted_grade), None)
                 if fixed:  # "음바페 11카": 그 강화로 고정 (예산 맞추기·남은 예산 쓰기가 바꾸지 않는다)
-                    cards = [{**c, "most_used_grade": fixed, "price_at_most_used_grade": self._price(c["sp_id"], fixed)} for c in cards]
+                    cards = [self._at_grade(c, fixed) for c in cards]
                 if limits:
                     cards = [c for c in cards if all(_cost(c, k) is not None for k in known)] or cards[:1]
                 for card in cards if limits else cards[:1]:
