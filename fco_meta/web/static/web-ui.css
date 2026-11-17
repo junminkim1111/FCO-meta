@@ -186,7 +186,7 @@
     #split:focus-visible { outline: none; }
     body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
   }
-  .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 15px; }
+  .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; font-size: 15px; } /* 한글은 띄어쓰기에서만 줄을 바꾸고, 칸보다 긴 낱말(링크 등)만 쪼갠다 */
   /* 사용자 질문만 말풍선, 챗봇 답은 박스 없이 대화 영역에 바로 (LLM 채팅처럼) */
   .msg.me { align-self: flex-end; max-width: 80%; background: var(--text); color: var(--on-text); border-bottom-right-radius: 4px; }
   .msg.bot { align-self: stretch; max-width: 100%; padding: 2px; border-radius: 0; line-height: 1.6; }
