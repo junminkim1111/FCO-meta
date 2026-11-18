@@ -266,7 +266,7 @@ const SCENES = {
     await t.wait(400);
     await t.type(txt, "/");
     const items = [["/model", "답할 모델 고르기 (새로고침 전까지)"],
-                   ["/trace", "모델의 사고과정 표시 (한 번 더 치면 끔)"], ["/help", "명령어 안내 (새 탭)"]];
+                   ["/trace", "모델의 사고과정 표시 (기본 켬, 한 번 더 치면 끔)"], ["/help", "명령어 안내 (새 탭)"]];
     let menu = t.put(form, `<ul class="m-menu">${items.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
     const select = (i) => menu.querySelectorAll("li").forEach((li, j) => li.classList.toggle("on", i === j));
     await t.wait(500);

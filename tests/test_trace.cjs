@@ -30,7 +30,7 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('.trace-head .trace-time').textContent(), '0초');
     await page.waitForFunction(() => document.querySelector('.trace-head .trace-time').textContent === '1초');
     assert.equal(await page.locator('.trace-line').first().getAttribute('aria-expanded'), 'false');
-    assert.equal(await page.locator('.trace-line').last().getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.locator('.trace-line').last().getAttribute('aria-expanded'), 'false'); // 도구는 이름 줄만 (눌러야 호출·결과가 보인다)
     assert.equal(await page.locator('.trace-detail').last().textContent(), '1 도구 호출 recommend_squad()');
     await page.screenshot({ path: '/tmp/fclm-trace-running.png', fullPage: true });
     await page.evaluate(() => {
@@ -75,7 +75,7 @@ const assert = require('node:assert/strict');
       traceTest.event({ kind: 'result', name: 'check_squad', ok: false });
       traceTest.writing(); traceTest.finish('done');
     });
-    assert.match(await page.locator('.trace').last().textContent(), /2 도구 결과 check_squad\(\) \(오류\)/);
+    assert.match(await page.locator('.trace').last().textContent(), /2 도구 결과 check_squad\(\) \(실패\)/);
     assert.equal(await page.locator('.trace').last().locator('[data-status="error"]').count(), 1);
     // 수치 재검토 → 다음 답 글이 오면 끝. 거절 → '답변 거절됨' (답변 작성 단계는 따로 안 생김)
     await page.evaluate(() => {
@@ -121,8 +121,7 @@ const assert = require('node:assert/strict');
       await page.locator('#msg').fill(text);
       await page.locator('#send').click();
     }
-    await submit('/trace');
-    await submit('아스널 선수 추천');
+    await submit('아스널 선수 추천'); // /trace는 기본으로 켬 → 첫 질문에 trace=true
     await page.locator('.trace-head canvas').waitFor();
     assert.equal(await page.locator('.trace-head .shimmer').first().textContent(), '랭커데이터를 살펴보고 있어요...');
     assert.equal(await page.locator('#log .msg.pending').count(), 0);
@@ -130,8 +129,8 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('.trace-head').getAttribute('aria-expanded'), 'false');
     assert.match(await page.locator('.trace').textContent(), /1 도구 호출 recommend_players\(\)\n2 도구 결과 recommend_players\(\)/);
     await page.waitForFunction(() => !document.querySelector('#send').hasAttribute('data-busy'));
-    await submit('/trace');
-    await submit('리버풀 선수 추천');
+    await submit('/trace'); // 켬 → 끔
+    await submit('리버풀 선수 추천'); // 두 번째 질문에 trace=false
     await page.waitForFunction(() => !document.querySelector('#send').hasAttribute('data-busy'));
     assert.equal(requests, 2);
     assert.equal(await page.locator('.trace').count(), 1);

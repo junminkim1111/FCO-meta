@@ -376,7 +376,7 @@ const TOOL_STATUS = {
   escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
 // 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침 전까지), /trace = 사고과정 표시 (한 번 더 치면 끔)
-let model = null, traceOn = false; // { key: "gpt" }, null이면 기본 (GPT-6 Luna)
+let model = null, traceOn = true; // { key: "gpt" }, null이면 기본 (GPT-6 Luna). /trace는 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬)
 // 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. gpt는 생각 켬, deepseek은 생각 끔 (2026-11-16: DeepSeek은 켬이 14% 비싸고 39% 느린데 도구·답은 같음)
 const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
 const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
@@ -645,7 +645,7 @@ function rateRow(id) {
 // "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
 const COMMANDS = [
   ["/model", "답할 모델 고르기 (새로고침 전까지)"],
-  ["/trace", "모델의 사고과정 표시 (한 번 더 치면 끔)"],
+  ["/trace", "모델의 사고과정 표시 (기본 켬, 한 번 더 치면 끔)"],
   ["/help", "명령어 안내 (새 탭)"],
 ];
 let cmdShown = [], cmdIndex = 0;
@@ -836,7 +836,7 @@ function command(text) {
   const only = (allowed) => new Set(flags).size === flags.length && flags.every((f) => allowed.includes(f));
   if (cmd === "/admin" && !flags.length) return adminPrompt();
   if (cmd === "/trace" && !flags.length) {
-    traceOn = !traceOn; // 한 번 더 치면 끈다 (새로고침해도 꺼짐)
+    traceOn = !traceOn; // 기본으로 켬. 한 번 더 치면 끈다 (새로고침하면 다시 켬)
     return note(traceOn ? "/trace 적용: 모델의 사고과정을 표시합니다." : "/trace 해제: 모델의 사고과정을 더 이상 표시하지 않습니다.");
   }
   if (cmd === "/model" && !flags.length) return pickModel(); // 모델 선택창
