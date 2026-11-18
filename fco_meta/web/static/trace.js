@@ -73,8 +73,14 @@ export function traceBox() {
       }
       svg.append(g);
       step.icon.append(svg);
-      step.time.textContent = `${((performance.now() - step.started) / 1000).toFixed(1)}초`;
-      step.label.textContent = step.done;
+      const secs = `${((performance.now() - step.started) / 1000).toFixed(1)}초`;
+      if (step.kind === "think" || step.kind === "write") { // 생각·답변: "2.2초 동안 생각함", 끝 시간은 뺀다
+        step.label.textContent = `${secs} 동안 ${step.done}`;
+        step.time.remove();
+      } else {
+        step.time.textContent = secs;
+        step.label.textContent = step.done;
+      }
       step.open(false);
     }
   }

@@ -5,7 +5,7 @@ services:
     name: fclm
     runtime: python
     plan: free
-    branch: claude/fco-ranker-chatbot-plan-tyzgns
+    branch: main
     buildCommand: pip install ".[web,cloud]"
     startCommand: python -m fco_meta.cloud serve
     healthCheckPath: /api/meta
