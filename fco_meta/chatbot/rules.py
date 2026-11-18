@@ -105,12 +105,12 @@ class RuleBot:
             # 팀컬러를 말하지 않으면 매일 수집하는 상위 랭커 전체 기준
             wanted = q.top_n or 5
             tool_input = {
-                "team_color": q.team_color, "formation": q.formation, "role": q.role,
-                "top_n": min(wanted + 2, 20), "strict": q.strict, "max_price_bp": q.max_price_bp,
+                "team_color": q.team_color, "formation": q.formation, "roles": [q.role],
+                "limit": min(wanted + 2, 20), "strict": q.strict, "max_price": q.max_price_bp,
             }  # fmt: skip
             return Answer(self._format_recommend(self._call("recommend_players", tool_input), wanted), "recommend_players", tool_input)
         if q.player:
-            tool_input = {"name": q.player}
+            tool_input = {"player": q.player}
             return Answer(self._format_detail(self._call("get_player_detail", tool_input)), "get_player_detail", tool_input)
         if (q.team_color or "포메이션" in norm) and not any(w in norm for w in _DATA_WORDS):
             tool_input = {"team_color": q.team_color} if q.team_color else {}

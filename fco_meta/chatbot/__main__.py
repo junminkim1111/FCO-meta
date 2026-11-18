@@ -3,7 +3,7 @@
     python -m fco_meta.chatbot                                         # 대화형 (Gemini, 키 없으면 규칙 기반)
     python -m fco_meta.chatbot --ask "아스널 4-2-3-1 볼란치 2명 추천해줘"
     python -m fco_meta.chatbot --backend rules                         # 규칙 기반 (키 불필요)
-    python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널", "role": "DM"}'
+    python -m fco_meta.chatbot --tool recommend_players '{"team_color": "아스널", "roles": ["DM"]}'
 """
 
 from __future__ import annotations

@@ -60,7 +60,7 @@ def test_function_declarations_accepted_by_sdk():
         "get_player_detail", "get_meta_trends", "get_ranker_squad", "query_squads", "query_rankers", "get_formation_overview", "get_team_color_overview",
         "get_team_color_info", "diagnose_team",
     }  # fmt: skip
-    assert decls["recommend_players"].parameters_json_schema["required"] == ["role"]  # 팀컬러 생략 = 전체 랭커
+    assert decls["recommend_players"].parameters_json_schema["required"] == ["roles"]  # 팀컬러 생략 = 전체 랭커
 
 
 class Chunked(FakeModels):

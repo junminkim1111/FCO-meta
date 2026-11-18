@@ -820,6 +820,7 @@ class _SessionTools(_LockedTools):
         content, is_error = super().run(name, tool_input)
         if name == "squad_candidates" or name in SQUAD_TOOLS:
             self.session.turn_lineup = None
+        if name == "recommend_squad":
             self.session.turn_squad = None
         if is_error or name not in SQUAD_TOOLS:
             return content, is_error
@@ -839,7 +840,10 @@ class _SessionTools(_LockedTools):
                  "card": {k: v for k, v in p.get("card", {}).items() if k in ("most_used_grade", "salary")}, **({"owned": True} if p.get("owned") else {})}
                 for p in lineup
             ]
-            self.session.turn_squad = {k: v for k, v in tool_input.items() if k != "picks"}
+            conditions = self.session.turn_squad or self.session.squad or {}
+            preferences = {k: v for k, v in conditions.items() if k in ("prefer", "save", "invest", "high_salary", "spend")}
+            args = {k: v for k, v in tool_input.items() if k != "picks"}
+            self.session.turn_squad = {**preferences, **args} if name == "check_squad" else args
             for k in ("team_color", "formation"):  # 도구가 무작위로 고른 팀컬러·포메이션도 다음 질문의 조건으로 (다시 뽑히지 않게)
                 if not tool_input.get(k) and result.get(k) and not tool_input.get("slots"):
                     self.session.turn_squad[k] = result[k]

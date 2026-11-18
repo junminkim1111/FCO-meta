@@ -83,7 +83,7 @@ def check(expect: dict[str, Any], record: dict[str, Any] | None, calls: list[tup
     if wanted := expect.get("tools_any"):
         add(f"{' 또는 '.join(wanted)} 호출", any(t in names for t in wanted), ", ".join(names))
     for name in expect.get("detail", []):
-        add(f"{name} 상세 조회", any(t == "get_player_detail" and name in str(a.get("name", "")) for t, a in calls))
+        add(f"{name} 상세 조회", any(t == "get_player_detail" and name in str(a.get("player", a.get("name", ""))) for t, a in calls))
     if "players" in expect:
         out += _players(expect["players"], _last(calls, ("recommend_players",), toolbox), answer)
     if "squad" in expect:

@@ -886,6 +886,29 @@ def test_checked_lineup_and_conditions_survive_follow_up():
     assert s.squad == {"max_total_price_bp": "10억", "team_color": "아스널"}
 
 
+def test_checked_squad_keeps_recommendation_preferences():
+    import json
+    import threading
+    from types import SimpleNamespace
+    from fco_meta.web.app import _Session, _SessionTools
+
+    session = _Session()
+    lineup = [{"role": "ST", "player": "선수"}]
+    box = SimpleNamespace(run=lambda *a: (json.dumps({"ok": True, "lineup": lineup}), False))
+    tools = _SessionTools(SimpleNamespace(toolbox=box, lock=threading.Lock()), session)
+    prefer = [{"role": "ST", "stat": "키"}]
+    tools.run("recommend_squad", {"prefer": prefer})
+    tools.run("squad_candidates", {"roles": ["ST"]})
+    tools.run("check_squad", {"picks": lineup})
+    assert session.turn_squad == {"prefer": prefer}
+    session.answered(None, "고쳐줘", "답")
+    session.take("다시 고쳐줘")
+    tools.run("check_squad", {"picks": lineup, "max_total_price": "10억"})
+    assert session.turn_squad == {"prefer": prefer, "max_total_price": "10억"}
+    tools.run("recommend_squad", {"save": ["ST"]})
+    assert session.turn_squad == {"save": ["ST"]}
+
+
 def test_user_trace_shows_thoughts_and_tool_names_and_admin_keeps_everything():
     import json
 
