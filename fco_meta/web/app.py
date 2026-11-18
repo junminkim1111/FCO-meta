@@ -213,7 +213,7 @@ class _Session:
             if self.before:
                 message = message[:-1] + f"; 그 앞 스쿼드의 인자(되돌려 달라면 이것): {json.dumps(self.before, ensure_ascii=False)})"
         if self.lineup:
-            message += "\n\n[확정 스쿼드: " + json.dumps(self.lineup, ensure_ascii=False) + "]"
+            message += "\n\n[직전 답의 스쿼드: " + json.dumps(self.lineup, ensure_ascii=False) + "]"
             if self.before_lineup:
                 message += "\n[되돌릴 스쿼드: " + json.dumps(self.before_lineup, ensure_ascii=False) + "]"
         return (f"{team.for_model()}\n\n{message}" if team else message), team

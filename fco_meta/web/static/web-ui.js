@@ -4,7 +4,7 @@ import { traceBox } from "/static/trace.js";
 import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
 // 답 끝의 "다음 질문: …" 줄은 답에서 빼고 입력창에 흐리게 채운다 (Tab으로 그대로 보낸다) → [본문, 다음 질문 또는 null]
-const NEXT_Q = /\n[ \t>*_#-]*다음 질문\s*[:：][ \t*_]*([^\n]*?)[ \t*_]*$/;
+const NEXT_Q = /(?:\n|[ \t])[ \t>*_#-]*다음 질문\s*[:：][ \t*_]*([^\n]*?)[ \t*_]*$/;
 const splitNext = (text) => { const m = text.match(NEXT_Q); return m ? [text.slice(0, m.index), m[1].replace(/^["“]|["”]$/g, "").trim() || null] : [text, null]; };
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
 const $ = (id) => document.getElementById(id);

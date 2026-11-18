@@ -220,6 +220,7 @@ def test_unsupported_numbers_flags_made_up_figures():
     assert unsupported_numbers("9,996명 중 1,718명, 패스 성공률 94.9%", results) == []
     assert unsupported_numbers("9,996명 중 2,718명", results) == ["2,718명"]
     assert unsupported_numbers("9,996명 중 2,718명\n\n**이어서 무어볼 만한 질분**\n- 100억으로 다시 짜줘", results) == ["2,718명"]  # 제안 질문의 금액은 빼고
+    assert unsupported_numbers("9,996명 중 2,718명입니다. **다음 질문: 100억으로 다시 짜줘**", results) == ["2,718명"]  # 줄 중간에 붙은 다음 질문도
 
     # 편의상 반올림한 값은 통과 (쓴 자리 한 단위까지), 결과에 없는 합계·새 비율은 그대로 걸린다
     results = [{"total_price": "81억 6,600만", "price": "3억 6,800만", "usage_rate": 0.328}]
@@ -564,8 +565,7 @@ def test_recommend_squad_includes_requested_players(toolbox):  # noqa: F811
     # 급여 합 30이면 원래는 볼란치R(S300, 15)+...; 볼란치L(급여 30)을 꼭 넣으라면 넣고 나머지를 다시 고른다
     r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "볼란치 L"})
     assert [s["player"] for s in r["lineup"]] == ["볼란치L"] and r["include"] == {"볼란치L": "볼란치L"}
-    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "없는선수"})
-    assert r["include"] == {"없는선수": None} and "'없는선수'를 넣지 못함" in r["note"]
+    assert toolbox.run("recommend_squad", {"team_color": "아스널", "slots": "DM", "include": "없는선수"})[1]  # 모르는 이름은 오류
     # '이름:시즌'이면 그 시즌 카드로, 그 시즌 카드가 없으면 넣지 못한다 (자리와 함께 써도 된다)
     for season in ("S250", "S300"):
         r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM", "include": f"볼란치R:DM:{season}"})
@@ -585,6 +585,25 @@ def test_recommend_squad_includes_requested_players(toolbox):  # noqa: F811
     assert toolbox.run("recommend_squad", {"team_color": "아스널", "slots": "DM", "include": [{"player": "볼란치R", "role": "중원"}]})[1]
     content, is_error = toolbox.run("recommend_squad", {"team_color": "아스널", "exclude": "없는선수"})
     assert is_error and "없는선수" in content  # 없는 선수를 뺐다고 하지 않는다
+
+
+def test_unknown_player_names_say_how_to_call_again(toolbox):  # noqa: F811
+    toolbox.conn.execute("INSERT INTO meta_spid VALUES (300000078, '새선수'), (300000079, 'M. 고츠')")
+    base = {"team_color": "아스널", "slots": "DM"}
+
+    def err(**kw):
+        content, is_error = toolbox.run("recommend_squad", {**base, **kw})
+        assert is_error, content
+        return content
+
+    for name in ("새선수 S300", "새선수S300", [{"player": "새선수 S300"}]):  # 띄어 쓰든 붙이든 같은 안내
+        assert "seasons ['S300']" in err(include=name) and "player '새선수'" in err(include=name)
+    assert "grades [11]" in err(include="새선수 11강")
+    assert "grades [11]" in err(include="새선수11")
+    assert "이름 확인" in err(exclude="새선스") and "사용자에게 선수 이름" in err(exclude="새선스")
+    assert "seasons ['S300']" in err(exclude="새선수 S300")
+    content, is_error = toolbox.run("recommend_squad", {**base, "include": "M. 고츠"})  # 영문이 든 실제 이름은 오류 아님
+    assert "찾지 못함" not in content
 
 
 def test_judge_tools_show_candidates_and_check_the_models_picks(toolbox):  # noqa: F811

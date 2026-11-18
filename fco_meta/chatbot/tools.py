@@ -1252,7 +1252,31 @@ class Toolbox:
     def _player_known(self, name: str) -> bool:
         """Whether any card's name holds `name` (spaces ignored)."""
         key = "".join(name.split())
-        return self.conn.execute("SELECT 1 FROM meta_spid WHERE REPLACE(name, ' ', '') LIKE ? LIMIT 1", (f"%{key}%",)).fetchone() is not None
+        return any(
+            self.conn.execute(f"SELECT 1 FROM {t} WHERE REPLACE(name, ' ', '') LIKE ? LIMIT 1", (f"%{key}%",)).fetchone()
+            for t in ("meta_spid", "card")
+        )
+
+    def _name_hint(self, name: str) -> str:
+        """Error text for a player name that matches no card: if its last chunk looks like a season or an upgrade level
+        ('반페르시 UC', '음바페11강'), say which call to make instead; the tool never splits the name itself."""
+        words = str(name).split()
+        compact = "".join(words)
+        m = re.search(r"([A-Za-z0-9]+(?:강|카)?)$", compact)
+        tails = [(" ".join(words[:-n]), " ".join(words[-n:])) for n in (1, 2) if len(words) > n]
+        tails += [(compact[: m.start()], m[1])] if m else []
+        hint = f"이름 확인 — 오타면 고쳐서 다시 호출 ('{name}')"
+        for head, tail in tails:
+            head = "".join(head.split())
+            if not head or not self._player_known(head):
+                continue
+            if (g := re.fullmatch(r"(\d{1,2})(?:강|카)?", tail)) and 1 <= int(g[1]) <= TOP_GRADE:
+                hint = f"'{tail}'은 강화로 보임 — player '{head}', grades [{int(g[1])}]로 다시 호출"
+                break
+            if self._season_known(tail):
+                hint = f"'{tail}'는 시즌으로 보임 — player '{head}', seasons ['{tail}']로 다시 호출"
+                break
+        return f"선수를 찾지 못함: {hint}. 이렇게 고쳐도 찾지 못하면 다시 부르지 말고 사용자에게 선수 이름(과 시즌)을 물어볼 것"
 
     def _roles(self, value: str | list[str]) -> tuple[str, ...]:
         roles = tuple(dict.fromkeys(r for item in value for r in self._roles(item))) if isinstance(value, list) else resolve_roles(str(value))
@@ -1869,9 +1893,10 @@ class Toolbox:
     ) -> dict[str, Any]:
         knobs: dict[str, Any] = {}
         if exclude:
+            for n in _items(exclude):
+                if not self._player_known(n):
+                    raise ToolError(f"exclude의 {self._name_hint(n)}")
             knobs["exclude"] = ["".join(n.split()) for n in _items(exclude)]
-            if unknown := [n for n in knobs["exclude"] if not self._player_known(n)]:
-                raise ToolError(f"exclude의 선수를 찾지 못함: {', '.join(unknown)} (이름 확인 — 오타면 고쳐서, 아니면 빼고 다시 호출)")
         if owned:
             specs = []
             for item in _items(owned, ","):
@@ -2611,6 +2636,8 @@ class Toolbox:
         for spec in self._include_specs(include):
             if not (name := "".join(str(spec.get("player") or "").split())):
                 continue
+            if not self._player_known(name):
+                raise ToolError(f"include의 {self._name_hint(spec['player'])}")
             must.append(name)
             if role := "".join(str(spec.get("role") or "").split()).upper():
                 if role not in ROLES:
