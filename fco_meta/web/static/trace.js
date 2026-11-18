@@ -74,20 +74,15 @@ export function traceBox() {
       svg.append(g);
       step.icon.append(svg);
       const secs = `${((performance.now() - step.started) / 1000).toFixed(1)}초`;
-      if (step.kind === "think" || step.kind === "write") { // 생각·답변: "2.2초 동안 생각함", 끝 시간은 뺀다
-        step.label.textContent = `${secs} 동안 ${step.done}`;
-        step.time.remove();
-      } else {
-        step.time.textContent = secs;
-        step.label.textContent = step.done;
-      }
+      // 생각·답변: "2.2초 동안 생각함" / "3.6초 동안 답변 작성함", 도구: 이름만 ("스쿼드 구성함")
+      step.label.textContent = step.kind === "think" || step.kind === "write" ? `${secs} 동안 ${step.done}` : step.done;
       step.open(false);
     }
   }
   // kind = 끝났을 때 아이콘. done = 끝난 이름 ("생각중..." → "생각함")
   function add(label, kind, name = null, done = label.replace(/ ?중\.\.\.$/, "함")) {
     const row = node("li"), icon = node("span", "trace-icon"), body = node("div", "trace-body");
-    const line = node("button", "trace-line"), text = node("span", "trace-label"), time = node("span", "trace-time");
+    const line = node("button", "trace-line"), text = node("span", "trace-label");
     const detail = node("div", "trace-detail");
     const { fold, open } = disclosure(line, detail);
     line.disabled = true;
@@ -97,11 +92,11 @@ export function traceBox() {
       letter.style.animationDelay = `${i * .05}s`;
       text.append(letter);
     }
-    line.append(text, time);
+    line.append(text);
     body.append(line, fold);
     row.append(icon, body);
     list.append(row);
-    const step = { row, icon, label: text, kind, done, time, detail, open, line, name, started: performance.now() };
+    const step = { row, icon, label: text, kind, done, detail, open, line, name, started: performance.now() };
     steps.push(step);
     status(step, "running");
     return step;
