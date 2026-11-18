@@ -968,3 +968,19 @@ def test_drawn_team_color_and_formation_become_the_next_questions_conditions():
     tools.run("recommend_squad", {"max_total_price_bp": "20억"})  # 팀컬러·포메이션을 말하지 않아 도구가 뽑음
     s.answered(None, "20억으로 짜줘", "답")
     assert s.squad == {"max_total_price_bp": "20억", "team_color": "첼시", "formation": "4-2-2-2"}  # 다음 질문은 같은 팀으로 이어진다
+
+
+def test_squad_pitch_places_ram_lam_lineups_on_the_makers_rm_lm_slots():
+    # 최신 랭커 스쿼드의 4-2-2-2는 측면이 RAM·LAM인데 스쿼드메이커 4-2-2-2는 RM·LM: 같은 쪽 비슷한 자리에 놓는다 (전엔 그림이 안 나왔다)
+    from fco_meta.web.squadfeed import FeedError, place
+
+    roles = ["GK", "CB", "CB", "RB", "LB", "DM", "DM", "RAM", "LAM", "ST", "ST"]
+    lineup = [{"role": r, "player": f"p{i}", "season": "", "sp_id": i, "grade": 8, "pid": i, "season_img": None, "ovr": 100}
+              for i, r in enumerate(roles)]  # fmt: skip
+    placed = {p["player"]: p["position"] for p in place(lineup, "4-2-2-2")}
+    assert placed["p7"] == "rm" and placed["p8"] == "lm" and len(placed) == 11
+    try:
+        place([*lineup[:-1], {**lineup[-1], "role": "GK"}], "4-2-2-2")  # 키퍼 둘은 비슷한 자리도 없다
+        raise AssertionError("FeedError expected")
+    except FeedError:
+        pass

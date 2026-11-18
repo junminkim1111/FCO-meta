@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from ..chatbot.tools import PREFER_FAMILIES
 from .team import POSITION_CODE, ROLE_OF
 
 MAKER_URL = "https://fconline.nexon.com/squadmaker"
@@ -40,15 +41,19 @@ def place(lineup: list[dict[str, Any]], formation: str | None) -> list[dict[str,
     if not slots:
         raise FeedError(f"{formation} 포메이션은 스쿼드메이커에 없어 보낼 수 없어요.")
     left = list(lineup)
-    placed = []
-    for slot in slots:
-        p = next((p for p in left if p["role"] == ROLE_OF[POSITION_CODE[slot["role"]]]), None)
-        if p is None:
-            raise FeedError("스쿼드의 자리가 스쿼드메이커 포메이션과 맞지 않아 보낼 수 없어요.")
-        left.remove(p)
-        placed.append({"position": slot["role"], "code": POSITION_CODE[slot["role"]], "x": slot["x"], "y": slot["y"],
-                       **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}})
-    return placed
+    taken: list[dict[str, Any] | None] = [None] * len(slots)
+    # 같은 자리를 먼저, 남은 자리는 같은 쪽 비슷한 자리로 (랭커 스쿼드의 4-2-2-2가 RAM·LAM이어도 스쿼드메이커의 RM·LM에)
+    for same in (lambda a, b: a == b, lambda a, b: any(a in f and b in f for f in PREFER_FAMILIES)):
+        for i, slot in enumerate(slots):
+            role = ROLE_OF[POSITION_CODE[slot["role"]]]
+            if taken[i] is None and (p := next((p for p in left if same(p["role"], role)), None)):
+                taken[i] = p
+                left.remove(p)
+    if left:
+        raise FeedError("스쿼드의 자리가 스쿼드메이커 포메이션과 맞지 않아 보낼 수 없어요.")
+    return [{"position": slot["role"], "code": POSITION_CODE[slot["role"]], "x": slot["x"], "y": slot["y"],
+             **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}}
+            for slot, p in zip(slots, taken)]
 
 
 def squad_view(result: dict[str, Any]) -> dict[str, Any]:
