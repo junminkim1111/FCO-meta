@@ -2534,9 +2534,10 @@ class Toolbox:
             "note": "사용률 순위가 낮은 자리가 랭커 기준 약점 후보 (능력치가 아니라 사용 기록 기준). 대안은 used_more, 더 찾을 때만 그 자리로 recommend_players",
         }  # fmt: skip
 
-    def _unused_options(self, name: str, season: str | None, grade: int, fixed: bool, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
+    def _unused_options(self, name: str, season: str | None, grade: int, fixed: bool, fits: Callable[[int], bool] | None, owned: bool = False) -> list[dict[str, Any]]:
         """Options for a player to include beyond the cards rankers used in that slot: his collected cards (of `season`)
-        at `grade` that have a price, higher OVR scored a little higher (no ranker usage, so ranker cards that fit win)."""
+        at `grade` that have a price, higher OVR scored a little higher (no ranker usage, so ranker cards that fit win).
+        owned: the user's own cards — price 0, no market price needed, every season if `season` is empty."""
         row = self.conn.execute(
             "SELECT pid, name FROM card WHERE REPLACE(name, ' ', '') LIKE ? GROUP BY pid ORDER BY COUNT(*) DESC LIMIT 1", (f"%{name}%",)
         ).fetchone()  # ponytail: 이름이 겹치면 카드가 가장 많은 선수 — 동명이인이 문제되면 시즌·국적으로 가른다
@@ -2547,11 +2548,12 @@ class Toolbox:
         options = []
         for c in self._owned_cards(row["pid"], season or "", fits):
             price = self._price(c["sp_id"], grade)
-            if price is None:
+            if price is None and not owned:
                 continue
             card = {**c, "most_used_grade": grade, "price_at_most_used_grade": price}
-            options.append({"entry": entry, "card": card, "price": price["price_bp"], "salary": c["salary"],
-                            "tags": {f"include:{name}"}, **({"fixed_grade": True} if fixed else {}), "score": (ovr.get(c["sp_id"]) or 0) * 1e-6})  # fmt: skip
+            options.append({"entry": entry, "card": card, "price": 0 if owned else price["price_bp"], "salary": c["salary"],
+                            "tags": {f"include:{name}"}, **({"fixed_grade": True} if fixed else {}), **({"owned": True, **({"season_assumed": True} if not season else {})} if owned else {}),
+                            "score": (ovr.get(c["sp_id"]) or 0) * 1e-6})  # fmt: skip
         return options
 
     def _owned_cards(self, pid: int, season: str, fits: Callable[[int], bool] | None) -> list[dict[str, Any]]:
@@ -2769,13 +2771,21 @@ class Toolbox:
                             cards = self._owned_cards(p.key, own["season"], fits if not season_rule else None)
                             if seasons:
                                 cards = [c for c in cards if any(_season_hits(s, [c], lambda c: c["season"], self._season_is_exact(s)) for s in seasons)]
-                    if own["grade"]:
-                        cards = [self._at_grade(c, own["grade"]) for c in cards]
+                    else:  # 시즌을 말하지 않았다: 그 선수 카드 전부를 후보로 (급여 상한에 맞는 시즌을 솔버가 고른다)
+                        seen = {c["sp_id"] for c in cards}
+                        cards = cards + [c for c in self._owned_cards(p.key, "", fits if not season_rule else None) if c["sp_id"] not in seen]
+                        if seasons:
+                            cards = [c for c in cards if any(_season_hits(s, [c], lambda c: c["season"], self._season_is_exact(s)) for s in seasons)]
+                    if own["grade"] or not own["season"]:  # ponytail: 강화를 말하지 않은 카드는 min_grade(없으면 8강)로 셈
+                        g = own["grade"] or knobs.get("min_grade") or 8
+                        cards = [self._at_grade(c, g) if own["grade"] or c["most_used_grade"] is None else c for c in cards]
                     fixed = next((wanted_grade[n] for n in must if f"include:{n}" in wanted and n in wanted_grade), None)
                     cards = [c for c in cards if (not fixed or _grade(c) in fixed) and self._matches_card_rules(role, c, knobs)]
-                    for c in cards[:1]:
+                    for c in cards if not own["season"] else cards[:1]:
                         tags = wanted | {t for t, ok in (("chem", p.key in members), ("season", season_rule and fits(c["sp_id"]))) if ok}
-                        options.append({"entry": entry, "card": c, "price": 0, "salary": c["salary"], "tags": tags, "owned": True})
+                        o = {"entry": entry, "card": c, "price": 0, "salary": c["salary"], "tags": tags, "owned": True,
+                             **({"season_assumed": True} if not own["season"] else {})}
+                        options.append({**o, "score": _card_usage(o)} if not own["season"] else o)  # 시즌 미정: 랭커가 많이 쓴 시즌 먼저
                     continue
                 cards = [c for c in cards if self._matches_card_rules(role, c, knobs)]
                 if not checking:
@@ -2802,12 +2812,14 @@ class Toolbox:
             # 자리를 정했으면 그 자리, 아니면 랭커가 그 선수를 쓴 자리에. 사용률이 없어 랭커가 쓴 카드가 맞으면 그쪽이 먼저
             for name in must:
                 mine = [o for o in options if f"include:{name}" in o["tags"]]
-                if any(o["name"] == name for o in owned) or not (pinned.get(name) == role or (name not in pinned and mine)):
+                own = next((o for o in owned if o["name"] == name), None)
+                if (own and mine) or not (pinned.get(name) == role or (name not in pinned and mine)):
                     continue
                 have = {o["card"]["sp_id"] for o in mine}
-                extra = [o for season in wanted_season.get(name) or [None]
-                         for grade in sorted(set(wanted_grade.get(name) or [knobs.get("min_grade") or 8]), reverse=True)
-                         for o in self._unused_options(name, season, grade, name in wanted_grade, fits if not season_rule else None)
+                extra = [o for season in ([own["season"]] if own else wanted_season.get(name) or [None])
+                         for grade in ([own["grade"] or knobs.get("min_grade") or 8] if own else sorted(set(wanted_grade.get(name) or [knobs.get("min_grade") or 8]), reverse=True))
+                         for o in self._unused_options(name, season, grade, name in wanted_grade, fits if not season_rule else None, bool(own))
+                         if not own or not any(x["card"]["sp_id"] == o["card"]["sp_id"] for x in options)
                          if o["card"]["sp_id"] not in have
                          and not any(x in "".join(o["entry"]["name"].split()) for x in knobs.get("exclude", ()))]  # fmt: skip
                 options += [o for o in extra if self._matches_card_rules(role, o["card"], knobs)]
@@ -2932,6 +2944,11 @@ class Toolbox:
                                   "active": count >= least}  # fmt: skip
             if count < reqs["season"]:
                 notes.append(f"{tc_name} 카드로 {count}명 (전원은 못 채움 — 발동 인원 {least}명 {'충족' if count >= least else '미달'})")
+        if assumed := [c["entry"]["name"] for c in chosen if c and c.get("season_assumed")]:
+            out["owned_season_assumed"] = {
+                "players": assumed,
+                "note": "사용자가 시즌을 말하지 않아 급여 상한 안에서 랭커가 많이 쓴 시즌으로 가정함. 답에서 한 줄로 밝히고 실제 시즌을 물을 것",
+            }
         if must:
             got = {name: next((c["entry"]["name"] for c in chosen if c and f"include:{name}" in c["tags"]), None) for name in must}
             out["include"] = got

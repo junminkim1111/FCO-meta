@@ -1276,3 +1276,19 @@ def test_recommend_players_public_arguments_match_existing_calls(toolbox):  # no
     assert run(toolbox, "recommend_players", new) == run(toolbox, "recommend_players", old)
     assert run(toolbox, "query_squads", {"group_by": "player", "roles": ["DM", "GK"]}) == run(
         toolbox, "query_squads", {"group_by": "player", "role": "DM,GK"})
+
+
+def test_owned_player_rankers_did_not_use_there_and_no_season_lets_the_cap_pick_the_season(toolbox):  # noqa: F811
+    # 가진 선수(시즌 말 안 함)를 랭커가 안 쓴 자리에 role 지정 include로: 시세 없는 카드도 후보, 급여 상한에 맞는 시즌을 고른다
+    for spid, season, salary in ((300000077, 300, 30), (250000077, 250, 20)):
+        toolbox.conn.execute("INSERT INTO card (spid, pid, season_id, name, salary, ovr, updated_at) VALUES (?, 77, ?, '새선수', ?, 90, 'x')", (spid, season, salary))
+        toolbox.conn.execute("INSERT INTO card_detail (spid, grade, positions, traits, summary, stats, clubs, fetched_at, nation)"
+                             " VALUES (?, 1, '{}', '[]', '{}', '{}', '[{\"club\": \"아스널\"}]', 'x', '잉글랜드')", (spid,))
+    toolbox.conn.commit()
+    args = {"team_color": "아스널", "slots": "DM", "include": [{"player": "새선수", "role": "DM"}], "owned": [{"player": "새선수", "grade": 8}]}
+    r = run(toolbox, "recommend_squad", {**args, "max_total_salary": 25})
+    assert [s["player"] for s in r["lineup"]] == ["새선수"] and r["lineup"][0]["card"]["salary"] == 20 and r["lineup"][0]["owned"]
+    assert r["include"] == {"새선수": "새선수"} and r["total_price_bp"] == 0
+    assert r["owned_season_assumed"]["players"] == ["새선수"]
+    r = run(toolbox, "recommend_squad", {**args, "owned": [{"player": "새선수", "season": "S300", "grade": 8}], "max_total_salary": 40})
+    assert r["lineup"][0]["card"]["salary"] == 30 and "owned_season_assumed" not in r
