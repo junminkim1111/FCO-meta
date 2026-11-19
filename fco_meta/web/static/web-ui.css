@@ -280,18 +280,21 @@
   .rate.feed a { padding: 2px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); text-decoration: none; }
   @media (hover: hover) { .rate.feed a:hover { background: var(--panel-strong); } }
   .applied { align-self: flex-start; color: var(--faint); font-size: 12px; margin-top: -4px; } /* 이 답을 낸 모델 (/model) */
-  #model-dialog { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
-  #model-dialog::backdrop { background: rgba(0, 0, 0, .55); }
-  #model-dialog, #model-dialog::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
-  #model-dialog:not([open]), #model-dialog:not([open])::backdrop { opacity: 0; transform: scale(.96); }
-  @starting-style { #model-dialog[open], #model-dialog[open]::backdrop { opacity: 0; transform: scale(.96); } }
-  #model-dialog::backdrop { transform: none !important; }
-  #model-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
-  #model-dialog button { padding: 6px 14px; }
-  #model-dialog .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
+  :is(#model-dialog, #beta-dialog) { background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; padding: 18px 20px; max-width: 360px; }
+  :is(#model-dialog, #beta-dialog)::backdrop { background: rgba(0, 0, 0, .55); }
+  :is(#model-dialog, #beta-dialog), :is(#model-dialog, #beta-dialog)::backdrop { transition: opacity .18s ease-out, transform .18s ease-out, overlay .18s allow-discrete, display .18s allow-discrete; }
+  :is(#model-dialog, #beta-dialog):not([open]), :is(#model-dialog, #beta-dialog):not([open])::backdrop { opacity: 0; transform: scale(.96); }
+  @starting-style { :is(#model-dialog, #beta-dialog)[open], :is(#model-dialog, #beta-dialog)[open]::backdrop { opacity: 0; transform: scale(.96); } }
+  :is(#model-dialog, #beta-dialog)::backdrop { transform: none !important; }
+  :is(#model-dialog, #beta-dialog) .row { display: flex; justify-content: flex-end; gap: 8px; }
+  :is(#model-dialog, #beta-dialog) button { padding: 6px 14px; }
+  :is(#model-dialog, #beta-dialog) .yes { background: var(--pick); color: var(--on-text); border-color: transparent; font-weight: 600; }
+  #beta-dialog input { width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 8px; background: var(--panel); color: inherit; border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; }
+  #beta-dialog p { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+  #beta-dialog #beta-note { margin: 0 0 8px; min-height: 1.2em; color: var(--error); }
   /* /model: 모델 선택창 (고른 줄은 강조색 테두리) */
-  #model-dialog { width: calc(100% - 32px); max-width: 380px; }
-  #model-dialog h3 { margin: 0 0 12px; font-size: 15px; }
+  :is(#model-dialog, #beta-dialog) { width: calc(100% - 32px); max-width: 380px; }
+  :is(#model-dialog, #beta-dialog) h3 { margin: 0 0 12px; font-size: 15px; }
   #model-dialog fieldset { border: 0; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
   #model-dialog .opt { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
   #model-dialog .opt:has(:checked) { border-color: var(--accent); background: rgba(165, 180, 252, .08); }

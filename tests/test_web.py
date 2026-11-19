@@ -37,6 +37,8 @@ def no_network(monkeypatch):
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("NEXON_API_KEY", raising=False)
+    for name in ("ADMIN_KEY", "BETA_KEY_HASHES", "BETA_PER_DAY", "BETA_CLOSED", "CHAT_TOTAL_PER_DAY"):  # 로컬 .env의 값에 영향받지 않게
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(web_app, "_http", lambda: Offline())
     monkeypatch.setattr(web_app, "_nexon", no_nexon)
 
@@ -984,3 +986,208 @@ def test_squad_pitch_places_ram_lam_lineups_on_the_makers_rm_lm_slots():
         raise AssertionError("FeedError expected")
     except FeedError:
         pass
+
+
+# --- 클로즈드 베타 (키 게이트 · 키별 하루 제한) ---
+KEY = "fclm-ABCD-EFGH"
+
+
+@pytest.fixture
+def beta(client, db, tmp_path, monkeypatch):  # noqa: F811
+    """베타가 켜진 앱을 만드는 함수: beta(per_day=2, closed=False, **create_app 인자)"""
+    from fco_meta.beta_keys import key_hash
+
+    def make(per_day=30, closed=False, keys=(KEY, "fclm-WXYZ-2345"), **kw):
+        monkeypatch.setenv("BETA_KEY_HASHES", ",".join(key_hash(k) for k in keys))
+        monkeypatch.setenv("BETA_PER_DAY", str(per_day))
+        monkeypatch.setenv("BETA_CLOSED", "1" if closed else "0")
+        return TestClient(create_app(tmp_path / "db.sqlite", **kw))
+
+    return make
+
+
+def chat(c, key=None, ip="1.1.1.1"):
+    headers = {"X-Forwarded-For": ip, **({"X-Beta-Key": key} if key else {})}
+    return c.post("/api/chat", json={"message": "아스날 볼란치 1명 추천"}, headers=headers)
+
+
+def test_beta_off_needs_no_key_and_says_so(client):
+    assert client.get("/api/beta").json() == {"beta": False, "closed": False}
+    assert chat(client).status_code == 200
+    assert client.post("/api/beta/check", json={"key": "아무거나"}).json() == {"ok": True}
+
+
+def test_beta_gate_needs_the_right_key_but_meta_stays_open(beta):
+    c = beta()
+    assert c.get("/api/beta").json() == {"beta": True, "closed": False}
+    for path in ("/api/meta", "/api/formations", "/api/teamcolors"):
+        assert c.get(path).status_code == 200
+    res = chat(c)
+    assert res.status_code == 401 and "베타 키" in res.json()["detail"]
+    assert chat(c, "fclm-NOPE-NOPE").status_code == 401
+    assert chat(c, KEY).status_code == 200
+    assert chat(c, " " + KEY.lower() + " ").status_code == 200  # 소문자·공백은 봐준다
+    # 비용이 드는 다른 API도 키가 필요하다
+    assert c.post("/api/team", json={"nickname": "a"}).status_code == 401
+    assert c.delete("/api/team", params={"session_id": "s"}).status_code == 401
+    assert c.post("/api/squad-link", json={"id": "0" * 12}).status_code == 401
+    assert c.post("/api/feedback", json={"id": "0" * 12, "vote": "up"}).status_code == 401
+    assert c.post("/api/feedback", json={"id": "0" * 12, "vote": "up"}, headers={"X-Beta-Key": KEY}).status_code == 200
+    assert c.delete("/api/team", params={"session_id": "s"}, headers={"X-Beta-Key": KEY}).status_code == 200
+
+
+def test_each_key_has_its_own_daily_limit_that_resets_at_kst_midnight(beta):
+    from datetime import datetime
+
+    from fco_meta.config import KST
+    from fco_meta.web.app import RateLimit
+
+    clock = [datetime(2026, 11, 20, 23, 0, tzinfo=KST).timestamp()]
+    c = beta(per_day=2, limit=RateLimit(per_minute=100, per_day=1, now=lambda: clock[0]))  # IP 하루 1개 제한은 베타에선 쓰지 않는다
+    assert [chat(c, KEY).status_code for _ in range(2)] == [200, 200]
+    res = chat(c, KEY)
+    assert res.status_code == 429 and res.json()["detail"] == "오늘 질문 수(2개)를 다 썼어요. 내일 다시 물어봐 주세요."
+    assert chat(c, "fclm-WXYZ-2345").status_code == 200  # 다른 키는 영향 없음 (같은 IP여도)
+    clock[0] += 3600  # 한국 시간 자정 지남
+    assert chat(c, KEY).status_code == 200
+
+
+def test_the_per_minute_limit_still_applies_with_a_key(beta):
+    from fco_meta.web.app import RateLimit
+
+    c = beta(per_day=30, limit=RateLimit(per_minute=1))
+    assert chat(c, KEY).status_code == 200
+    assert chat(c, KEY).status_code == 429
+
+
+def test_wrong_keys_block_the_ip_for_an_hour(beta):
+    c = beta()
+    for _ in range(10):
+        assert c.post("/api/beta/check", json={"key": "fclm-NOPE-NOPE"}, headers={"X-Forwarded-For": "9.9.9.9"}).status_code == 401
+    blocked = c.post("/api/beta/check", json={"key": KEY}, headers={"X-Forwarded-For": "9.9.9.9"})
+    assert blocked.status_code == 429  # 맞는 키도 1시간은 받지 않는다
+    assert chat(c, KEY, ip="9.9.9.9").status_code == 429
+    assert c.post("/api/beta/check", json={"key": KEY}, headers={"X-Forwarded-For": "8.8.8.8"}).json() == {"ok": True}  # 다른 IP는 그대로
+
+
+def test_closed_beta_refuses_even_a_right_key(beta):
+    c = beta(closed=True)
+    assert c.get("/api/beta").json() == {"beta": True, "closed": True}
+    res = chat(c, KEY)
+    assert res.status_code == 403 and res.json()["detail"] == "베타가 종료됐어요"
+    assert c.get("/api/meta").status_code == 200
+
+
+ADMIN = "admin-pass-1"
+
+
+def test_admin_key_passes_without_the_per_key_daily_limit(beta):
+    from fco_meta.web.app import RateLimit
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    c = beta(per_day=2, chat_log=log, admin_key=ADMIN, limit=RateLimit(per_minute=100))
+    assert all(chat(c, ADMIN).status_code == 200 for _ in range(3))  # BETA_PER_DAY + 1번째도 통과
+    assert {r["key"] for r in log.pending} == {"admin"}
+    assert ADMIN not in str(log.pending)
+    chat(c, KEY)
+    keys = [k["key"] for k in c.get("/api/admin/logs", headers={"X-Admin-Key": ADMIN}).json()["by_key"]]
+    assert keys[-1] == "admin" and len(keys) == 2  # 관리자 행은 맨 아래
+
+
+def test_admin_key_passes_a_closed_beta_but_a_plain_key_does_not(beta):
+    c = beta(closed=True, admin_key=ADMIN)
+    assert chat(c, ADMIN).status_code == 200
+    assert chat(c, KEY).status_code == 403
+
+
+def test_empty_admin_key_is_not_a_beta_key(beta):
+    c = beta(admin_key="")
+    assert chat(c, "").status_code == 401
+    assert c.post("/api/chat", json={"message": "안녕"}, headers={"X-Beta-Key": ""}).status_code == 401
+
+
+def test_beta_check_takes_the_admin_key_and_still_blocks_wrong_ones(beta):
+    c = beta(admin_key=ADMIN)
+    assert c.post("/api/beta/check", json={"key": ADMIN}).json() == {"ok": True}
+    for _ in range(10):
+        c.post("/api/beta/check", json={"key": "틀림"}, headers={"X-Forwarded-For": "9.9.9.9"})
+    assert c.post("/api/beta/check", json={"key": ADMIN}, headers={"X-Forwarded-For": "9.9.9.9"}).status_code == 429
+
+
+def test_log_keeps_the_key_id_never_the_key_or_ip(beta):
+    import json
+
+    from fco_meta.beta_keys import key_hash
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    c = beta(per_day=1, chat_log=log, admin_key="secret")
+    chat(c, KEY)
+    chat(c, KEY)  # limited
+    kid = key_hash(KEY)[:12]
+    assert [(r["outcome"], r["key"]) for r in log.pending] == [("ok", kid), ("limited", kid)]
+    text = json.dumps(log.pending)
+    assert KEY not in text and "1.1.1.1" not in text and key_hash(KEY) not in text
+    row = c.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()["by_key"]
+    assert [(k["key"], k["questions"], k["today"]) for k in row] == [(kid, 1, 1)]  # 제한에 걸린 것은 질문에 넣지 않는다
+    assert {"cost", "up", "down", "last"} <= set(row[0])
+
+
+def test_restart_refills_todays_counts_from_the_log(beta):
+    from fco_meta.beta_keys import key_hash
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    first = beta(per_day=2, chat_log=log)
+    chat(first, KEY)
+    chat(first, KEY)
+    assert chat(first, KEY).status_code == 429
+    again = beta(per_day=2, chat_log=log)  # 새 앱 = 재시작 (카운터는 비었지만 기록은 남아 있다)
+    assert chat(again, KEY).status_code == 429
+    assert chat(again, "fclm-WXYZ-2345").status_code == 200
+    log.pending.insert(0, {"t": "2020-01-01T00:00:00+09:00", "outcome": "ok", "key": key_hash("fclm-WXYZ-2345")[:12]})  # 어제 기록은 세지 않는다
+    assert log.today_counts()[key_hash("fclm-WXYZ-2345")[:12]] == 1
+
+
+def test_restore_failure_does_not_stop_the_server(beta, monkeypatch):
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    monkeypatch.setattr(log, "today_counts", lambda: 1 / 0)
+    assert chat(beta(chat_log=log), KEY).status_code == 200
+
+
+def test_total_per_day_can_be_set_by_env(client, db, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("CHAT_TOTAL_PER_DAY", "1")
+    c = TestClient(create_app(tmp_path / "db.sqlite"))
+    assert chat(c).status_code == 200
+    assert chat(c, ip="2.2.2.2").status_code == 429
+
+
+def test_beta_keys_script(tmp_path, capsys):
+    import csv
+    import re
+
+    from fco_meta import beta_keys
+
+    out = tmp_path / "keys.csv"
+    assert beta_keys.main(["50", "--out", str(out)]) == 0
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert len(rows) == 50 and len({r["key"] for r in rows}) == 50
+    assert all(re.fullmatch(r"fclm-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}", r["key"]) for r in rows)  # 0·O·1·I 없음
+    assert all(r["hash"] == beta_keys.key_hash(r["key"]) for r in rows)
+    printed = capsys.readouterr().out
+    assert "BETA_KEY_HASHES=" + ",".join(r["hash"] for r in rows) in printed
+    assert beta_keys.main(["5", "--out", str(out)]) == 2  # 앞에 만든 키 원문을 덮어쓰지 않는다
+
+
+def test_summary_recent_carries_the_beta_key(beta):
+    from fco_meta.beta_keys import key_hash
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    c = beta(chat_log=log, admin_key="secret")
+    chat(c, KEY)
+    recent = c.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()["recent"]
+    assert recent[0]["key"] == key_hash(KEY)[:12]

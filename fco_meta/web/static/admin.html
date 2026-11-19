@@ -217,6 +217,7 @@
 
     <section class="view" data-view="traces" hidden>
       <div class="toolbar"><input id="search" class="input" type="search" placeholder="질문 검색" aria-label="질문 검색"><div class="seg" id="filters"></div></div>
+      <div id="key-filter" class="sub" hidden></div>
       <div class="card scroll" id="traces"></div>
       <p class="note">trace와 답변은 7일 동안만 보관됩니다. 오래 둘 기록은 열어서 저장하세요. 표는 최근 300건까지 보여 줍니다.</p>
     </section>
@@ -234,6 +235,7 @@
     <section class="view" data-view="models" hidden>
       <div class="kpis" id="model-kpis"></div>
       <div class="card scroll" id="models"></div>
+      <div class="card"><header><h2>베타 키별</h2></header><div class="scroll" id="by-key"></div></div>
       <div class="card"><header><h2>날짜별 비용 (추정)</h2></header><div class="scroll" id="cost-days"></div></div>
       <p class="note">비용은 유료 등급 단가로 셈한 추정치입니다 (캐시 할인 제외). /compare 칸마다의 호출도 포함합니다.</p>
     </section>
@@ -317,8 +319,11 @@ function showLogin(message) { $("boot").hidden = true; $("login").hidden = false
 const savedIds = () => new Set((data.saved || []).map((x) => x.id));
 const hasDetail = (r) => r.id && (r.t >= data.detail_since || savedIds().has(r.id));
 
+const hashView = () => location.hash.slice(1).split("?")[0];
+const keyFilter = () => new URLSearchParams(location.hash.split("?")[1] || "").get("key") || "";
+
 function render() {
-  const view = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "overview";
+  const view = VIEWS[hashView()] ? hashView() : "overview";
   document.querySelectorAll(".view").forEach((s) => (s.hidden = s.dataset.view !== view));
   document.querySelectorAll(".nav").forEach((a) => { const on = a.hash === "#" + view; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
   $("title").textContent = VIEWS[view];
@@ -388,7 +393,7 @@ function table(head, rows, numeric = []) {
 
 // 질문 표 (Traces · 피드백 · 저장됨 · 개요가 함께 쓴다). 줄을 누르면 오른쪽에 trace 창
 function traceTable(records, compact = false) {
-  const head = compact ? ["시각", "질문", "모델"] : ["시각", "상태", "질문", "모델", "시간", "토큰", "비용", ""];
+  const head = compact ? ["시각", "질문", "모델"] : ["시각", "상태", "질문", "모델", "키", "시간", "토큰", "비용", ""];
   const saved = savedIds();
   return table(head, records.map((r) => {
     const q = el("td", { class: "q" }, el("div", { class: "text", text: r.q || "" }),
@@ -397,7 +402,7 @@ function traceTable(records, compact = false) {
       r.unverified ? el("div", { class: "sub", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null);
     const cells = compact ? [el("td", { class: "t", text: when(r.t) }), q, el("td", { class: "model", text: modelOf(r) })]
       : [el("td", { class: "t", text: when(r.t) }), el("td", {}, status(r.outcome)), q, el("td", { class: "model", text: modelOf(r) }),
-         el("td", { class: "n", text: sec(r.ms) }), el("td", { class: "n", text: r.tokens ? num(r.tokens) : "" }), el("td", { class: "n", text: r.cost != null ? usd(r.cost) : "" }),
+         el("td", { class: "mono", text: r.key || "" }), el("td", { class: "n", text: sec(r.ms) }), el("td", { class: "n", text: r.tokens ? num(r.tokens) : "" }), el("td", { class: "n", text: r.cost != null ? usd(r.cost) : "" }),
          el("td", { class: "n" }, r.vote ? el("span", { class: "vote-" + r.vote, text: VOTE[r.vote], title: r.vote === "up" ? "좋아요" : "싫어요" }) : null,
            (r.turns || [r]).every((x) => saved.has(x.id)) ? el("span", { class: "faint", text: " 저장됨" }) : null)];
     const tr = el("tr", {}, ...cells);
@@ -408,12 +413,15 @@ function traceTable(records, compact = false) {
       tr.addEventListener("keydown", (e) => e.key === "Enter" && openDrawer(r, tr));
     }
     return tr;
-  }), compact ? [] : [4, 5, 6, 7]);
+  }), compact ? [] : [5, 6, 7, 8]);
 }
 
 function renderTraces() {
+  const kf = keyFilter(), recent = kf ? data.recent.filter((r) => r.key === kf) : data.recent;
+  $("key-filter").hidden = !kf;
+  if (kf) $("key-filter").replaceChildren(document.createTextNode(`키 ${kf}의 질문만 · `), el("a", { href: "#traces", text: "전체 보기" }));
   const keys = ["all", ...Object.keys(LABEL), "unverified"];
-  const count = (k) => (k === "all" ? data.recent.length : k === "unverified" ? data.recent.filter((r) => r.unverified).length : data.recent.filter((r) => r.outcome === k).length);
+  const count = (k) => (k === "all" ? recent.length : k === "unverified" ? recent.filter((r) => r.unverified).length : recent.filter((r) => r.outcome === k).length);
   $("filters").replaceChildren(...keys.filter((k) => k === "all" || count(k)).map((k) => {
     const b = el("button", { type: "button", class: k === filter ? "on" : "" }, document.createTextNode(k === "all" ? "전체" : k === "unverified" ? "수치 미확인" : LABEL[k]), el("span", { class: "c", text: count(k) }));
     b.addEventListener("click", () => { filter = k; renderTraces(); });
@@ -421,7 +429,7 @@ function renderTraces() {
   }));
   const q = query.trim().toLowerCase();
   const match = (r) => (filter === "all" || r.outcome === filter || (filter === "unverified" && r.unverified)) && (!q || (r.q || "").toLowerCase().includes(q));
-  const shown = conversations(data.recent).filter((c) => (c.turns || [c]).some(match)); // 한 질문이라도 맞으면 그 대화 전체
+  const shown = conversations(recent).filter((c) => (c.turns || [c]).some(match)); // 한 질문이라도 맞으면 그 대화 전체
   $("traces").replaceChildren(shown.length ? traceTable(shown) : empty("해당하는 질문이 없습니다."));
 }
 
@@ -469,6 +477,10 @@ function renderModels() {
       el("td", { class: "n", text: sec(m.p50_ms) }), el("td", { class: "n", text: sec(m.p95_ms) }),
       el("td", { style: "min-width:120px" }, el("div", { class: "meter" }, el("span", { style: `width:${(m.calls / Math.max(1, calls)) * 100}%` })))))
   , [1, 2, 3, 4, 5, 6]) : empty("모델 호출이 없습니다."));
+  $("by-key").replaceChildren(data.by_key?.length ? table(["키", "질문", "오늘", "비용", "👍", "👎", "마지막"], data.by_key.map((k) =>
+    el("tr", {}, el("td", { class: "mono" }, el("a", { href: "#traces?key=" + encodeURIComponent(k.key), text: k.key })), el("td", { class: "n", text: num(k.questions) }), el("td", { class: "n", text: num(k.today) }),
+      el("td", { class: "n", text: usd(k.cost) }), el("td", { class: "n", text: num(k.up) }), el("td", { class: "n", text: num(k.down) }), el("td", { class: "t", text: when(k.last) })))
+  , [1, 2, 3, 4, 5]) : empty("베타 키로 한 질문이 없습니다."));
   $("cost-days").replaceChildren(table(["날짜", "질문", "비용"], data.by_day.map((d) =>
     el("tr", {}, el("td", { class: "t", text: d.date }), el("td", { class: "n", text: num(Object.keys(LABEL).reduce((s, k) => s + (d[k] || 0), 0)) }),
       el("td", { class: "n", text: d.cost ? usd(d.cost) : "–" }))), [1, 2]));

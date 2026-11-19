@@ -183,9 +183,11 @@
     const id = new URLSearchParams(location.search).get("id") || "";
     const box = $("preview");
     try {
-      const res = await fetch("/api/squad-link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      let betaKey = ""; // 클로즈드 베타 키 (첫 화면에서 입력해 localStorage에 저장된 것)
+      try { betaKey = localStorage.getItem("fclm-beta-key") || ""; } catch {}
+      const res = await fetch("/api/squad-link", { method: "POST", headers: { "Content-Type": "application/json", ...(betaKey && { "X-Beta-Key": betaKey }) }, body: JSON.stringify({ id }) });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(res.status === 404 ? "이 스쿼드를 찾지 못했어요. FCLM에서 스쿼드를 다시 짜 달라고 한 뒤 답 아래 버튼을 눌러 주세요." : d.detail || "스쿼드를 불러오지 못했어요.");
+      if (!res.ok) throw new Error(res.status === 404 ? "이 스쿼드를 찾지 못했어요. FCLM에서 스쿼드를 다시 짜 달라고 한 뒤 답 아래 버튼을 눌러 주세요." : res.status === 401 ? "베타 키가 필요해요. FCLM 첫 화면에서 키를 입력한 뒤 다시 눌러 주세요." : d.detail || "스쿼드를 불러오지 못했어요.");
       $("open").href = d.url;
       $("mock-title").textContent = d.title;
       const head = el("div", "squad-head");

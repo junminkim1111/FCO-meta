@@ -58,3 +58,6 @@ docs/TROUBLESHOOTING.md
 !tests/test_modern_web.cjs
 
 !tests/test_split.cjs
+
+# 클로즈드 베타 키 원문 (python -m fco_meta.beta_keys)
+beta_keys*.csv

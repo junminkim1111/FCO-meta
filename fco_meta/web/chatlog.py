@@ -218,6 +218,15 @@ class ChatLog:
             sleep(every)
             self.flush()
 
+    def today_counts(self) -> Counter[str]:
+        """Questions per beta key so far today (KST) that counted against its daily limit — to refill the counters after a restart."""
+        today = datetime.fromtimestamp(self.now(), KST).strftime("%Y-%m-%d")
+        stored = self.store.read(today) if self.store else []
+        with self.lock:
+            pending = list(self.pending)
+        return Counter(r["key"] for r in stored + pending
+                       if r.get("key") and r["t"][:10] == today and r["outcome"] not in ("limited", "feedback"))  # fmt: skip
+
     def summary(self, days: int = 7) -> dict[str, Any]:
         """Counts by outcome and by day, errors grouped by message, and the latest records (newest first)."""
         since = (datetime.fromtimestamp(self.now(), KST) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
@@ -231,6 +240,17 @@ class ChatLog:
                    else {**r, "vote": votes[r["id"]]} if r.get("id") in votes else r
                    for r in everything if r["outcome"] not in ("compare_pick", "feedback")]  # fmt: skip
         compares = [r for r in records if r["outcome"] == "compare"]
+        today = datetime.fromtimestamp(self.now(), KST).strftime("%Y-%m-%d")
+        by_key: dict[str, dict[str, Any]] = {}  # 베타 키별 (키 해시 앞 12자): 질문(제한에 걸린 것 빼고)·오늘·비용·👍👎·마지막
+        for r in records:
+            if r.get("key") and r["outcome"] != "limited":
+                k = by_key.setdefault(r["key"], {"key": r["key"], "questions": 0, "today": 0, "cost": 0.0, "up": 0, "down": 0, "last": r["t"]})
+                k["questions"] += 1
+                k["today"] += r["t"][:10] == today
+                k["cost"] += r.get("cost", 0)
+                k["last"] = max(k["last"], r["t"])
+                if r.get("vote"):
+                    k[r["vote"]] += 1
         by_day: dict[str, Counter[str]] = {}
         errors: dict[str, dict[str, Any]] = {}
         cost_by_day: Counter[str] = Counter()
@@ -265,6 +285,7 @@ class ChatLog:
             "votes": dict(Counter(r["vote"] for r in records if r.get("vote"))),
             "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 4)} for d, c in sorted(by_day.items(), reverse=True)],
             "cost": round(sum(cost_by_day.values()), 4),
+            "by_key": sorted(({**k, "cost": round(k["cost"], 4)} for k in by_key.values()), key=lambda k: (k["key"] == "admin", -k["questions"], k["key"])),
             "unverified": sum(1 for r in records if r.get("unverified")),
             "errors": sorted(errors.values(), key=lambda e: (-e["count"], e["error"])),
             "recent": [{k: v for k, v in r.items() if k != "panes"} for r in records[::-1][:RECENT]],

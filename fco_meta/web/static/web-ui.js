@@ -397,7 +397,35 @@ const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Ge
 const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
-const headers = () => ({ "Content-Type": "application/json" });
+// 클로즈드 베타: 서버가 켜져 있다고 알리면 키(localStorage)를 X-Beta-Key로 붙이고, 키가 없으면 질문·팀 불러오기 때 입력창을 띄운다
+let beta = false, betaClosed = false, betaKey = "";
+try { betaKey = localStorage.getItem("fclm-beta-key") || ""; } catch {}
+const setBetaKey = (v) => { betaKey = v; try { v ? localStorage.setItem("fclm-beta-key", v) : localStorage.removeItem("fclm-beta-key"); } catch {} };
+const needKey = () => beta && !betaClosed && !betaKey;
+const headers = () => ({ "Content-Type": "application/json", ...(betaKey && { "X-Beta-Key": betaKey }) });
+function askKey(note = "") {
+  const dialog = $("beta-dialog");
+  $("beta-note").textContent = note; $("beta-key").value = "";
+  if (!dialog.open) dialog.showModal();
+  $("beta-key").focus();
+}
+// 서버가 키를 거절했다 → 저장된 키를 지우고 다시 묻는다
+const rejectedKey = (note) => { setBetaKey(""); askKey(note); };
+$("beta-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const value = $("beta-key").value.trim();
+  if (!value) return;
+  $("beta-ok").disabled = true;
+  try {
+    const res = await fetch("/api/beta/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: value }) });
+    if (res.ok) { setBetaKey(value); $("beta-dialog").close(); $("msg").focus(); return; }
+    $("beta-note").textContent = (await res.json().catch(() => ({}))).detail || "키를 확인하지 못했어요.";
+  } catch { $("beta-note").textContent = "연결하지 못했어요."; }
+  finally { $("beta-ok").disabled = false; }
+});
+$("beta-cancel").addEventListener("click", () => $("beta-dialog").close());
+$("beta-change").addEventListener("click", (ev) => { ev.preventDefault(); askKey(); });
+fetch("/api/beta").then((r) => r.json()).then((b) => { beta = b.beta; betaClosed = b.closed; $("beta-change-wrap").hidden = !beta; }).catch(() => {});
 // 답을 기다리는 동안 보내기 버튼은 정지 버튼이 되고, 누르면 그 요청을 취소한다
 let inflight = null;
 function setBusy(ctrl) {
@@ -528,7 +556,8 @@ async function send(text) {
   } catch (e) {
     traceOutcome = "error";
     // 질문 수 제한(429)은 안내 문구 그대로, 그 밖의 실패는 "오류:"를 붙여 보여 준다
-    if (!ctrl.signal.aborted) grow((answer ? "\n\n" : "") + (e.status === 429 ? "" : "오류: ") + e.message);
+    if (!ctrl.signal.aborted) grow((answer ? "\n\n" : "") + ([401, 403, 429].includes(e.status) ? "" : "오류: ") + e.message);
+    if (e.status === 401 && beta) rejectedKey(e.message);
   }
   timers.forEach(clearTimeout);
   setBusy(null);
@@ -757,6 +786,7 @@ function showTeam(pending = null) {
 }
 async function loadTeam() {
   if ($("team-ok").disabled) return;
+  if (needKey()) { askKey(); return; }
   const value = $("team-name").value.trim().replace(/^[@#]/, "");
   if (!value) { teamInput.error(); $("team-name").focus(); return; }
   const nickname = teamMark === "#" ? "#" + value : value;
@@ -765,6 +795,7 @@ async function loadTeam() {
   try {
     const res = await fetch("/api/team", { method: "POST", headers: headers(), body: JSON.stringify({ nickname, session_id: sessionId }) });
     const data = await res.json().catch(() => ({}));
+    if (!res.ok && res.status === 401 && beta) rejectedKey(data.detail);
     if (!res.ok) { $("team-hint").className = "hint err"; $("team-hint").textContent = data.detail || "팀을 불러오지 못했어요."; teamInput.error(); return; }
     sessionId = data.session_id;
     team = { nickname: data.nickname, mention: data.mention, label: data.label + (data.old ? " (30일 넘은 경기)" : "") };
@@ -784,7 +815,7 @@ function mention(bubble) {
 }
 function dropTeam() {
   if (!team) return;
-  if (sessionId) fetch("/api/team?session_id=" + encodeURIComponent(sessionId), { method: "DELETE" }).catch(() => {});
+  if (sessionId) fetch("/api/team?session_id=" + encodeURIComponent(sessionId), { method: "DELETE", headers: headers() }).catch(() => {});
   team = null; showTeam(); $("msg").focus();
 }
 $("msg").addEventListener("input", () => { const v = $("msg").value; if (v === "@" || v === "#") { $("msg").value = ""; openTeamBox(v); } });
@@ -879,6 +910,7 @@ $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
   if (!text || inflight) return; // 답을 기다리는 중에는 입력한 글을 그대로 둔다
+  if (!text.startsWith("/") && needKey()) return askKey(); // 키를 넣는 동안 쓴 글은 그대로 둔다
   $("msg").value = "";
   if (text.startsWith("/")) return command(text);
   send(text);

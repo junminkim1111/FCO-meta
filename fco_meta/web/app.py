@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -25,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
+from ..beta_keys import key_hash
 from ..chatbot import gemini
 from ..chatbot.gemini import RESET, Escalate, Recheck, Thought, ToolCall, ToolResult, describe_error
 from ..chatbot.router import REFUSAL, Route, classify, jev_ready
@@ -91,30 +93,84 @@ class RateLimit:
         self.per_minute, self.per_day, self.total_per_day, self.now = per_minute, per_day, total_per_day, now
         self.recent: dict[str, deque[float]] = {}
         self.today: dict[str, int] = {}
+        self.keys: dict[str, int] = {}  # 베타 키(해시 앞 12자)별 오늘 질문 수
         self.total, self.day = 0, None
         self.lock = threading.Lock()
 
-    def check(self, who: str) -> str | None:
-        """Counts one question; returns why it is refused instead (nothing is counted then)."""
+    def seed(self, counts: dict[str, int]) -> None:
+        """Refill today's beta-key counters (and the service total) from the log after a restart."""
+        with self.lock:
+            self.day = datetime.fromtimestamp(self.now(), KST).date()
+            for k, n in counts.items():
+                self.keys[k] = self.keys.get(k, 0) + n
+                self.total += n
+
+    def check(self, who: str, key: str | None = None, key_per_day: int = 0) -> str | None:
+        """Counts one question; returns why it is refused instead (nothing is counted then).
+        With a beta `key` the day's limit is the key's (key_per_day) instead of the visitor's; the per-minute limit stays per IP."""
         with self.lock:
             now = self.now()
             day = datetime.fromtimestamp(now, KST).date()
             if day != self.day:  # 한국 시간 자정에 하루 횟수를 비운다
                 self.today.clear()
+                self.keys.clear()
                 self.total, self.day = 0, day
             recent = self.recent.setdefault(who, deque())
             while recent and recent[0] <= now - 60:
                 recent.popleft()
             if self.total >= self.total_per_day:
                 return "오늘 서비스 전체 질문 수가 다 찼어요. 내일 다시 물어봐 주세요."
-            if self.today.get(who, 0) >= self.per_day:
+            if key and self.keys.get(key, 0) >= key_per_day:
+                return f"오늘 질문 수({key_per_day}개)를 다 썼어요. 내일 다시 물어봐 주세요."
+            if not key and self.today.get(who, 0) >= self.per_day:
                 return f"하루 질문 수({self.per_day}개)를 다 썼어요. 내일 다시 물어봐 주세요."
             if len(recent) >= self.per_minute:
                 return f"질문이 너무 빨라요. 1분에 {self.per_minute}개까지 물어볼 수 있어요. 잠시 후 다시 물어봐 주세요."
             recent.append(now)
-            self.today[who] = self.today.get(who, 0) + 1
+            if key:
+                self.keys[key] = self.keys.get(key, 0) + 1
+            else:
+                self.today[who] = self.today.get(who, 0) + 1
             self.total += 1
             return None
+
+
+class BetaGate:
+    """Closed beta: a request needs a key (X-Beta-Key) whose SHA-256 is in `hashes`; no hashes = beta off, nothing is checked.
+    Wrong keys are counted per visitor (IP): from MAX_FAILS wrong ones in an hour that visitor is blocked for the rest of the hour,
+    even with a right key. In memory, like AdminGuard — a restart clears it."""
+
+    MAX_FAILS = 10
+
+    def __init__(self, hashes: Iterable[str], per_day: int = 30, closed: bool = False, now: Callable[[], float] = time.time, admin_key: str = ""):
+        self.admin_key = admin_key
+        self.hashes = [h.strip().lower() for h in hashes if h.strip()]
+        self.per_day, self.closed, self.now = per_day, closed, now
+        self.fails: dict[str, deque[float]] = {}
+        self.lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.hashes)
+
+    def identify(self, who: str, key: str | None) -> str:
+        """The key's id (first 12 chars of its hash; "admin" for the admin password) or raises 401 (missing/wrong key) / 429 (too many wrong ones)."""
+        with self.lock:
+            fails = self.fails.setdefault(who, deque())
+            while fails and fails[0] <= self.now() - 3600:
+                fails.popleft()
+            if len(fails) >= self.MAX_FAILS:
+                raise HTTPException(status_code=429, detail="틀린 키를 너무 많이 입력해 1시간 동안 막혔어요. 잠시 후 다시 해 주세요.")
+            if not key:
+                raise HTTPException(status_code=401, detail="베타 키가 필요해요")
+            if self.admin_key and hmac.compare_digest(key.encode(), self.admin_key.encode()):
+                return "admin"
+            given = key_hash(key)
+            if any(hmac.compare_digest(given, h) for h in self.hashes):
+                return given[:12]
+            fails.append(self.now())
+        log.warning("wrong beta key from %s", who)
+        raise HTTPException(status_code=401, detail="베타 키가 맞지 않아요")
 
 
 class AdminGuard:
@@ -399,6 +455,10 @@ class TeamRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=64)
 
 
+class BetaCheck(BaseModel):
+    key: str = Field(max_length=64)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
@@ -424,11 +484,15 @@ def create_app(
     chat_log: ChatLog | None = None,
     admin_key: str | None = None,
 ) -> FastAPI:
-    """`admin_key` (기본: 환경 변수 ADMIN_KEY) 가 있으면 /admin 에서 답변 기록을 볼 수 있다."""
+    """`admin_key` (기본: 환경 변수 ADMIN_KEY) 가 있으면 /admin 에서 답변 기록을 볼 수 있다.
+    환경 변수 BETA_KEY_HASHES (쉼표로 구분한 키 SHA-256, 없으면 베타 꺼짐)·BETA_PER_DAY (키당 하루 질문, 30)·BETA_CLOSED (1이면 질문 거절)로
+    클로즈드 베타, CHAT_TOTAL_PER_DAY로 서비스 전체 하루 질문 수(300)."""
     db_path = Path(db_path)
-    limit = limit or RateLimit()
+    limit = limit or RateLimit(total_per_day=int(os.environ.get("CHAT_TOTAL_PER_DAY", "300")))
+    admin_key = admin_key if admin_key is not None else os.environ.get("ADMIN_KEY", "")
+    beta = BetaGate(os.environ.get("BETA_KEY_HASHES", "").split(","), int(os.environ.get("BETA_PER_DAY", "30")), os.environ.get("BETA_CLOSED") == "1", admin_key=admin_key)
     chat_log = chat_log or ChatLog()
-    admin = AdminGuard(admin_key if admin_key is not None else os.environ.get("ADMIN_KEY", ""))
+    admin = AdminGuard(admin_key)
     if not db_path.exists():
         raise FileNotFoundError(db_path)
     conn = _open_readonly(db_path)
@@ -445,6 +509,19 @@ def create_app(
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
     team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
     squads: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출 (최근 것만)
+    restored = threading.Lock()  # 첫 베타 질문에서 한 번만 오늘 기록으로 키별 카운터를 채운다 (잡은 채로 둠 = 끝)
+
+    def beta_id(request: Request) -> str | None:
+        """The beta key's id for a request that needs a key (None when the beta is off); raises 401/429 otherwise."""
+        return beta.identify(_visitor(request), request.headers.get("x-beta-key")) if beta.enabled else None
+
+    def restore_counts() -> None:
+        # Render가 잠들었다 깨면 메모리 카운터가 비므로 오늘(KST) 기록에서 다시 센다. 실패해도 다시 시도하지 않는다 (느린 읽기가 질문마다 붙지 않게)
+        if restored.acquire(blocking=False):
+            try:
+                limit.seed(chat_log.today_counts())
+            except Exception:
+                log.exception("restoring today's beta key counts failed")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -509,6 +586,16 @@ def create_app(
         data = tool("list_available_data", {})
         return {"backend": backend, "daily_scope": data.get("daily_scope")}
 
+    @app.get("/api/beta")
+    def beta_status() -> dict[str, bool]:
+        return {"beta": beta.enabled, "closed": beta.enabled and beta.closed}
+
+    @app.post("/api/beta/check")
+    def beta_check(req: BetaCheck, request: Request) -> dict[str, bool]:
+        if beta.enabled:
+            beta.identify(_visitor(request), req.key)
+        return {"ok": True}
+
     @app.get("/api/formations")
     def formations(team_color: str | None = Query(default=None, max_length=40)) -> dict[str, Any]:
         return tool("list_formations", {"team_color": team_color or None})
@@ -560,13 +647,19 @@ def create_app(
         reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args).
         trace = (/trace) 모델 선택·생각·도구 결과·모델 전환. 질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
         who = _visitor(request)
-        if refused := limit.check(who):
-            chat_log.record(q=req.message, outcome="limited", error=refused)
+        kid = beta_id(request)
+        if beta.enabled and beta.closed and kid != "admin":  # 관리자는 종료 후에도 점검할 수 있다
+            raise HTTPException(status_code=403, detail="베타가 종료됐어요")
+        who_key = {"key": kid} if kid else {}  # 기록에는 키 해시 앞 12자만 (원문 키·IP는 남기지 않는다)
+        if kid:
+            restore_counts()
+        if refused := limit.check(who, kid, sys.maxsize if kid == "admin" else beta.per_day):  # 관리자는 키별 하루 제한 없음
+            chat_log.record(q=req.message, outcome="limited", error=refused, **who_key)
             raise HTTPException(status_code=429, detail=refused)
         if backend != "gemini":
             with lock:
                 answer = rules.ask(req.message)
-            chat_log.record(q=req.message, outcome="ok", model="rules", tools=[answer.tool] if answer.tool else [])
+            chat_log.record(q=req.message, outcome="ok", model="rules", tools=[answer.tool] if answer.tool else [], **who_key)
             lines = [_event(type="start", session_id=req.session_id), _event(type="delta", text=answer.text),
                      _event(type="done", tool_calls=[answer.tool] if answer.tool else [])]  # fmt: skip
             return StreamingResponse(iter(lines), media_type="application/x-ndjson")
@@ -577,7 +670,7 @@ def create_app(
         def events():
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
-            entry: dict[str, Any] = {"id": uuid.uuid4().hex[:12], "q": req.message, "session": session_id[:8], "outcome": "cancelled"}
+            entry: dict[str, Any] = {"id": uuid.uuid4().hex[:12], "q": req.message, "session": session_id[:8], "outcome": "cancelled", **who_key}
             ask, team = session.take(req.message)
             if team:
                 entry["team"] = team.mark + team.nickname
@@ -691,6 +784,7 @@ def create_app(
     def attach_team(req: TeamRequest, request: Request) -> dict[str, Any]:
         """@닉네임: that user's latest starting XI, attached to the conversation (sent ahead of each question).
         "#피드ID" instead: the starting XI of that squad maker feed."""
+        beta_id(request)
         nickname = req.nickname.strip()
         feed = nickname.startswith("#")
         if not feed and not os.environ.get("NEXON_API_KEY"):
@@ -716,14 +810,16 @@ def create_app(
         return {"session_id": session_id, **team.to_json()}
 
     @app.delete("/api/team")
-    def detach_team(session_id: str = Query(max_length=64)) -> dict[str, bool]:
+    def detach_team(request: Request, session_id: str = Query(max_length=64)) -> dict[str, bool]:
+        beta_id(request)
         session_for(session_id).team = None
         return {"ok": True}
 
     @app.post("/api/squad-link")
-    def squad_maker_link(req: FeedRequest) -> dict[str, Any]:
+    def squad_maker_link(req: FeedRequest, request: Request) -> dict[str, Any]:
         """스쿼드메이커로 내보내기 (/send 페이지): the answer's squad as a squad maker link for the FCLM bookmarklet,
         with the players on their slots for the preview."""
+        beta_id(request)
         with lock:
             found = squads.get(req.id)
         if not found:
@@ -737,9 +833,10 @@ def create_app(
     @app.post("/api/feedback")
     def feedback(req: Feedback, request: Request) -> dict[str, bool]:
         """👍/👎 under an answer (shown only now and then): kept as its own record, joined to the question by id."""
+        kid = beta_id(request)
         if not feedback_limit.check(_visitor(request)):
             raise HTTPException(status_code=429, detail="잠시 후 다시 눌러 주세요.")
-        chat_log.record(outcome="feedback", ref=req.id, vote=req.vote)
+        chat_log.record(outcome="feedback", ref=req.id, vote=req.vote, **({"key": kid} if kid else {}))
         return {"ok": True}
 
     # --- 관리자: 답변 기록 (ADMIN_KEY가 없으면 없는 페이지, 5회 틀린 IP는 막힘) ---
