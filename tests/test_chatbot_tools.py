@@ -1175,7 +1175,10 @@ def test_an_include_name_on_several_players_goes_by_who_this_scope_rankers_used(
     assert not any(s["player"] == "실바나" for s in r["lineup"])
     use(300000092, 92)
     content, is_error = toolbox.run("recommend_squad", args)
-    assert is_error and "실바가" in content and "실바나" in content  # 둘 다 쓰임
+    assert is_error and "실바가" in content and "실바나" in content  # 둘 다 비슷하게 쓰임
+    toolbox.conn.execute("UPDATE usage_stats SET ranker_count = 5 WHERE pid = 91")  # 한쪽이 압도적(5배 이상) → 그 선수
+    r = run(toolbox, "recommend_squad", args)
+    assert r["include_resolved"]["실바"] == "실바가"
 
 
 def test_over_the_cap_with_owned_cards_comes_with_fixes():

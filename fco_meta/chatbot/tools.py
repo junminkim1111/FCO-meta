@@ -112,6 +112,7 @@ POSITION_NEAR = {
     "CDM": ("CM", "CB"), "LW": ("LM", "LAM", "ST", "CF"), "RW": ("RM", "RAM", "ST", "CF"), "LM": ("LW", "LAM", "CM"), "RM": ("RW", "RAM", "CM"),
     "LB": ("LWB", "CB"), "RB": ("RWB", "CB"), "LWB": ("LB", "LM"), "RWB": ("RB", "RM"), "CB": ("DM", "LB", "RB"),
 }  # fmt: skip
+NAME_DOMINANT_RATIO = 5  # 여러 선수에 걸린 이름: 이 범위 랭커 수가 다음 선수의 이 배 이상이면 묻지 않고 그 선수 (맨시티 실바: 베르나르두 26 vs 다비드 2)
 GRADE_OVR = (0, 0, 1, 2, 4, 6, 8, 11, 15, 17, 19, 21, 24, 27)  # 강화 등급(1~13) → 누적 OVR 상승 (게임의 강화 안내표)
 SALARY_GAP = 2  # 자리 평균 급여가 랭커 평균과 이만큼 다르면 결과에 알린다
 BUDGET_MIN_GRADE = 8  # 예산에 맞추느라 강화를 낮춰도 이 아래로는 안 내린다 (8강 미만은 요즘 쓰지 않음)
@@ -1287,12 +1288,13 @@ class Toolbox:
         # 시즌 단일 팀컬러는 후보를 전체 랭커 기록에서 찾는다 (_squad_setup의 usage_id와 같게)
         usage_id = ALL_RANKERS if tc_id != ALL_RANKERS and tc and tc.category == "special" else tc_id
         marks = ",".join("?" * len(players))
-        used = {r[0] for r in self.conn.execute(
-            f"SELECT DISTINCT pid FROM usage_stats WHERE team_color_id = ? AND formation = ? AND strict = 0 AND pid IN ({marks})"
-            " AND data_as_of = (SELECT MAX(data_as_of) FROM usage_sample WHERE team_color_id = ?)", (usage_id, ALL_FORMATIONS, *players, usage_id)
-        )}  # fmt: skip
-        if len(used) == 1:
-            return "".join(max(set(v := players[next(iter(used))]), key=v.count).split())
+        used = dict(self.conn.execute(
+            f"SELECT pid, SUM(ranker_count) FROM usage_stats WHERE team_color_id = ? AND formation = ? AND strict = 0 AND pid IN ({marks})"
+            " AND data_as_of = (SELECT MAX(data_as_of) FROM usage_sample WHERE team_color_id = ?) GROUP BY pid", (usage_id, ALL_FORMATIONS, *players, usage_id)
+        ).fetchall())  # fmt: skip
+        top = sorted(used, key=used.get, reverse=True)
+        if top and (len(top) == 1 or used[top[0]] >= NAME_DOMINANT_RATIO * used[top[1]]):  # 한 명만 쓰였거나 한쪽이 압도적
+            return "".join(max(set(v := players[top[0]]), key=v.count).split())
         names = [max(set(v), key=v.count) for v in sorted(players.values(), key=len, reverse=True)[:6]]
         raise ToolError(f"'{name}'(은)는 여러 선수: {', '.join(names)} — 사용자에게 어느 선수인지 물을 것")
 
