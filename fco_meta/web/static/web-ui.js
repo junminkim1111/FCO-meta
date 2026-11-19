@@ -622,7 +622,6 @@ function choiceRow(choices) {
     const i = radios.findIndex((r) => r.checked);
     const text = i < 0 ? "" : i === radios.length - 1 ? other.value.trim() : radios[i].value;
     if (!text) return fail(i < 0 ? "선택지를 하나 골라 주세요." : "내용을 입력해 주세요.");
-    if (i < radios.length - 1 && text.includes("@")) return openTeamBox("@"); // "@구단주명으로 팀을 불러올게요": 보내지 않고 불러오기 창을 연다 (카드는 남김)
     form.classList.add("leaving");
     setTimeout(() => form.remove(), 250);
     send(text);
