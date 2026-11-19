@@ -38,6 +38,10 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # 질문 집계·Traces·키별 하루 제한에서 빼고 summary()["visits"]로만 센다 (NON_QUESTIONS)
 OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare", "blocked")
 NON_QUESTIONS = ("visit", "beta_check")
+
+
+def _key_label(key: str) -> str:
+    return "체험" if key.startswith("trial-") else key
 MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
 DOWNLOADS = 16  # 기록 파일을 이만큼 한꺼번에 받는다 (서버가 깨어난 뒤 첫 관리자 페이지가 파일마다 기다리지 않게)
 
@@ -249,7 +253,7 @@ class ChatLog:
             d = day(r)
             d["questions"] += 1
             if r.get("key"):
-                d["keys"].add(r["key"])
+                d["keys"].add(_key_label(r["key"]))
         visits = [r for r in raw if r["outcome"] == "visit"]
         return {
             "by_day": [{**{k: v for k, v in d.items() if k not in ("vs", "keys")}, "uv": len(d["vs"]), "keys": len(d["keys"])}
@@ -277,7 +281,8 @@ class ChatLog:
         by_key: dict[str, dict[str, Any]] = {}  # 베타 키별 (키 해시 앞 12자): 질문(제한에 걸린 것 빼고)·오늘·비용·👍👎·마지막
         for r in records:
             if r.get("key") and r["outcome"] != "limited":
-                k = by_key.setdefault(r["key"], {"key": r["key"], "questions": 0, "today": 0, "cost": 0.0, "up": 0, "down": 0, "last": r["t"]})
+                label = _key_label(r["key"])  # 키 없는 방문자의 체험 질문(trial-…)은 하나로 묶는다
+                k = by_key.setdefault(label, {"key": label, "questions": 0, "today": 0, "cost": 0.0, "up": 0, "down": 0, "last": r["t"]})
                 k["questions"] += 1
                 k["today"] += r["t"][:10] == today
                 k["cost"] += r.get("cost", 0)

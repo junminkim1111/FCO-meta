@@ -88,6 +88,9 @@ def gemini_pick(question: str) -> tuple[dict[str, Any], str]:
     return {"escalate_to": FLASH_MODEL}, f"{why} → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
 
 
+TRIAL_USED = "체험 질문을 다 썼어요. 베타 키를 받으면 계속 물어볼 수 있어요."
+
+
 class RateLimit:
     """Questions per person per minute and per day, and for the whole service per day — the Gemini quota
     is shared by everyone. A person is the visitor's IP as the tunnel or proxy passes it (see chat())."""
@@ -108,9 +111,10 @@ class RateLimit:
                 self.keys[k] = self.keys.get(k, 0) + n
                 self.total += n
 
-    def check(self, who: str, key: str | None = None, key_per_day: int = 0) -> str | None:
+    def check(self, who: str, key: str | None = None, key_per_day: int = 0, trial_per_day: int = 0) -> str | None:
         """Counts one question; returns why it is refused instead (nothing is counted then).
-        With a beta `key` the day's limit is the key's (key_per_day) instead of the visitor's; the per-minute limit stays per IP."""
+        With a beta `key` the day's limit is the key's (key_per_day) instead of the visitor's; the per-minute limit stays per IP.
+        A "trial-…" key (a visitor without a beta key) is also refused (TRIAL_USED) once all trial questions today reach trial_per_day."""
         with self.lock:
             now = self.now()
             day = datetime.fromtimestamp(now, KST).date()
@@ -123,7 +127,11 @@ class RateLimit:
                 recent.popleft()
             if self.total >= self.total_per_day:
                 return "오늘 서비스 전체 질문 수가 다 찼어요. 내일 다시 물어봐 주세요."
+            if key and key.startswith("trial-") and sum(n for k, n in self.keys.items() if k.startswith("trial-")) >= trial_per_day:
+                return TRIAL_USED
             if key and self.keys.get(key, 0) >= key_per_day:
+                if key.startswith("trial-"):
+                    return TRIAL_USED
                 return f"오늘 질문 수({key_per_day}개)를 다 썼어요. 내일 다시 물어봐 주세요."
             if not key and self.today.get(who, 0) >= self.per_day:
                 return f"하루 질문 수({self.per_day}개)를 다 썼어요. 내일 다시 물어봐 주세요."
@@ -145,8 +153,8 @@ class BetaGate:
 
     MAX_FAILS = 10
 
-    def __init__(self, hashes: Iterable[str], per_day: int = 30, closed: bool = False, now: Callable[[], float] = time.time, admin_key: str = ""):
-        self.admin_key = admin_key
+    def __init__(self, hashes: Iterable[str], per_day: int = 30, closed: bool = False, now: Callable[[], float] = time.time, admin_key: str = "", trial_per_day: int = 0):
+        self.admin_key, self.trial_per_day = admin_key, trial_per_day
         self.hashes = [h.strip().lower() for h in hashes if h.strip()]
         self.per_day, self.closed, self.now = per_day, closed, now
         self.fails: dict[str, deque[float]] = {}
@@ -535,7 +543,8 @@ def create_app(
     db_path = Path(db_path)
     limit = limit or RateLimit(total_per_day=int(os.environ.get("CHAT_TOTAL_PER_DAY", "300")))
     admin_key = admin_key if admin_key is not None else os.environ.get("ADMIN_KEY", "")
-    beta = BetaGate(os.environ.get("BETA_KEY_HASHES", "").split(","), int(os.environ.get("BETA_PER_DAY", "30")), os.environ.get("BETA_CLOSED") == "1", admin_key=admin_key)
+    beta = BetaGate(os.environ.get("BETA_KEY_HASHES", "").split(","), int(os.environ.get("BETA_PER_DAY", "30")), os.environ.get("BETA_CLOSED") == "1", admin_key=admin_key,
+                    trial_per_day=int(os.environ.get("BETA_TRIAL_PER_DAY", "50")))
     chat_log = chat_log or ChatLog()
     visits = VisitTracker(os.environ.get("VISIT_SALT") or admin_key, chat_log.now)
     admin = AdminGuard(admin_key)
@@ -561,6 +570,12 @@ def create_app(
     def beta_id(request: Request) -> str | None:
         """The beta key's id for a request that needs a key (None when the beta is off); raises 401/429 otherwise."""
         return beta.identify(_visitor(request), request.headers.get("x-beta-key")) if beta.enabled else None
+
+    def trial_id(request: Request) -> str | None:
+        """Only /api/chat: a request with no key at all gets a daily trial id (None when trials are off or a key was given — wrong keys are not trials)."""
+        if beta.enabled and beta.trial_per_day > 0 and not request.headers.get("x-beta-key"):
+            return "trial-" + visits.visitor_id(_visitor(request), request.headers.get("user-agent", ""))
+        return None
 
     def restore_counts() -> None:
         # Render가 잠들었다 깨면 메모리 카운터가 비므로 오늘(KST) 기록에서 다시 센다. 실패해도 다시 시도하지 않는다 (느린 읽기가 질문마다 붙지 않게)
@@ -713,14 +728,17 @@ def create_app(
         reset = 지금까지 보낸 글을 지운다 (도구를 부르기 전에 쓴 글이었음). tool = 지금 부르는 도구(name, args).
         trace = (/trace) 모델 선택·생각·도구 결과·모델 전환. 질문 수 제한에 걸리면 429 (detail = 안내 문구)."""
         who = _visitor(request)
-        kid = beta_id(request)
+        kid = trial_id(request) or beta_id(request)
         if beta.enabled and beta.closed and kid != "admin":  # 관리자는 종료 후에도 점검할 수 있다
             raise HTTPException(status_code=403, detail="베타가 종료됐어요")
         who_key = {"key": kid} if kid else {}  # 기록에는 키 해시 앞 12자만 (원문 키·IP는 남기지 않는다)
         if kid:
             restore_counts()
-        if refused := limit.check(who, kid, sys.maxsize if kid == "admin" else beta.per_day):  # 관리자는 키별 하루 제한 없음
+        trial = bool(kid) and kid.startswith("trial-")
+        if refused := limit.check(who, kid, 1 if trial else sys.maxsize if kid == "admin" else beta.per_day, beta.trial_per_day):  # 관리자는 키별 하루 제한 없음
             chat_log.record(q=req.message, outcome="limited", error=refused, **who_key)
+            if refused == TRIAL_USED:  # 체험을 다 썼다 → 프론트가 401이면 키 입력창을 띄운다
+                raise HTTPException(status_code=401, detail=refused)
             raise HTTPException(status_code=429, detail=refused)
         if backend != "gemini":
             with lock:

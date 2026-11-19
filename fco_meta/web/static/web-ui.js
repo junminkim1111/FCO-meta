@@ -561,7 +561,7 @@ async function send(text) {
     traceOutcome = "error";
     // 질문 수 제한(429)은 안내 문구 그대로, 그 밖의 실패는 "오류:"를 붙여 보여 준다
     if (!ctrl.signal.aborted) grow((answer ? "\n\n" : "") + ([401, 403, 429].includes(e.status) ? "" : "오류: ") + e.message);
-    if (e.status === 401 && beta) rejectedKey(e.message);
+    if (e.status === 401 && beta) { if (!$("msg").value) $("msg").value = text; rejectedKey(e.message); } // 거절당한 질문 글은 입력창에 되돌려 둔다
   }
   timers.forEach(clearTimeout);
   setBusy(null);
@@ -969,7 +969,6 @@ $("chat-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = $("msg").value.trim();
   if (!text || inflight) return; // 답을 기다리는 중에는 입력한 글을 그대로 둔다
-  if (!text.startsWith("/") && needKey()) return askKey(); // 키를 넣는 동안 쓴 글은 그대로 둔다
   $("msg").value = "";
   if (text.startsWith("/")) return command(text);
   send(text);

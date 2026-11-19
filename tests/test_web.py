@@ -1019,7 +1019,8 @@ def test_beta_off_needs_no_key_and_says_so(client):
     assert client.post("/api/beta/check", json={"key": "아무거나"}).json() == {"ok": True}
 
 
-def test_beta_gate_needs_the_right_key_but_meta_stays_open(beta):
+def test_beta_gate_needs_the_right_key_but_meta_stays_open(beta, monkeypatch):
+    monkeypatch.setenv("BETA_TRIAL_PER_DAY", "0")  # 체험이 켜져 있으면 키 없는 첫 질문은 통과한다 (아래 test_no_key_visitor_…)
     c = beta()
     assert c.get("/api/beta").json() == {"beta": True, "closed": False}
     for path in ("/api/meta", "/api/formations", "/api/teamcolors"):
@@ -1103,7 +1104,8 @@ def test_admin_key_passes_a_closed_beta_but_a_plain_key_does_not(beta):
     assert chat(c, KEY).status_code == 403
 
 
-def test_empty_admin_key_is_not_a_beta_key(beta):
+def test_empty_admin_key_is_not_a_beta_key(beta, monkeypatch):
+    monkeypatch.setenv("BETA_TRIAL_PER_DAY", "0")
     c = beta(admin_key="")
     assert chat(c, "").status_code == 401
     assert c.post("/api/chat", json={"message": "안녕"}, headers={"X-Beta-Key": ""}).status_code == 401
@@ -1150,6 +1152,43 @@ def test_restart_refills_todays_counts_from_the_log(beta):
     assert chat(again, "fclm-WXYZ-2345").status_code == 200
     log.pending.insert(0, {"t": "2020-01-01T00:00:00+09:00", "outcome": "ok", "key": key_hash("fclm-WXYZ-2345")[:12]})  # 어제 기록은 세지 않는다
     assert log.today_counts()[key_hash("fclm-WXYZ-2345")[:12]] == 1
+
+
+def test_no_key_visitor_gets_one_trial_question_a_day(beta):
+    c = beta()
+    assert chat(c).status_code == 200
+    second = chat(c)
+    assert second.status_code == 401 and "체험 질문을 다 썼어요" in second.json()["detail"]
+    assert chat(c, ip="2.2.2.2").status_code == 200  # 다른 방문자
+    assert chat(c, ip="3.3.3.3", key="fclm-NOPE-NOPE").json()["detail"] == "베타 키가 맞지 않아요"  # 틀린 키는 체험이 아니다
+    assert chat(c, ip="3.3.3.3").status_code == 200  # ...체험을 쓰지도 않았다
+    assert chat(c, KEY).status_code == 200  # 키가 있으면 제한 없이 키 쪽
+    assert c.post("/api/team", json={"nickname": "x", "session_id": "s"}).status_code == 401  # 체험은 /api/chat만
+
+
+def test_trial_total_per_day_and_off_switch(beta, monkeypatch):
+    monkeypatch.setenv("BETA_TRIAL_PER_DAY", "2")
+    c = beta()
+    assert [chat(c, ip=f"{i}.0.0.1").status_code for i in (1, 2, 3)] == [200, 200, 401]
+    assert chat(c, KEY).status_code == 200  # 키 있는 사람은 체험 상한과 무관
+    monkeypatch.setenv("BETA_TRIAL_PER_DAY", "0")
+    off = chat(beta())
+    assert off.status_code == 401 and off.json()["detail"] == "베타 키가 필요해요"
+
+
+def test_closed_beta_blocks_trial_too(beta):
+    assert chat(beta(closed=True)).status_code == 403
+
+
+def test_restart_refills_trial_counts_from_the_log(beta):
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    assert chat(beta(chat_log=log, admin_key="salt")).status_code == 200  # 방문자 id의 소금은 admin_key(또는 VISIT_SALT)라 재시작 뒤에도 같다
+    again = beta(chat_log=log, admin_key="salt")
+    assert chat(again).status_code == 401
+    assert chat(again, ip="2.2.2.2").status_code == 200
+    assert next(k for k in log.today_counts() if k.startswith("trial-"))
 
 
 def test_restore_failure_does_not_stop_the_server(beta, monkeypatch):
