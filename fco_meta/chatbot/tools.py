@@ -105,6 +105,13 @@ def squad_bonuses(grades: list[int], teams: list[tuple[bool, list[bool]]]) -> li
 
 
 POSITION_ALIAS = {"DM": "CDM", "RAM": "CAM", "LAM": "CAM"}  # 스쿼드 역할 → 카드 상세의 포지션 이름
+# 카드 포지션 → 그 자리가 포메이션에 없을 때 대신 보는 역할 (가까운 순)
+# ponytail: 단순 대응표 — 선수 성향(윙어 성향의 CAM 등)은 못 본다
+POSITION_NEAR = {
+    "CAM": ("CM", "RAM", "LAM", "CF", "ST", "DM"), "CF": ("ST", "CAM", "RW", "LW"), "ST": ("CF", "RW", "LW"), "CM": ("DM", "CAM", "RM", "LM"),
+    "CDM": ("CM", "CB"), "LW": ("LM", "LAM", "ST", "CF"), "RW": ("RM", "RAM", "ST", "CF"), "LM": ("LW", "LAM", "CM"), "RM": ("RW", "RAM", "CM"),
+    "LB": ("LWB", "CB"), "RB": ("RWB", "CB"), "LWB": ("LB", "LM"), "RWB": ("RB", "RM"), "CB": ("DM", "LB", "RB"),
+}  # fmt: skip
 GRADE_OVR = (0, 0, 1, 2, 4, 6, 8, 11, 15, 17, 19, 21, 24, 27)  # 강화 등급(1~13) → 누적 OVR 상승 (게임의 강화 안내표)
 SALARY_GAP = 2  # 자리 평균 급여가 랭커 평균과 이만큼 다르면 결과에 알린다
 BUDGET_MIN_GRADE = 8  # 예산에 맞추느라 강화를 낮춰도 이 아래로는 안 내린다 (8강 미만은 요즘 쓰지 않음)
@@ -422,6 +429,7 @@ class _Squad:
     setup_notes: list[str] = field(default_factory=list)  # 인자를 그대로 반영하지 못한 것 (결과의 note에)
     must_roles: dict[str, dict[str, int]] = field(default_factory=dict)  # 넣을 선수를 랭커들이 쓴 자리 (이름 → 역할 → 랭커 수)
     picked: dict[str, Any] = field(default_factory=dict)  # 말하지 않아 사용률 비례로 뽑은 팀컬러·포메이션
+    card_roles: dict[str, str] = field(default_factory=dict)  # 자리를 안 줬고 랭커 기록도 없어 카드 주 포지션 자리에 넣은 선수 (이름 → 설명)
 
 
 MAX_UPGRADES = 2  # recommend_squad의 upgrades: 자리마다 보여 줄 강화·시즌 선택지 수
@@ -1256,6 +1264,34 @@ class Toolbox:
             self.conn.execute(f"SELECT 1 FROM {t} WHERE REPLACE(name, ' ', '') LIKE ? LIMIT 1", (f"%{key}%",)).fetchone()
             for t in ("meta_spid", "card")
         )
+
+    def _require_one_player(self, name: str, team_color: Any) -> None:
+        """'실바'처럼 이름이 여러 선수에 걸리면 (정확히 같은 이름이 없을 때) 오류 — 팀컬러가 있으면 그 소속 카드가 있는 선수만 센다."""
+        rows = self.conn.execute(
+            "SELECT pid, name, spid FROM card WHERE REPLACE(name, ' ', '') LIKE ?", (f"%{name}%",)
+        ).fetchall()
+        if any("".join(r[1].split()) == name for r in rows):
+            return
+        fits = None
+        if (tc_id := self._scope(team_color)[0]) != ALL_RANKERS and (tc := next((t for t in self.catalog.entries if t.id == tc_id), None)):
+            fits = self._team_color_cards(tc)
+        players: dict[int, list[Any]] = {}
+        for pid, pname, spid in rows:
+            if fits is None or fits(spid):
+                players.setdefault(pid, []).append(pname)
+        if len(players) > 1:
+            names = [max(set(v), key=v.count) for v in sorted(players.values(), key=len, reverse=True)[:6]]
+            raise ToolError(f"'{name}'(은)는 여러 선수: {', '.join(names)} — 사용자에게 어느 선수인지 물을 것")
+
+    def _why_not_included(self, name: str, sq: _Squad) -> str:
+        """넣지 못한 이유 한 줄: 그 팀컬러 소속 카드가 없는지, 그 시즌 카드가 없는지를 확인하고 아니면 일반 문구."""
+        pid = self.conn.execute("SELECT pid FROM card WHERE REPLACE(name, ' ', '') LIKE ? GROUP BY pid ORDER BY COUNT(*) DESC LIMIT 1", (f"%{name}%",)).fetchone()
+        cards = self._owned_cards(pid[0], "", sq.fits if not sq.season_rule else None) if pid else []
+        if not cards:
+            return f"그 선수의 {sq.tc_name} 카드가 없음"
+        if (seasons := sq.must_season.get(name)) and not any(self._owned_cards(pid[0], s, sq.fits if not sq.season_rule else None) for s in seasons):
+            return f"그 선수의 {'/'.join(seasons).upper()} 시즌 카드가 {sq.tc_name} 소속으로는 없음"
+        return "시세가 수집된 카드가 없거나, 제외·보유·강화 조건에 맞는 카드가 없거나, 자리가 겹침"
 
     def _name_hint(self, name: str) -> str:
         """Error text for a player name that matches no card: if its last chunk looks like a season or an upgrade level
@@ -2538,9 +2574,10 @@ class Toolbox:
         """Options for a player to include beyond the cards rankers used in that slot: his collected cards (of `season`)
         at `grade` that have a price, higher OVR scored a little higher (no ranker usage, so ranker cards that fit win).
         owned: the user's own cards — price 0, no market price needed, every season if `season` is empty."""
-        row = self.conn.execute(
-            "SELECT pid, name FROM card WHERE REPLACE(name, ' ', '') LIKE ? GROUP BY pid ORDER BY COUNT(*) DESC LIMIT 1", (f"%{name}%",)
-        ).fetchone()  # ponytail: 이름이 겹치면 카드가 가장 많은 선수 — 동명이인이 문제되면 시즌·국적으로 가른다
+        rows = self.conn.execute(
+            "SELECT pid, name FROM card WHERE REPLACE(name, ' ', '') LIKE ? GROUP BY pid ORDER BY COUNT(*) DESC", (f"%{name}%",)
+        ).fetchall()  # ponytail: 이름이 겹치면(_require_one_player를 통과한 경우) 그 팀컬러 카드가 있는 선수 중 카드가 가장 많은 선수
+        row = next((r for r in rows if fits is None or any(fits(c[0]) for c in self.conn.execute("SELECT spid FROM card WHERE pid = ?", (r["pid"],)))), None)
         if row is None:
             return []
         entry = {"name": row["name"], "pid": row["pid"], "rankers": 0, "usage_rate": 0.0, "cards": []}
@@ -2640,6 +2677,7 @@ class Toolbox:
                 continue
             if not self._player_known(name):
                 raise ToolError(f"include의 {self._name_hint(spec['player'])}")
+            self._require_one_player(name, team_color)
             must.append(name)
             if role := "".join(str(spec.get("role") or "").split()).upper():
                 if role not in ROLES:
@@ -2661,6 +2699,9 @@ class Toolbox:
             include_clubs = self._include_clubs(must)
             if include_clubs:
                 team_color = include_clubs[0].id
+        for o in owned:
+            if o["name"] not in must:
+                self._require_one_player(o["name"], team_color)
         must += [o["name"] for o in owned if o["name"] not in must]  # 가진 카드도 꼭 넣는다
         derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
         if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
@@ -2728,6 +2769,15 @@ class Toolbox:
         # (사용자가 말하지 않은 자동 급여 상한은 급여 미수집 카드도 후보로 둔다 — 0으로 셈)
         known = [k for k in limits if not (auto_cap and k == "salary")]
         slot_options: list[tuple[str, list[dict[str, Any]]]] = []
+
+        def fallback(name: str, own: dict[str, Any] | None, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            """그 선수의 다른 카드들 (시즌·강화 지정, 보유, 팀컬러, 제외 조건은 그대로)."""
+            return [o for season in ([own["season"]] if own else wanted_season.get(name) or [None])
+                    for grade in ([own["grade"] or knobs.get("min_grade") or 8] if own else sorted(set(wanted_grade.get(name) or [knobs.get("min_grade") or 8]), reverse=True))
+                    for o in self._unused_options(name, season, grade, name in wanted_grade, fits if not season_rule else None, bool(own))
+                    if (not own or not any(x["card"]["sp_id"] == o["card"]["sp_id"] for x in options))
+                    and not any(x in "".join(o["entry"]["name"].split()) for x in knobs.get("exclude", ()))]  # fmt: skip
+
         first = None
         for role, n in layout.items():
             top = n + (25 if slots else 8)
@@ -2816,17 +2866,34 @@ class Toolbox:
                 if (own and mine) or not (pinned.get(name) == role or (name not in pinned and mine)):
                     continue
                 have = {o["card"]["sp_id"] for o in mine}
-                extra = [o for season in ([own["season"]] if own else wanted_season.get(name) or [None])
-                         for grade in ([own["grade"] or knobs.get("min_grade") or 8] if own else sorted(set(wanted_grade.get(name) or [knobs.get("min_grade") or 8]), reverse=True))
-                         for o in self._unused_options(name, season, grade, name in wanted_grade, fits if not season_rule else None, bool(own))
-                         if not own or not any(x["card"]["sp_id"] == o["card"]["sp_id"] for x in options)
-                         if o["card"]["sp_id"] not in have
-                         and not any(x in "".join(o["entry"]["name"].split()) for x in knobs.get("exclude", ()))]  # fmt: skip
-                options += [o for o in extra if self._matches_card_rules(role, o["card"], knobs)]
+                options += [o for o in fallback(name, own, options) if o["card"]["sp_id"] not in have and self._matches_card_rules(role, o["card"], knobs)]
             if not checking:
                 options = [o for o in options if _grade(o["card"]) >= knobs.get("min_grade", 0)]
             self._score_options(role, options, knobs)
             slot_options += [(role, options)] * n
+        # 자리를 안 줬는데 어느 자리에도 후보가 없는 선수 (랭커가 이 조합에서 안 씀): 카드의 주 포지션 자리에서 폴백으로 넣는다
+        card_roles: dict[str, str] = {}
+        for name in must:
+            if name in pinned or any(f"include:{name}" in o["tags"] for _, opts in slot_options for o in opts):
+                continue
+            own = next((o for o in owned if o["name"] == name), None)
+            extra = fallback(name, own, [o for _, opts in slot_options for o in opts])
+            if not extra:
+                continue
+            best = max(extra, key=lambda o: o["score"])
+            row = self.conn.execute("SELECT positions FROM card_detail WHERE spid = ?", (best["card"]["sp_id"],)).fetchone()
+            ovrs = json.loads(row[0]) if row and row[0] else {}
+            by_ovr = sorted(ovrs, key=lambda x: -ovrs[x])
+            codes = {"CDM": "DM"}  # 카드의 포지션 이름 → 역할
+            target = next((codes.get(x, x) for x in by_ovr if codes.get(x, x) in layout), None) or next(
+                (r for x in by_ovr for r in POSITION_NEAR.get(x, ()) if r in layout), None)  # fmt: skip
+            if target is None:
+                setup_notes.append(f"'{name}'은 랭커 기록이 없고 카드 주 포지션({'/'.join(by_ovr[:2]) or '미수집'})에 맞는 자리가 이 포메이션에 없어 자리를 정하지 못함")
+                continue
+            options = next(opts for r, opts in slot_options if r == target)  # 같은 자리 칸들이 이 리스트 하나를 나눠 쓴다
+            options += [o for o in extra if self._matches_card_rules(target, o["card"], knobs) and (checking or _grade(o["card"]) >= knobs.get("min_grade", 0))]
+            self._score_options(target, options, knobs)
+            card_roles[name] = f"{target}에 넣음 (이 조합 랭커 기록이 없어 카드의 주 포지션 {by_ovr[0]}({ovrs[by_ovr[0]]})로 자리를 정함)"
         if first is None or not first.sample_size:
             return {"team_color": tc_name, "formation": formation, "lineup": [], "note": "이 조합은 스쿼드가 수집·집계되지 않음"}
 
@@ -2834,7 +2901,7 @@ class Toolbox:
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
             include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
             strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first, must_season=wanted_season, must_grade=wanted_grade, pinned_roles=pinned,
-            setup_notes=setup_notes, picked=picked,
+            setup_notes=setup_notes, picked=picked, card_roles=card_roles,
             must_roles={name: {role: max(o["entry"]["rankers"] for o in mine) for role, opts in dict(slot_options).items()
                                if (mine := [o for o in opts if name in "".join((o["entry"]["name"] or "").split())])} for name in must},
         )  # fmt: skip
@@ -2968,6 +3035,8 @@ class Toolbox:
                     "note": "사용자가 원해 넣었지만 이 팀컬러·포메이션 랭커들이 그 자리에 이 카드를 쓴 기록이 없음 (사용률 없음, 랭커가 쓴 카드가 없거나 한도에 안 맞아 시세가 있는 다른 카드로 넣음)."
                             " 거절하지 말고 넣은 스쿼드를 보여 주며 기록이 없다고 한 번만 말할 것",
                 }  # fmt: skip
+            if placed := {got[n]: v for n, v in sq.card_roles.items() if got.get(n)}:
+                out["include_placed_by_card"] = {**placed, "note": "자리를 말하지 않았고 랭커 기록도 없어 카드의 주 포지션 자리에 넣었음. 답에서 이 사실을 한 문장으로 알릴 것"}
             elsewhere = {}  # "압데를 LM에": 넣긴 하되 랭커들은 주로 다른 자리에 쓴다고 알린다
             for (role, _), c in zip(slot_options, chosen):
                 for name in must if c else ():
@@ -2980,7 +3049,7 @@ class Toolbox:
             for name, player in got.items():
                 if player is None:
                     card = f" {'/'.join(sq.must_season[name]).upper()} 카드" if name in sq.must_season else ""
-                    notes.append(f"'{name}'{card}를 넣지 못함 (그 선수·시즌 카드가 없거나, 이 팀컬러 소속 카드가 없거나, 자리가 겹침)")
+                    notes.append(f"'{name}'{card}를 넣지 못함 ({self._why_not_included(name, sq)})")
         if chem:
             need = reqs["chem"]
             if sq.derived:

@@ -1121,6 +1121,38 @@ def test_include_a_player_rankers_did_not_use_there(toolbox):  # noqa: F811
     assert excluded["include"]["새선수"] is None and all(row["player"] != "새선수" for row in excluded["lineup"])
 
 
+def _add_card(tb, spid, pid, name, positions, club):
+    tb.conn.execute("INSERT INTO card (spid, pid, season_id, name, salary, ovr, updated_at) VALUES (?, ?, 300, ?, 20, 90, 'x')", (spid, pid, name))
+    tb.conn.execute("INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (?, 8, 50000000, '2026-09-28T12:00:00+00:00')", (spid,))
+    tb.conn.execute("INSERT INTO card_detail (spid, grade, positions, traits, summary, stats, clubs, fetched_at, nation)"
+                    " VALUES (?, 1, ?, '[]', '{}', '{}', ?, 'x', '잉글랜드')", (spid, positions, f'[{{"club": "{club}"}}]'))
+    tb.conn.commit()
+
+
+def test_include_without_a_role_goes_to_the_cards_main_position(toolbox):  # noqa: F811
+    # 랭커가 어느 자리에도 안 쓴 선수: 자리를 안 줘도 카드의 주 포지션(CAM) 자리에 넣고 알린다
+    _add_card(toolbox, 300000077, 77, "새선수", '{"CAM": 107, "LW": 100}', "아스널")
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4231", "include": [{"player": "새선수"}]})
+    assert r["include"] == {"새선수": "새선수"}
+    assert next(s["role"] for s in r["lineup"] if s["player"] == "새선수") == "CAM"
+    assert r["include_placed_by_card"]["새선수"].startswith("CAM에 넣음") and r["include_without_ranker_data"]["players"] == ["새선수 S300"]
+    # 그 팀컬러 카드가 없으면 실제 이유를 적는다
+    _add_card(toolbox, 300000078, 78, "타팀선수", '{"CAM": 107}', "첼시")
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4231", "include": [{"player": "타팀선수"}]})
+    assert r["include"] == {"타팀선수": None} and "그 선수의 아스널 카드가 없음" in r["note"]
+
+
+def test_an_include_name_that_fits_several_players_is_an_error_unless_the_team_color_narrows_it(toolbox):  # noqa: F811
+    _add_card(toolbox, 300000081, 81, "쌍둥이가", '{"CAM": 100}', "아스널")
+    _add_card(toolbox, 300000082, 82, "쌍둥이나", '{"CAM": 100}', "첼시")
+    content, is_error = toolbox.run("recommend_squad", {"formation": "4231", "include": [{"player": "쌍둥이"}]})
+    assert is_error and "여러 선수" in content and "쌍둥이가" in content and "쌍둥이나" in content
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4231", "include": [{"player": "쌍둥이"}]})  # 아스널 카드는 한 명
+    assert r["include"] == {"쌍둥이": "쌍둥이가"}
+    _add_card(toolbox, 300000083, 83, "쌍둥이", '{"CAM": 100}', "아스널")  # 정확히 같은 이름이 있으면 그 선수
+    assert not toolbox.run("recommend_squad", {"formation": "4231", "include": [{"player": "쌍둥이"}]})[1]
+
+
 def test_over_the_cap_with_owned_cards_comes_with_fixes():
     from fco_meta.chatbot.tools import Toolbox
 

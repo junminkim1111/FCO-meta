@@ -5,6 +5,8 @@ import { mountOrb } from "/static/orb.js"; // 생각 중 오브
 import { renderMarkdown } from "/static/md.js"; // 답의 마크다운 표시
 // 답 끝의 "다음 질문: …" 줄은 답에서 빼고 입력창에 흐리게 채운다 (Tab으로 그대로 보낸다) → [본문, 다음 질문 또는 null]
 const NEXT_Q = /(?:\n|[ \t])[ \t>*_#-]*다음 질문\s*[:：][ \t*_]*([^\n]*?)[ \t*_]*$/;
+const CHOICES = /(?:^|\n)[ \t>*_#-]*선택지\s*[:：][ \t*_]*([^\n]*?)[ \t*_]*(?=\n|$)/;
+const splitChoices = (text) => { const m = text.match(CHOICES); if (!m) return [text, null]; const c = m[1].split("|").map((x) => x.replace(/^[ "“'*_]+|[ "”'*_]+$/g, "")).filter(Boolean); return [text.slice(0, m.index) + text.slice(m.index + m[0].length), c.length ? c : null]; };
 const splitNext = (text) => { const m = text.match(NEXT_Q); return m ? [text.slice(0, m.index), m[1].replace(/^["“]|["”]$/g, "").trim() || null] : [text, null]; };
 import { mountBeam } from "/static/beam.js"; // 답을 기다리는 동안 입력창 테두리를 도는 빛
 const $ = (id) => document.getElementById(id);
@@ -465,6 +467,7 @@ async function send(text) {
   $("msg").rows = 1; // 질문을 보내면 입력창은 한 줄로
   const ctrl = new AbortController();
   setBusy(ctrl);
+  document.querySelector("#log .quiz:not(.leaving)")?.remove(); // 카드에서 보낸 것이면 카드가 스스로 접히며 사라진다
   document.querySelector("#log .msg.intro")?.remove(); // 시세 안내 문구는 첫 질문 전까지만
   const question = mention(say("me", text));
   const used = model, mode = modeOf(used); // 답 도중에 모델을 바꿔도 이 답의 표시는 그대로
@@ -482,7 +485,7 @@ async function send(text) {
   const draw = () => {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
-    renderMarkdown(bubble, splitNext(answer.slice(0, shown))[0]);
+    renderMarkdown(bubble, splitNext(splitChoices(answer.slice(0, shown))[0])[0]);
     fillPin();
     if (stick) log.scrollTop = log.scrollHeight;
     else $("jump").hidden = false;
@@ -574,12 +577,67 @@ async function send(text) {
   }
   if (ctrl.signal.aborted) grow("\n\n*(여기서 멈췄습니다)*");
   else if (!answer) grow("답을 받지 못했습니다.");
-  const next = !ctrl.signal.aborted && splitNext(answer)[1];
+  const [body, choices] = splitChoices(answer);
+  const next = !ctrl.signal.aborted && splitNext(body)[1];
   if (next) setHint(next, true); // 다음 질문이 없으면 기본 안내 그대로 (대화와 상관없는 예시를 띄우지 않는다)
   if (used) bubble.after(el("div", { class: "applied", text: modelText(used) }));
   if (answerId && !ctrl.signal.aborted && Math.random() < RATE_CHANCE) bubble.after(rateRow(answerId));
   if (answerId && squad && !ctrl.signal.aborted) bubble.after(feedRow(answerId, built));
+  if (choices && !ctrl.signal.aborted) bubble.after(choiceRow(choices));
   if (!frame) finishTrace();
+}
+// 되묻는 답 아래 선택지 카드(Questionnaire): 라디오 목록 + 맨 끝 "기타" 인라인 입력 + 보내기. 1~n 단축키는 카드 안에 포커스가 있을 때만.
+// 보내면 접히며 사라지고, 다음 질문을 입력창으로 보내도 사라진다
+function choiceRow(choices) {
+  const form = el("form", { class: "quiz", noValidate: true });
+  const radios = [], rows = [];
+  const err = el("div", { role: "alert" });
+  const add = (label, extra) => {
+    const radio = el("input", { type: "radio", name: "quiz" });
+    const row = el("label", { class: "q-row" }, radio, el("span", { class: "q-dot", ariaHidden: "true" }),
+                   el("kbd", { text: String(rows.length + 1) }), extra);
+    radios.push(radio); rows.push(row);
+    return radio;
+  };
+  choices.forEach((c) => {
+    const [label, desc] = c.split(/\s+[—–]\s+/, 2);
+    const radio = add(label, el("span", { class: "q-text" }, el("span", { class: "q-label", text: label }), desc ? el("span", { class: "q-desc", text: desc }) : null));
+    radio.value = label;
+  });
+  const other = el("input", { type: "text", class: "q-input", placeholder: "직접 입력…", autocomplete: "off", ariaLabel: "기타(직접 작성)" });
+  const otherRadio = add("", other);
+  other.addEventListener("input", () => { otherRadio.checked = true; });
+  other.addEventListener("focus", () => { otherRadio.checked = true; });
+  const submit = el("button", { type: "submit", class: "q-submit", text: "보내기" });
+  form.append(el("div", { class: "q-in" },
+    el("fieldset", {}, el("legend", { text: "선택해 주세요" }), ...rows),
+    el("div", { class: "q-err" }, el("div", {}, err)),
+    el("div", { class: "q-actions" }, submit)));
+  const fail = (msg) => { err.textContent = ""; void err.offsetWidth; err.textContent = msg; form.classList.add("has-err"); };
+  const clear = () => { form.classList.remove("has-err"); };
+  form.addEventListener("change", clear);
+  other.addEventListener("input", clear);
+  const go = () => {
+    if (inflight) return;
+    const i = radios.findIndex((r) => r.checked);
+    const text = i < 0 ? "" : i === radios.length - 1 ? other.value.trim() : radios[i].value;
+    if (!text) return fail(i < 0 ? "선택지를 하나 골라 주세요." : "내용을 입력해 주세요.");
+    form.classList.add("leaving");
+    setTimeout(() => form.remove(), 250);
+    send(text);
+  };
+  form.addEventListener("submit", (ev) => { ev.preventDefault(); go(); });
+  form.addEventListener("keydown", (ev) => {
+    if (ev.isComposing || ev.altKey) return;
+    if (ev.key === "Enter" && ev.target.type !== "submit") { ev.preventDefault(); go(); return; }
+    if (ev.target === other || ev.ctrlKey || ev.metaKey || !/^[1-9]$/.test(ev.key)) return;
+    const r = radios[+ev.key - 1];
+    if (!r) return;
+    ev.preventDefault();
+    r.checked = true; r.focus(); clear();
+    if (r === otherRadio) other.focus();
+  });
+  return form;
 }
 // 스쿼드 답 아래 "스쿼드메이커로 내보내기": 새 탭의 안내 페이지(/send)에서 넥슨 스쿼드메이커 내 보관함에 저장하는 법을 보여 준다
 function feedRow(id, sq) {
