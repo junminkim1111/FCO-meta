@@ -311,6 +311,12 @@ if (scopeLine) json("/api/meta").then((m) => {
   if (s && s.data_as_of) scopeLine.textContent = `랭킹 상위 ${s.top_rankers}명 · 스쿼드 ${s.squads_collected}명 · ${s.data_as_of.slice(0, 16).replace("T", " ")} 기준 (매일 갱신)`;
 });
 
+// 방문 통계 (IP·UA는 서버가 해시로만)
+{
+  let key = ""; try { key = localStorage.getItem("fclm-beta-key") || ""; } catch {}
+  fetch("/api/visit", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json", ...(key && { "X-Beta-Key": key }) }, body: JSON.stringify({ path: location.pathname, ref: document.referrer }) }).catch(() => {});
+}
+
 // ---------- 꼬리말 ----------
 document.body.append(html(`<footer class="foot">
   <p>© 2026 FCLM. All rights reserved.</p>

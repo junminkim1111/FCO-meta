@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from test_analytics import db  # noqa: F401  (아스널 4명 랭커, usage_stats 빌드 완료)
 
@@ -1191,3 +1193,87 @@ def test_summary_recent_carries_the_beta_key(beta):
     chat(c, KEY)
     recent = c.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()["recent"]
     assert recent[0]["key"] == key_hash(KEY)[:12]
+
+
+# --- 방문 통계 ---
+def visit(c, path="/", ip="1.1.1.1", ua="Mozilla/5.0 (iPhone) Mobile", ref="", **headers):
+    return c.post("/api/visit", json={"path": path, "ref": ref}, headers={"X-Forwarded-For": ip, "User-Agent": ua, **headers})
+
+
+def visit_app(tmp_path, clock, **kw):
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog(now=lambda: clock[0])
+    return TestClient(create_app(tmp_path / "db.sqlite", chat_log=log, **kw)), log
+
+
+def test_visit_is_logged_without_ip_or_user_agent_and_the_id_changes_daily(db, tmp_path):  # noqa: F811
+    clock = [1_800_000_000.0]
+    c, log = visit_app(tmp_path, clock, admin_key="secret")
+    r = visit(c, ref="https://www.google.com/search?q=x")
+    assert r.status_code == 204 and r.content == b""
+    rec = log.pending[0]
+    assert (rec["outcome"], rec["path"], rec["ref"], rec["device"]) == ("visit", "/", "google.com", "mobile")
+    assert "1.1.1.1" not in json.dumps(log.pending) and "iPhone" not in json.dumps(log.pending) and "key" not in rec
+    clock[0] += 3600  # 같은 날 같은 IP+UA → 같은 v (30분이 지나 한 건 더)
+    visit(c)
+    assert log.pending[1]["v"] == rec["v"]
+    assert visit(c, ip="2.2.2.2").status_code == 204 and log.pending[2]["v"] != rec["v"]
+    clock[0] += 86400
+    visit(c)
+    assert log.pending[3]["v"] != rec["v"]
+    assert visit(c, path="/admin").status_code == 204 and len(log.pending) == 4  # 이 사이트의 공개 페이지만 센다
+    visit(c, path="/send", ref="https://testserver/guide")
+    assert log.pending[-1]["ref"] == ""  # 같은 사이트에서 온 것은 빈값
+
+
+def test_same_visitor_and_page_is_logged_once_per_30_minutes(db, tmp_path):  # noqa: F811
+    clock = [1_800_000_000.0]
+    c, log = visit_app(tmp_path, clock)
+    visit(c), visit(c), visit(c, path="/guide/")
+    assert [r["path"] for r in log.pending] == ["/", "/guide"]
+    clock[0] += 1801
+    visit(c)
+    assert len(log.pending) == 3
+
+
+def test_visit_summary_counts_pv_uv_ref_device_and_stays_out_of_question_stats(db, tmp_path):  # noqa: F811
+    clock = [1_800_000_000.0]
+    c, log = visit_app(tmp_path, clock)
+    visit(c, ref="https://t.co/a"), visit(c, path="/guide", ref="https://t.co/a")  # pv 2, uv 1
+    visit(c, ip="2.2.2.2", ua="Mozilla/5.0 (Windows NT 10.0)", ref="https://naver.com")
+    log.record(q="안녕", outcome="ok", key="k1"), log.record(q="또", outcome="ok", key="k1")
+    s = log.summary(7)
+    v = s["visits"]
+    (day,) = v["by_day"]
+    assert (day["pv"], day["uv"], day["questions"], day["keys"]) == (3, 2, 2, 1)
+    assert v["refs"][0] == {"ref": "t.co", "count": 2} and {"ref": "naver.com", "count": 1} in v["refs"]
+    assert v["devices"] == {"mobile": 2, "desktop": 1}
+    assert v["paths"] == [{"path": "/", "pv": 2}, {"path": "/guide", "pv": 1}]
+    assert s["total"] == 2 and s["by_outcome"]["ok"] == 2 and len(s["recent"]) == 2
+    assert all(r["outcome"] == "ok" for r in s["recent"]) and s["by_day"][0]["ok"] == 2 and s["by_key"][0]["questions"] == 2
+    assert not log.today_counts().keys() - {"k1"} and log.today_counts()["k1"] == 2
+
+
+def test_visit_carries_the_beta_key_id_only_when_valid(beta, tmp_path):
+    from fco_meta.beta_keys import key_hash
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    c = beta(chat_log=log)
+    visit(c, **{"X-Beta-Key": KEY}), visit(c, path="/guide", **{"X-Beta-Key": "fclm-NOPE-NOPE"}), visit(c, path="/send")
+    assert [r.get("key") for r in log.pending] == [key_hash(KEY)[:12], None, None]
+    assert chat(c, key=KEY).status_code == 200  # 틀린 키로 방문해도 IP 실패 횟수는 늘지 않는다
+
+
+def test_beta_check_results_are_logged_and_not_counted_as_questions(beta):
+    from fco_meta.web.chatlog import ChatLog
+
+    log = ChatLog()
+    c = beta(chat_log=log)
+    assert c.post("/api/beta/check", json={"key": KEY}).status_code == 200
+    assert c.post("/api/beta/check", json={"key": "fclm-NOPE-NOPE"}).status_code == 401
+    assert [(r["outcome"], r["ok"]) for r in log.pending] == [("beta_check", True), ("beta_check", False)]
+    assert "key" not in json.dumps(log.pending)
+    s = log.summary(1)
+    assert s["total"] == 0 and s["recent"] == [] and s["visits"]["by_day"][0]["beta_ok"] == 1 and s["visits"]["by_day"][0]["beta_fail"] == 1

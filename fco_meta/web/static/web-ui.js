@@ -403,6 +403,7 @@ try { betaKey = localStorage.getItem("fclm-beta-key") || ""; } catch {}
 const setBetaKey = (v) => { betaKey = v; try { v ? localStorage.setItem("fclm-beta-key", v) : localStorage.removeItem("fclm-beta-key"); } catch {} };
 const needKey = () => beta && !betaClosed && !betaKey;
 const headers = () => ({ "Content-Type": "application/json", ...(betaKey && { "X-Beta-Key": betaKey }) });
+fetch("/api/visit", { method: "POST", keepalive: true, headers: headers(), body: JSON.stringify({ path: location.pathname, ref: document.referrer }) }).catch(() => {}); // 방문 통계 (IP·UA는 서버가 해시로만)
 function askKey(note = "") {
   const dialog = $("beta-dialog");
   $("beta-note").textContent = note; $("beta-key").value = "";

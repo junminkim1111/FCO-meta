@@ -194,6 +194,7 @@
     <a class="nav" href="#traces">Traces<span class="count" data-count="traces"></span></a>
     <a class="nav" href="#feedback">피드백<span class="count" data-count="feedback"></span></a>
     <a class="nav" href="#saved">저장됨<span class="count" data-count="saved"></span></a>
+    <a class="nav" href="#visits">방문</a>
     <a class="nav" href="#models">모델 API</a>
     <a class="nav" href="#errors">오류<span class="count" data-count="errors"></span></a>
     <div class="foot" id="foot"></div>
@@ -232,6 +233,16 @@
       <div class="card scroll" id="saved"></div>
     </section>
 
+    <section class="view" data-view="visits" hidden>
+      <div class="kpis" id="visit-kpis"></div>
+      <div class="card"><header><h2>날짜별</h2></header><div class="scroll" id="visit-days"></div></div>
+      <div class="grid2">
+        <div class="card"><header><h2>유입 경로</h2></header><div class="scroll" id="visit-refs"></div></div>
+        <div class="card"><header><h2>페이지별</h2></header><div class="scroll" id="visit-paths"></div></div>
+      </div>
+      <p class="note">방문자(uv)는 그날의 익명 id 수라 날짜마다 따로 세며, 기간의 uv는 날짜별 합입니다. 같은 방문자·페이지는 30분에 한 번만 셉니다. IP·User-Agent는 저장하지 않습니다.</p>
+    </section>
+
     <section class="view" data-view="models" hidden>
       <div class="kpis" id="model-kpis"></div>
       <div class="card scroll" id="models"></div>
@@ -262,7 +273,7 @@ const MODE = { deep: "model: DeepSeek V4.1 Flash", deep_r: "model: DeepSeek V4.1
                gemini: "model: Gemini", flash: "/model flash", lite: "/model lite" }; // flash·lite는 예전 기록. Gemini의 think는 기록의 think
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료", error: "오류" };
-const VIEWS = { overview: "개요", traces: "Traces", feedback: "피드백", saved: "저장됨", models: "모델 API", errors: "오류" };
+const VIEWS = { overview: "개요", traces: "Traces", feedback: "피드백", saved: "저장됨", visits: "방문", models: "모델 API", errors: "오류" };
 const VOTE = { up: "👍", down: "👎" };
 const md = import("/static/md.js");
 const $ = (id) => document.getElementById(id);
@@ -331,7 +342,7 @@ function render() {
                    errors: data.errors.length };
   document.querySelectorAll("[data-count]").forEach((n) => (n.textContent = counts[n.dataset.count] || ""));
   $("foot").textContent = `${data.since}부터` + (data.pending ? ` · 저장 전 ${data.pending}건` : "");
-  ({ overview: renderOverview, traces: renderTraces, feedback: renderFeedback, saved: renderSaved, models: renderModels, errors: renderErrors })[view]();
+  ({ overview: renderOverview, traces: renderTraces, feedback: renderFeedback, saved: renderSaved, visits: renderVisits, models: renderModels, errors: renderErrors })[view]();
 }
 
 const kpi = (k, v, s, title) => el("div", { class: "kpi", ...(title && { title }) }, el("div", { class: "k", text: k }), el("div", { class: "v", text: v }), s ? el("div", { class: "s", text: s }) : null);
@@ -464,6 +475,19 @@ function renderFeedback() {
 function renderSaved() {
   const list = data.saved.map((x) => ({ ...x.record, id: x.id }));
   $("saved").replaceChildren(list.length ? traceTable(list) : empty("저장한 기록이 없습니다. Traces에서 질문을 열어 저장할 수 있습니다."));
+}
+
+function renderVisits() {
+  const v = data.visits, sum = (k) => v.by_day.reduce((s, d) => s + d[k], 0), pv = sum("pv"), uv = sum("uv"), dev = v.devices || {};
+  $("visit-kpis").replaceChildren(kpi("페이지뷰", num(pv), `${data.days}일`), kpi("순방문자", num(uv), "날짜별 합"),
+    kpi("방문자당 질문", uv ? (sum("questions") / uv).toFixed(2) : "–"), kpi("모바일", pct(dev.mobile || 0, pv), `${num(dev.mobile)} / ${num(pv)}`));
+  $("visit-days").replaceChildren(v.by_day.length ? table(["날짜", "pv", "uv", "질문", "질문한 키", "베타 입장 성공", "실패"], v.by_day.map((d) =>
+    el("tr", {}, el("td", { class: "t", text: d.date }), ...[d.pv, d.uv, d.questions, d.keys, d.beta_ok, d.beta_fail].map((n) => el("td", { class: "n", text: num(n) }))))
+  , [1, 2, 3, 4, 5, 6]) : empty("이 기간에 방문이 없습니다."));
+  $("visit-refs").replaceChildren(v.refs.length ? table(["유입", "방문"], v.refs.map((r) =>
+    el("tr", {}, el("td", { class: "mono", text: r.ref || "(직접·같은 사이트)" }), el("td", { class: "n", text: num(r.count) }))), [1]) : empty("없음"));
+  $("visit-paths").replaceChildren(v.paths.length ? table(["페이지", "pv"], v.paths.map((p) =>
+    el("tr", {}, el("td", { class: "mono", text: p.path }), el("td", { class: "n", text: num(p.pv) }))), [1]) : empty("없음"));
 }
 
 function renderModels() {

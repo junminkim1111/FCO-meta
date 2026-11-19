@@ -34,7 +34,10 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
 # 모델을 부른 질문은 tokens·cost(유료 등급 기준 달러 추정), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified
 # 답 아래 👍/👎(가끔만 보임)는 feedback 기록(ref = 그 질문의 id, vote = up·down)으로 따로 남아 그 질문의 vote가 된다
+# visit(페이지 방문 — path·ref·device·v·key)와 beta_check(베타 키 입력 성공·실패 — ok)는 질문이 아니라서 OUTCOMES에 없고,
+# 질문 집계·Traces·키별 하루 제한에서 빼고 summary()["visits"]로만 센다 (NON_QUESTIONS)
 OUTCOMES = ("ok", "cached", "busy", "limited", "cancelled", "compare", "blocked")
+NON_QUESTIONS = ("visit", "beta_check")
 MAX_COMPARES = 50  # 관리자 페이지에 답까지 보여 줄 최근 비교 수
 DOWNLOADS = 16  # 기록 파일을 이만큼 한꺼번에 받는다 (서버가 깨어난 뒤 첫 관리자 페이지가 파일마다 기다리지 않게)
 
@@ -225,7 +228,36 @@ class ChatLog:
         with self.lock:
             pending = list(self.pending)
         return Counter(r["key"] for r in stored + pending
-                       if r.get("key") and r["t"][:10] == today and r["outcome"] not in ("limited", "feedback"))  # fmt: skip
+                       if r.get("key") and r["t"][:10] == today and r["outcome"] not in ("limited", "feedback", *NON_QUESTIONS))  # fmt: skip
+
+    @staticmethod
+    def _visits(raw: list[dict[str, Any]], questions: list[dict[str, Any]]) -> dict[str, Any]:
+        """Page views / unique visitors (v differs per day, so uv is per day) and beta-key entries; `questions` are the question records."""
+        days: dict[str, dict[str, Any]] = {}
+
+        def day(r: dict[str, Any]) -> dict[str, Any]:
+            return days.setdefault(r["t"][:10], {"date": r["t"][:10], "pv": 0, "vs": set(), "questions": 0, "keys": set(), "beta_ok": 0, "beta_fail": 0})
+
+        for r in raw:
+            if r["outcome"] == "visit":
+                d = day(r)
+                d["pv"] += 1
+                d["vs"].add(r.get("v"))
+            elif r["outcome"] == "beta_check":
+                day(r)["beta_ok" if r.get("ok") else "beta_fail"] += 1
+        for r in questions:
+            d = day(r)
+            d["questions"] += 1
+            if r.get("key"):
+                d["keys"].add(r["key"])
+        visits = [r for r in raw if r["outcome"] == "visit"]
+        return {
+            "by_day": [{**{k: v for k, v in d.items() if k not in ("vs", "keys")}, "uv": len(d["vs"]), "keys": len(d["keys"])}
+                       for _, d in sorted(days.items(), reverse=True)],
+            "refs": [{"ref": k, "count": n} for k, n in Counter(r.get("ref", "") for r in visits).most_common(10)],
+            "devices": dict(Counter(r.get("device", "desktop") for r in visits)),
+            "paths": [{"path": k, "pv": n} for k, n in Counter(r.get("path", "") for r in visits).most_common()],
+        }  # fmt: skip
 
     def summary(self, days: int = 7) -> dict[str, Any]:
         """Counts by outcome and by day, errors grouped by message, and the latest records (newest first)."""
@@ -234,6 +266,7 @@ class ChatLog:
         with self.lock:
             pending = list(self.pending)
         everything = sorted((r for r in stored + pending if r["t"][:10] >= since), key=lambda r: r["t"])
+        raw, everything = everything, [r for r in everything if r["outcome"] not in NON_QUESTIONS]
         picks = {r["compare_id"]: r["pane"] for r in everything if r["outcome"] == "compare_pick"}
         votes = {r["ref"]: r["vote"] for r in everything if r["outcome"] == "feedback"}  # 다시 누르면 나중 것
         records = [{**r, "chosen": picks.get(r["compare_id"])} if r["outcome"] == "compare"
@@ -286,6 +319,7 @@ class ChatLog:
             "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 4)} for d, c in sorted(by_day.items(), reverse=True)],
             "cost": round(sum(cost_by_day.values()), 4),
             "by_key": sorted(({**k, "cost": round(k["cost"], 4)} for k in by_key.values()), key=lambda k: (k["key"] == "admin", -k["questions"], k["key"])),
+            "visits": self._visits(raw, records),
             "unverified": sum(1 for r in records if r.get("unverified")),
             "errors": sorted(errors.values(), key=lambda e: (-e["count"], e["error"])),
             "recent": [{k: v for k, v in r.items() if k != "panes"} for r in records[::-1][:RECENT]],

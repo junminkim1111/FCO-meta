@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
@@ -16,12 +17,13 @@ from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Iterable
 from contextlib import asynccontextmanager, closing
 from datetime import datetime
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
@@ -53,6 +55,7 @@ WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산
 # 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
 PRICES = {"deepseek": (0.30, 1.20), "luna": (0.10, 0.50), "flash-lite": (0.30, 2.50), "flash": (1.50, 9.00)}  # 앞에서부터: deepseek-v4.1-flash가 "flash"로 잡히지 않게
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
+VISIT_PER_HOUR = 120  # 방문 기록: 한 IP가 1시간에 (UA를 바꿔 가며 기록을 늘리는 것을 막는다)
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
@@ -153,6 +156,15 @@ class BetaGate:
     def enabled(self) -> bool:
         return bool(self.hashes)
 
+    def peek(self, key: str | None) -> str | None:
+        """The key's id if it is right, else None — counts nothing (for visit logging)."""
+        if not key:
+            return None
+        if self.admin_key and hmac.compare_digest(key.encode(), self.admin_key.encode()):
+            return "admin"
+        given = key_hash(key)
+        return given[:12] if any(hmac.compare_digest(given, h) for h in self.hashes) else None
+
     def identify(self, who: str, key: str | None) -> str:
         """The key's id (first 12 chars of its hash; "admin" for the admin password) or raises 401 (missing/wrong key) / 429 (too many wrong ones)."""
         with self.lock:
@@ -163,14 +175,42 @@ class BetaGate:
                 raise HTTPException(status_code=429, detail="틀린 키를 너무 많이 입력해 1시간 동안 막혔어요. 잠시 후 다시 해 주세요.")
             if not key:
                 raise HTTPException(status_code=401, detail="베타 키가 필요해요")
-            if self.admin_key and hmac.compare_digest(key.encode(), self.admin_key.encode()):
-                return "admin"
-            given = key_hash(key)
-            if any(hmac.compare_digest(given, h) for h in self.hashes):
-                return given[:12]
+            if found := self.peek(key):
+                return found
             fails.append(self.now())
         log.warning("wrong beta key from %s", who)
         raise HTTPException(status_code=401, detail="베타 키가 맞지 않아요")
+
+
+VISIT_PATHS = {"/", "/guide", "/send", *(f"/guide/{t}" for t in GUIDE_TOPICS)}
+VISIT_DEDUPE = 1800  # 초: 같은 방문자·페이지는 이만큼에 한 번만 기록
+MOBILE_UA = re.compile(r"Mobi|Android|iPhone|iPad", re.I)
+
+
+class VisitTracker:
+    """Visit ids and the 30-minute duplicate filter. The id is the first 12 hex of HMAC(day key, IP + User-Agent); the day key is derived
+    from `salt` and the KST date, so it is the same after a restart and different every day. IP and User-Agent are never stored."""
+
+    def __init__(self, salt: str, now: Callable[[], float] = time.time):
+        self.salt, self.now = salt or uuid.uuid4().hex, now
+        self.seen: dict[tuple[str, str], float] = {}
+        self.lock = threading.Lock()
+
+    def visitor_id(self, ip: str, ua: str) -> str:
+        day = datetime.fromtimestamp(self.now(), KST).strftime("%Y-%m-%d")
+        day_key = hmac.new(self.salt.encode(), day.encode(), hashlib.sha256).digest()
+        return hmac.new(day_key, f"{ip}\n{ua}".encode(), hashlib.sha256).hexdigest()[:12]
+
+    def first(self, v: str, path: str) -> bool:
+        """True (and remembers it) unless this visitor already opened this path within VISIT_DEDUPE."""
+        with self.lock:
+            now = self.now()
+            if len(self.seen) > 10000:
+                self.seen = {k: t for k, t in self.seen.items() if t > now - VISIT_DEDUPE}
+            if self.seen.get((v, path), 0) > now - VISIT_DEDUPE:
+                return False
+            self.seen[(v, path)] = now
+            return True
 
 
 class AdminGuard:
@@ -459,6 +499,11 @@ class BetaCheck(BaseModel):
     key: str = Field(max_length=64)
 
 
+class Visit(BaseModel):
+    path: str = Field(max_length=100)
+    ref: str = Field(default="", max_length=300)  # document.referrer (서버가 호스트만 남긴다). 비콘의 Referer 헤더는 늘 이 사이트라서 쓸 수 없다
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
@@ -492,6 +537,7 @@ def create_app(
     admin_key = admin_key if admin_key is not None else os.environ.get("ADMIN_KEY", "")
     beta = BetaGate(os.environ.get("BETA_KEY_HASHES", "").split(","), int(os.environ.get("BETA_PER_DAY", "30")), os.environ.get("BETA_CLOSED") == "1", admin_key=admin_key)
     chat_log = chat_log or ChatLog()
+    visits = VisitTracker(os.environ.get("VISIT_SALT") or admin_key, chat_log.now)
     admin = AdminGuard(admin_key)
     if not db_path.exists():
         raise FileNotFoundError(db_path)
@@ -506,6 +552,7 @@ def create_app(
     sessions: OrderedDict[str, _Session] = OrderedDict()
     team_limit = HourlyLimit(TEAM_PER_HOUR)
     feedback_limit = HourlyLimit(FEEDBACK_PER_HOUR)
+    visit_limit = HourlyLimit(VISIT_PER_HOUR)
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
     team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
     squads: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출 (최근 것만)
@@ -593,8 +640,27 @@ def create_app(
     @app.post("/api/beta/check")
     def beta_check(req: BetaCheck, request: Request) -> dict[str, bool]:
         if beta.enabled:
-            beta.identify(_visitor(request), req.key)
+            try:
+                beta.identify(_visitor(request), req.key)
+            except HTTPException:
+                chat_log.record(outcome="beta_check", ok=False)
+                raise
+            chat_log.record(outcome="beta_check", ok=True)
         return {"ok": True}
+
+    @app.post("/api/visit", status_code=204, include_in_schema=False)
+    def visit(req: Visit, request: Request) -> Response:
+        """One page view (path, referrer host, device, daily visitor id, beta key id). Pages other than the site's own are ignored."""
+        path = req.path.split("?")[0].split("#")[0].rstrip("/") or "/"
+        ua = request.headers.get("user-agent", "")
+        v = visits.visitor_id(_visitor(request), ua)
+        if path in VISIT_PATHS and visits.first(v, path) and visit_limit.check(_visitor(request)):
+            ref = (urlsplit(req.ref).hostname or "").removeprefix("www.")
+            own = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(":")[0].removeprefix("www.")
+            kid = beta.peek(request.headers.get("x-beta-key")) if beta.enabled else None
+            chat_log.record(outcome="visit", path=path, ref="" if ref == own else ref, device="mobile" if MOBILE_UA.search(ua) else "desktop",
+                            v=v, **({"key": kid} if kid else {}))  # fmt: skip
+        return Response(status_code=204)
 
     @app.get("/api/formations")
     def formations(team_color: str | None = Query(default=None, max_length=40)) -> dict[str, Any]:
