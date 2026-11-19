@@ -429,6 +429,7 @@ class _Squad:
     setup_notes: list[str] = field(default_factory=list)  # 인자를 그대로 반영하지 못한 것 (결과의 note에)
     must_roles: dict[str, dict[str, int]] = field(default_factory=dict)  # 넣을 선수를 랭커들이 쓴 자리 (이름 → 역할 → 랭커 수)
     picked: dict[str, Any] = field(default_factory=dict)  # 말하지 않아 사용률 비례로 뽑은 팀컬러·포메이션
+    include_resolved: dict[str, str] = field(default_factory=dict)  # 여러 선수에 걸린 이름 → 이 범위 랭커가 쓴 선수의 전체 이름
     card_roles: dict[str, str] = field(default_factory=dict)  # 자리를 안 줬고 랭커 기록도 없어 카드 주 포지션 자리에 넣은 선수 (이름 → 설명)
 
 
@@ -1265,13 +1266,14 @@ class Toolbox:
             for t in ("meta_spid", "card")
         )
 
-    def _require_one_player(self, name: str, team_color: Any) -> None:
-        """'실바'처럼 이름이 여러 선수에 걸리면 (정확히 같은 이름이 없을 때) 오류 — 팀컬러가 있으면 그 소속 카드가 있는 선수만 센다."""
+    def _require_one_player(self, name: str, team_color: Any) -> str | None:
+        """'실바'처럼 이름이 여러 선수에 걸리면 (정확히 같은 이름이 없을 때) — 팀컬러가 있으면 그 소속 카드가 있는 선수만 세고 —
+        이 범위 랭커가 쓴 선수가 딱 1명이면 그 선수의 전체 이름(띄어쓰기 없이)을 돌려주고, 그 외(2명 이상·0명)는 오류."""
         rows = self.conn.execute(
             "SELECT pid, name, spid FROM card WHERE REPLACE(name, ' ', '') LIKE ?", (f"%{name}%",)
         ).fetchall()
         if any("".join(r[1].split()) == name for r in rows):
-            return
+            return None
         fits = None
         if (tc_id := self._scope(team_color)[0]) != ALL_RANKERS and (tc := next((t for t in self.catalog.entries if t.id == tc_id), None)):
             fits = self._team_color_cards(tc)
@@ -1279,9 +1281,20 @@ class Toolbox:
         for pid, pname, spid in rows:
             if fits is None or fits(spid):
                 players.setdefault(pid, []).append(pname)
-        if len(players) > 1:
-            names = [max(set(v), key=v.count) for v in sorted(players.values(), key=len, reverse=True)[:6]]
-            raise ToolError(f"'{name}'(은)는 여러 선수: {', '.join(names)} — 사용자에게 어느 선수인지 물을 것")
+        if len(players) < 2:  # 팀컬러로 한 명만 남음: 카드 전체로는 여러 선수였으면 그 선수로 확정 (뒤에서 다른 선수 카드가 끼지 않게)
+            only = next(iter(players.values()), None)
+            return "".join(max(set(only), key=only.count).split()) if only and len({r[0] for r in rows}) > 1 else None
+        # 시즌 단일 팀컬러는 후보를 전체 랭커 기록에서 찾는다 (_squad_setup의 usage_id와 같게)
+        usage_id = ALL_RANKERS if tc_id != ALL_RANKERS and tc and tc.category == "special" else tc_id
+        marks = ",".join("?" * len(players))
+        used = {r[0] for r in self.conn.execute(
+            f"SELECT DISTINCT pid FROM usage_stats WHERE team_color_id = ? AND formation = ? AND strict = 0 AND pid IN ({marks})"
+            " AND data_as_of = (SELECT MAX(data_as_of) FROM usage_sample WHERE team_color_id = ?)", (usage_id, ALL_FORMATIONS, *players, usage_id)
+        )}  # fmt: skip
+        if len(used) == 1:
+            return "".join(max(set(v := players[next(iter(used))]), key=v.count).split())
+        names = [max(set(v), key=v.count) for v in sorted(players.values(), key=len, reverse=True)[:6]]
+        raise ToolError(f"'{name}'(은)는 여러 선수: {', '.join(names)} — 사용자에게 어느 선수인지 물을 것")
 
     def _why_not_included(self, name: str, sq: _Squad) -> str:
         """넣지 못한 이유 한 줄: 그 팀컬러 소속 카드가 없는지, 그 시즌 카드가 없는지를 확인하고 아니면 일반 문구."""
@@ -2312,6 +2325,8 @@ class Toolbox:
                                 "how": "chemistry_member가 true인 선수가 케미 명단"}  # fmt: skip
         if sq.must:
             out["include"] = sq.must
+            if sq.include_resolved:
+                out["include_resolved"] = {**sq.include_resolved, "note": "이름이 여러 선수에 걸려 이 팀컬러 소속·이 범위 랭커 기록으로 한 명을 골라 넣음. 답에서 한 줄로 밝힐 것"}
         return out
 
     def _candidate(self, role: str, options: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2671,13 +2686,15 @@ class Toolbox:
         names = [n for n in names if n]
         chem = self._chemistry(chemistry) if chemistry else None
         # 꼭 넣을 선수 (이름 일부, 띄어쓰기 무시): role이면 그 자리에만, seasons면 그 시즌 카드 중에서, grades면 그 강화 중에서
-        must, pinned, wanted_season, wanted_grade = [], {}, {}, {}
+        must, pinned, wanted_season, wanted_grade, resolved = [], {}, {}, {}, {}
         for spec in self._include_specs(include):
             if not (name := "".join(str(spec.get("player") or "").split())):
                 continue
             if not self._player_known(name):
                 raise ToolError(f"include의 {self._name_hint(spec['player'])}")
-            self._require_one_player(name, team_color)
+            if full := self._require_one_player(name, team_color):
+                resolved[name] = full
+                name = full
             must.append(name)
             if role := "".join(str(spec.get("role") or "").split()).upper():
                 if role not in ROLES:
@@ -2700,8 +2717,8 @@ class Toolbox:
             if include_clubs:
                 team_color = include_clubs[0].id
         for o in owned:
-            if o["name"] not in must:
-                self._require_one_player(o["name"], team_color)
+            if o["name"] not in must and (full := self._require_one_player(o["name"], team_color)):
+                resolved[o["name"]] = o["name"] = full
         must += [o["name"] for o in owned if o["name"] not in must]  # 가진 카드도 꼭 넣는다
         derived = self._chemistry_club(chem) if chem and self._scope(team_color)[0] == ALL_RANKERS else None
         if derived:  # "21-22 롬바르디아 FC"·"리버풀 중원 트리오" 케미만 받았으면 그 클럽 팀컬러도 지킨다 (나머지도 그 클럽 경력)
@@ -2901,7 +2918,7 @@ class Toolbox:
             tc=tc, tc_name=tc_name, fits=fits, season_rule=season_rule, usage_id=usage_id, chem=chem, derived=derived,
             include_clubs=include_clubs, must=must, formation=formation, source=source, layout=layout, layout_squads=layout_squads, slots=slots,
             strict=bool(strict), reqs=reqs, limits=limits, slot_options=slot_options, first=first, must_season=wanted_season, must_grade=wanted_grade, pinned_roles=pinned,
-            setup_notes=setup_notes, picked=picked, card_roles=card_roles,
+            setup_notes=setup_notes, picked=picked, card_roles=card_roles, include_resolved=resolved,
             must_roles={name: {role: max(o["entry"]["rankers"] for o in mine) for role, opts in dict(slot_options).items()
                                if (mine := [o for o in opts if name in "".join((o["entry"]["name"] or "").split())])} for name in must},
         )  # fmt: skip
@@ -3019,6 +3036,8 @@ class Toolbox:
         if must:
             got = {name: next((c["entry"]["name"] for c in chosen if c and f"include:{name}" in c["tags"]), None) for name in must}
             out["include"] = got
+            if sq.include_resolved:
+                out["include_resolved"] = {**sq.include_resolved, "note": "이름이 여러 선수에 걸려 이 팀컬러 소속·이 범위 랭커 기록으로 한 명을 골라 넣음. 답에서 한 줄로 밝힐 것"}
             if sq.include_clubs:
                 out["team_color_from_include"] = {
                     "team_color": tc_name, "by": "클럽 경력" if tc.category == "club" else "국적",

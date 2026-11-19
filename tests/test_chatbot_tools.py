@@ -9,7 +9,7 @@ from test_analytics import db  # noqa: F401  (fixture: 아스널 4명 랭커)
 from test_chatbot import toolbox  # noqa: F401  (볼란치 카드 시세 포함)
 from test_top_rankers import setup
 
-from fco_meta.analytics import role_slots
+from fco_meta.analytics import ALL_FORMATIONS, role_slots
 from fco_meta.chatbot import RuleBot, Toolbox
 from fco_meta.chatbot.tools import _choose, normalize_formation
 
@@ -1148,9 +1148,34 @@ def test_an_include_name_that_fits_several_players_is_an_error_unless_the_team_c
     content, is_error = toolbox.run("recommend_squad", {"formation": "4231", "include": [{"player": "쌍둥이"}]})
     assert is_error and "여러 선수" in content and "쌍둥이가" in content and "쌍둥이나" in content
     r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4231", "include": [{"player": "쌍둥이"}]})  # 아스널 카드는 한 명
-    assert r["include"] == {"쌍둥이": "쌍둥이가"}
+    assert r["include"] == {"쌍둥이가": "쌍둥이가"} and r["include_resolved"]["쌍둥이"] == "쌍둥이가"  # 랭커 기록 없어도 아스널 소속은 한 명
     _add_card(toolbox, 300000083, 83, "쌍둥이", '{"CAM": 100}', "아스널")  # 정확히 같은 이름이 있으면 그 선수
     assert not toolbox.run("recommend_squad", {"formation": "4231", "include": [{"player": "쌍둥이"}]})[1]
+
+
+def test_an_include_name_on_several_players_goes_by_who_this_scope_rankers_used(toolbox):  # noqa: F811
+    # 같은 아스널 선수 둘(실바가·실바나): 둘 다 쓰임 → 오류, 둘 다 안 쓰임 → 오류, 하나만 쓰임 → 그 선수로 (다른 선수 카드는 안 낌)
+    _add_card(toolbox, 300000091, 91, "실바가", '{"CAM": 100}', "아스널")
+    _add_card(toolbox, 300000092, 92, "실바나", '{"CAM": 100}', "아스널")
+    tc = toolbox._scope("아스널")[0]
+    as_of = toolbox.conn.execute("SELECT MAX(data_as_of) FROM usage_sample WHERE team_color_id = ?", (tc,)).fetchone()[0]
+
+    def use(spid, pid):
+        toolbox.conn.execute(
+            "INSERT INTO usage_stats VALUES (?, '1vs1', ?, ?, 0, 'CAM', ?, ?, 300, 1, 3, 0.3, NULL, NULL, 8, '{}', NULL, NULL, 'x')",
+            (as_of, tc, ALL_FORMATIONS, spid, pid),
+        )
+
+    args = {"team_color": "아스널", "formation": "4231", "include": [{"player": "실바"}]}
+    content, is_error = toolbox.run("recommend_squad", args)
+    assert is_error and "여러 선수" in content  # 둘 다 안 쓰임
+    use(300000091, 91)
+    r = run(toolbox, "recommend_squad", args)  # 하나만 쓰임
+    assert r["include"] == {"실바가": "실바가"} and r["include_resolved"]["실바"] == "실바가"
+    assert not any(s["player"] == "실바나" for s in r["lineup"])
+    use(300000092, 92)
+    content, is_error = toolbox.run("recommend_squad", args)
+    assert is_error and "실바가" in content and "실바나" in content  # 둘 다 쓰임
 
 
 def test_over_the_cap_with_owned_cards_comes_with_fixes():
