@@ -342,10 +342,14 @@ def _card_floor(slot_options: list[tuple[str, list[dict[str, Any]]]]) -> list[tu
 
 
 def _pin_includes(slot_options: list[tuple[str, list[dict[str, Any]]]], must: list[str]) -> list[tuple[str, list[dict[str, Any]]]]:
+    return _pin(slot_options, must)[0]
+
+
+def _pin(slot_options: list[tuple[str, list[dict[str, Any]]]], must: list[str]) -> tuple[list[tuple[str, list[dict[str, Any]]]], dict[str, int]]:
     """Each player the user asked for gets one slot that holds only his cards (the slot where his best card scores most),
     so the rest is chosen around him. Otherwise _choose's one-swap search drops him rather than cheapen two other slots
     ("호나우두 26FSL 넣어줘" 50억: 비싼 키퍼를 그대로 두고 호나우두를 뺐다)."""
-    out, taken = list(slot_options), set()
+    out, taken, slot_of = list(slot_options), set(), {}
     for name in must:
         tag = f"include:{name}"
         best = max(((max(_score(o) for o in opts if tag in o["tags"]), -i) for i, (_, opts) in enumerate(out)
@@ -353,11 +357,12 @@ def _pin_includes(slot_options: list[tuple[str, list[dict[str, Any]]]], must: li
         if best:
             i = -best[1]  # 같으면 앞 자리
             taken.add(i)
+            slot_of[name] = i
             out[i] = (out[i][0], [o for o in out[i][1] if tag in o["tags"]])
             pids = {o["entry"]["pid"] for o in out[i][1]}  # 다른 자리에서는 뺀다: 먼저 고르는 자리가 그 선수를 가져가면 이 자리가 빈다
             out = [(role, opts) if j == i else (role, [o for o in opts if o["entry"]["pid"] not in pids] or opts)
                    for j, (role, opts) in enumerate(out)]  # fmt: skip
-    return out
+    return out, slot_of
 
 
 def _fits(combo: list[dict[str, Any] | None], limits: dict[str, int], reqs: dict[str, int], salary_floor: int = 0) -> bool:
@@ -2797,6 +2802,13 @@ class Toolbox:
                     if (not own or not any(x["card"]["sp_id"] == o["card"]["sp_id"] for x in options))
                     and not any(x in "".join(o["entry"]["name"].split()) for x in knobs.get("exclude", ()))]  # fmt: skip
 
+        def target_role(ovrs: dict[str, int], roles: set[str]) -> str | None:
+            """카드의 포지션 OVR이 높은 자리 → 가까운 자리 (roles 안에서)."""
+            by_ovr = sorted(ovrs, key=lambda x: -ovrs[x])
+            codes = {"CDM": "DM"}  # 카드의 포지션 이름 → 역할
+            return next((codes.get(x, x) for x in by_ovr if codes.get(x, x) in roles), None) or next(
+                (r for x in by_ovr for r in POSITION_NEAR.get(x, ()) if r in roles), None)  # fmt: skip
+
         first = None
         for role, n in layout.items():
             top = n + (25 if slots else 8)
@@ -2903,9 +2915,7 @@ class Toolbox:
             row = self.conn.execute("SELECT positions FROM card_detail WHERE spid = ?", (best["card"]["sp_id"],)).fetchone()
             ovrs = json.loads(row[0]) if row and row[0] else {}
             by_ovr = sorted(ovrs, key=lambda x: -ovrs[x])
-            codes = {"CDM": "DM"}  # 카드의 포지션 이름 → 역할
-            target = next((codes.get(x, x) for x in by_ovr if codes.get(x, x) in layout), None) or next(
-                (r for x in by_ovr for r in POSITION_NEAR.get(x, ()) if r in layout), None)  # fmt: skip
+            target = target_role(ovrs, set(layout))
             if target is None:
                 setup_notes.append(f"'{name}'은 랭커 기록이 없고 카드 주 포지션({'/'.join(by_ovr[:2]) or '미수집'})에 맞는 자리가 이 포메이션에 없어 자리를 정하지 못함")
                 continue
@@ -2913,6 +2923,32 @@ class Toolbox:
             options += [o for o in extra if self._matches_card_rules(target, o["card"], knobs) and (checking or _grade(o["card"]) >= knobs.get("min_grade", 0))]
             self._score_options(target, options, knobs)
             card_roles[name] = f"{target}에 넣음 (이 조합 랭커 기록이 없어 카드의 주 포지션 {by_ovr[0]}({ovrs[by_ovr[0]]})로 자리를 정함)"
+        # 같은 자리 선수가 자리 수보다 많아 한 자리도 못 얻은 선수: 아직 넣을 선수가 안 잡은 자리에 그 선수 카드를 후보로 더한다
+        # (카드 포지션 OVR 높은 자리 → 가까운 자리 → 아무 필드 자리, GK는 GK끼리). 결과는 include_used_elsewhere로 알린다
+        skip: set[str] = set()
+        for _ in range(2 * len(must)):
+            slot_of = _pin(slot_options, must)[1]
+            lost = [n for n in must if n not in slot_of and n not in skip]
+            if not lost:
+                break
+            name = lost[0]
+            skip.add(name)
+            free = [r for i, (r, _) in enumerate(slot_options) if i not in slot_of.values()]
+            extra = fallback(name, next((o for o in owned if o["name"] == name), None), [])
+            if not extra or not free:
+                continue
+            best = max(extra, key=lambda o: o["score"])
+            row = self.conn.execute("SELECT positions FROM card_detail WHERE spid = ?", (best["card"]["sp_id"],)).fetchone()
+            ovrs = json.loads(row[0]) if row and row[0] else {}
+            keeper = max(ovrs, key=ovrs.get, default="") == "GK"
+            free = [r for r in free if (r == "GK") == keeper]
+            target = target_role(ovrs, set(free)) or next(iter(free), None)
+            if target is None:
+                continue
+            options = next(opts for r, opts in slot_options if r == target)
+            options += [o for o in extra if self._matches_card_rules(target, o["card"], knobs) and (checking or _grade(o["card"]) >= knobs.get("min_grade", 0))]
+            self._score_options(target, options, knobs)
+            skip.discard(name)  # 다시 돌려 이 선수가 자리를 얻었는지, 다른 선수가 밀렸는지 본다
         if first is None or not first.sample_size:
             return {"team_color": tc_name, "formation": formation, "lineup": [], "note": "이 조합은 스쿼드가 수집·집계되지 않음"}
 

@@ -1352,3 +1352,15 @@ def test_owned_player_rankers_did_not_use_there_and_no_season_lets_the_cap_pick_
     assert r["owned_season_assumed"]["players"] == ["새선수"]
     r = run(toolbox, "recommend_squad", {**args, "owned": [{"player": "새선수", "season": "S300", "grade": 8}], "max_total_salary": 40})
     assert r["lineup"][0]["card"]["salary"] == 30 and "owned_season_assumed" not in r
+
+
+def test_includes_competing_for_the_same_role_all_get_a_slot(toolbox):  # noqa: F811
+    # 볼란치 둘을 넣어 달라는데 DM이 한 자리뿐: 한 명은 남는 CAM 자리에 들어가고 include_used_elsewhere로 알린다
+    for spid, pid, name in ((250000009, 9, "볼란치R"), (101000018, 18, "볼란치L")):
+        toolbox.conn.execute("INSERT INTO card (spid, pid, season_id, name, salary, ovr, updated_at) VALUES (?, ?, ?, ?, 20, 90, 'x')", (spid, pid, spid // 1000000, name))
+    toolbox.conn.commit()
+    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "slots": "DM,CAM", "include": [{"player": "볼란치R"}, {"player": "볼란치L"}],
+                                           "owned": [{"player": "볼란치R", "grade": 5}, {"player": "볼란치L", "grade": 5}]})
+    assert all(r["include"].values()) and sorted(s["player"] for s in r["lineup"]) == ["볼란치L", "볼란치R"]
+    assert sorted(s["role"] for s in r["lineup"]) == ["CAM", "DM"] and "problems" not in r
+    assert len(r["include_used_elsewhere"]) == 2  # note 하나 + 밀려난 선수 하나
