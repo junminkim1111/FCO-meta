@@ -88,6 +88,7 @@ def gemini_pick(question: str) -> tuple[dict[str, Any], str]:
     return {"escalate_to": FLASH_MODEL}, f"{why} → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
 
 
+TRIAL_PER_VISITOR = 2  # 베타 키 없는 방문자의 하루 체험 질문 수
 TRIAL_USED = "체험 질문을 다 썼어요. 베타 키를 받으면 계속 물어볼 수 있어요."
 
 
@@ -735,7 +736,7 @@ def create_app(
         if kid:
             restore_counts()
         trial = bool(kid) and kid.startswith("trial-")
-        if refused := limit.check(who, kid, 1 if trial else sys.maxsize if kid == "admin" else beta.per_day, beta.trial_per_day):  # 관리자는 키별 하루 제한 없음
+        if refused := limit.check(who, kid, TRIAL_PER_VISITOR if trial else sys.maxsize if kid == "admin" else beta.per_day, beta.trial_per_day):  # 관리자는 키별 하루 제한 없음
             chat_log.record(q=req.message, outcome="limited", error=refused, **who_key)
             if refused == TRIAL_USED:  # 체험을 다 썼다 → 프론트가 401이면 키 입력창을 띄운다
                 raise HTTPException(status_code=401, detail=refused)

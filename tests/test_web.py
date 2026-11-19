@@ -1154,14 +1154,14 @@ def test_restart_refills_todays_counts_from_the_log(beta):
     assert log.today_counts()[key_hash("fclm-WXYZ-2345")[:12]] == 1
 
 
-def test_no_key_visitor_gets_one_trial_question_a_day(beta):
+def test_no_key_visitor_gets_two_trial_questions_a_day(beta):
     c = beta()
-    assert chat(c).status_code == 200
+    assert [chat(c).status_code for _ in range(2)] == [200, 200]
     second = chat(c)
     assert second.status_code == 401 and "체험 질문을 다 썼어요" in second.json()["detail"]
     assert chat(c, ip="2.2.2.2").status_code == 200  # 다른 방문자
     assert chat(c, ip="3.3.3.3", key="fclm-NOPE-NOPE").json()["detail"] == "베타 키가 맞지 않아요"  # 틀린 키는 체험이 아니다
-    assert chat(c, ip="3.3.3.3").status_code == 200  # ...체험을 쓰지도 않았다
+    assert [chat(c, ip="3.3.3.3").status_code for _ in range(3)] == [200, 200, 401]  # ...체험을 쓰지도 않았다
     assert chat(c, KEY).status_code == 200  # 키가 있으면 제한 없이 키 쪽
     assert c.post("/api/team", json={"nickname": "x", "session_id": "s"}).status_code == 401  # 체험은 /api/chat만
 
@@ -1184,7 +1184,8 @@ def test_restart_refills_trial_counts_from_the_log(beta):
     from fco_meta.web.chatlog import ChatLog
 
     log = ChatLog()
-    assert chat(beta(chat_log=log, admin_key="salt")).status_code == 200  # 방문자 id의 소금은 admin_key(또는 VISIT_SALT)라 재시작 뒤에도 같다
+    first = beta(chat_log=log, admin_key="salt")
+    assert [chat(first).status_code for _ in range(2)] == [200, 200]  # 방문자 id의 소금은 admin_key(또는 VISIT_SALT)라 재시작 뒤에도 같다
     again = beta(chat_log=log, admin_key="salt")
     assert chat(again).status_code == 401
     assert chat(again, ip="2.2.2.2").status_code == 200
