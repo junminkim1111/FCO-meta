@@ -257,9 +257,9 @@
   #squad-panel .pitch { margin-top: 12px; }
   #squad-panel .tile .val { white-space: normal; word-break: keep-all; } /* 좁은 화면: 한 줄에 안 들어가면 띄어쓰기에서 줄을 바꾼다 ('188억 / 8,300만') */
   /* 금액·급여 숫자 굴리기: 자리마다 0~9 두 바퀴를 세로로 쌓고 위로 밀어 올려 그 숫자에 멈춘다 */
-  .roll { display: inline-flex; white-space: pre; } .roll > span { height: 1.2em; line-height: 1.2em; } .roll .col { overflow: hidden; }
-  .roll .col > span { display: block; transition: transform var(--t, .9s) cubic-bezier(.15, .8, .25, 1); }
-  .roll .col > span > span { display: block; height: 1.2em; }
+  .roll { display: inline-flex; white-space: pre; } .roll > span { height: 1.2em; line-height: 1.2em; } .roll .digit { overflow: hidden; }
+  .roll .digit > span { display: block; transition: transform var(--t, .9s) cubic-bezier(.15, .8, .25, 1); }
+  .roll .digit > span > span { display: block; height: 1.2em; }
   .ovr-box { position: absolute; left: 8px; top: 8px; z-index: 2; display: grid; gap: 1px; padding: 4px 8px; border-radius: 8px;
              background: rgba(16, 17, 22, .72); border: 1px solid var(--line-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
   .ovr-box div { display: flex; justify-content: space-between; gap: 8px; }

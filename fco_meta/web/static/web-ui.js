@@ -217,7 +217,7 @@ function roll(text, from = "") {
     strip.style.transform = `translateY(${-start * 1.2}em)`;
     strip.style.setProperty("--t", `${0.7 + (digits - k) * 0.12}s`);
     requestAnimationFrame(() => requestAnimationFrame(() => (strip.style.transform = `translateY(${-end * 1.2}em)`)));
-    box.append(el("span", { class: "col", ariaHidden: "true" }, strip));
+    box.append(el("span", { class: "digit", ariaHidden: "true" }, strip));
     if (k === 0) strip.addEventListener("transitionend", () => box.replaceWith(text), { once: true }); // 다 멈추면 보통 글자로
   }
   return box;
@@ -338,13 +338,28 @@ const say = (who, text) => {
 let pinned = null;
 function fillPin() {
   const log = $("log");
-  if (!pinned || !log.lastElementChild) return;
+  if (!pinned || !log.lastElementChild) return 0;
   const room = log.clientHeight - (log.lastElementChild.getBoundingClientRect().bottom - pinned.getBoundingClientRect().top);
   log.style.paddingBottom = `${Math.max(12, room)}px`; // 12 = 원래 아래 여백
+  return room;
 }
-function pinQuestion(q) {
+// trace 상자가 접히는 등 질문 아래 높이가 줄면 여백이 모자라 질문이 아래로 밀린다: 다시 맞추고 질문을 맨 위로 되돌린다 (사용자가 직접 스크롤하기 전, 답이 아직 화면보다 짧을 때만)
+let pinFree = false, pinReady = false; // pinReady: 올라가는 애니메이션이 끝난 뒤부터 되돌린다 (도중에 끼어들면 툭 튄다)
+const holdPin = new ResizeObserver(() => {
+  const log = $("log");
+  if (!pinned || pinFree || !pinReady || fillPin() < 12) return;
+  log.scrollTop += pinned.getBoundingClientRect().top - log.getBoundingClientRect().top - 4;
+});
+$("log").addEventListener("wheel", () => { pinFree = true; }, { passive: true });
+$("log").addEventListener("touchmove", () => { pinFree = true; }, { passive: true });
+function pinQuestion(q, ...below) {
   const log = $("log");
   pinned = q;
+  pinFree = false;
+  pinReady = false;
+  setTimeout(() => { pinReady = true; }, 700);
+  holdPin.disconnect();
+  below.forEach((e) => e && holdPin.observe(e));
   fillPin();
   log.scrollTo({ top: log.scrollTop + q.getBoundingClientRect().top - log.getBoundingClientRect().top - 4,
                  behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -428,7 +443,7 @@ async function send(text) {
   if (trace) $("log").append(trace.element);
   const bubble = el("div");
   $("log").append(bubble);
-  pinQuestion(question);
+  pinQuestion(question, trace?.element, bubble);
   // /trace를 켜면 오브와 기다리는 문구는 말풍선 대신 trace 머리줄에 (답이 다 써질 때까지)
   const head = trace?.head, stopHead = head && orbStatus(head);
   const wait = () => head ? (bubble.className = "", bubble.replaceChildren(), () => {}) : thinking(bubble);
