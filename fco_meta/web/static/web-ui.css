@@ -240,7 +240,10 @@
   .quiz { align-self: stretch; display: grid; grid-template-rows: 1fr; transition: grid-template-rows .25s ease-out, opacity .25s ease-out;
           animation: quiz-in .3s ease-out; }
   .quiz.leaving { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
-  .q-in { min-height: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 8px; }
+  .q-in { position: relative; min-height: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 8px; }
+  .q-close { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border-radius: 8px;
+             background: none; border: 1px solid transparent; color: var(--muted); font-size: 13px; line-height: 1; }
+  @media (hover: hover) { .q-close:hover { color: var(--text); border-color: var(--line); } }
   .quiz.leaving .q-in { border-color: transparent; padding-block: 0; }
   .quiz fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 4px; }
   .quiz legend { padding: 4px 8px 6px; font-size: 13px; color: var(--muted); float: left; width: 100%; } /* float: legend를 일반 흐름으로 */

@@ -610,7 +610,10 @@ function choiceRow(choices) {
   other.addEventListener("input", () => { otherRadio.checked = true; });
   other.addEventListener("focus", () => { otherRadio.checked = true; });
   const submit = el("button", { type: "submit", class: "q-submit", text: "보내기" });
-  form.append(el("div", { class: "q-in" },
+  const dismiss = () => { form.classList.add("leaving"); setTimeout(() => form.remove(), 250); }; // 접히며 사라진다
+  const close = el("button", { type: "button", class: "q-close", text: "✕", ariaLabel: "선택지 닫기", title: "닫기" });
+  close.addEventListener("click", dismiss);
+  form.append(el("div", { class: "q-in" }, close,
     el("fieldset", {}, el("legend", { text: "선택해 주세요" }), ...rows),
     el("div", { class: "q-err" }, el("div", {}, err)),
     el("div", { class: "q-actions" }, submit)));
@@ -623,14 +626,14 @@ function choiceRow(choices) {
     const i = radios.findIndex((r) => r.checked);
     const text = i < 0 ? "" : i === radios.length - 1 ? other.value.trim() : radios[i].value;
     if (!text) return fail(i < 0 ? "선택지를 하나 골라 주세요." : "내용을 입력해 주세요.");
-    form.classList.add("leaving");
-    setTimeout(() => form.remove(), 250);
+    dismiss();
     send(text);
   };
   form.addEventListener("submit", (ev) => { ev.preventDefault(); go(); });
   form.addEventListener("keydown", (ev) => {
     if (ev.isComposing || ev.altKey) return;
-    if (ev.key === "Enter" && ev.target.type !== "submit") { ev.preventDefault(); go(); return; }
+    if (ev.key === "Escape") { ev.preventDefault(); dismiss(); $("msg").focus(); return; }
+    if (ev.key === "Enter" && ev.target.type !== "submit" && ev.target !== close) { ev.preventDefault(); go(); return; }
     if (ev.target === other || ev.ctrlKey || ev.metaKey || !/^[1-9]$/.test(ev.key)) return;
     const r = radios[+ev.key - 1];
     if (!r) return;
