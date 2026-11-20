@@ -32,6 +32,19 @@ def _player(row: sqlite3.Row) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _with_new_traits(conn: sqlite3.Connection, players: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each card's own new traits (카드 상세의 금특·신특) for the pitch tooltip; cards without collected details get none."""
+    from ..chatbot.tools import NEW_TRAITS  # 순환 import를 피해 쓸 때 가져온다 (chatbot.tools가 analytics를 import한다)
+
+    ids = [p["sp_id"] for p in players]
+    try:
+        rows = conn.execute(f"SELECT spid, traits FROM card_detail WHERE spid IN ({','.join('?' * len(ids))})", ids).fetchall()
+    except sqlite3.OperationalError:  # 카드 상세를 수집하지 않은 DB
+        return players
+    traits = {sp: [t for t in json.loads(raw or "[]") if t in NEW_TRAITS] for sp, raw in rows}
+    return [{**p, "new_traits": traits[p["sp_id"]]} if traits.get(p["sp_id"]) else p for p in players]
+
+
 def _score(conn: sqlite3.Connection, match_id: str, ouid: str) -> str | None:
     """"2:1" (this side first) from the stored team details, if both sides have them."""
     goals = {}
@@ -80,7 +93,7 @@ def top_ranker_squad(
     ).fetchone()
     if r is None:
         return None
-    players = [_player(p) for p in cur.execute(_PLAYERS, (r["match_id"], r["ouid"]))]
+    players = _with_new_traits(conn, [_player(p) for p in cur.execute(_PLAYERS, (r["match_id"], r["ouid"]))])
     prices, _ = _card_values(conn, {p["sp_id"] for p in players})
     priced = [prices[(p["sp_id"], p["grade"])] for p in players if (p["sp_id"], p["grade"]) in prices]
     return {
@@ -162,7 +175,8 @@ def best_eleven(
             "season": p["class_name"] if p else None, "season_img": (p["season_img"] or None) if p else None,
             "rankers": at[pos][sp_id],
         })  # fmt: skip
-    return {"squads": len(squads), "layout": list(layout), "layout_squads": layouts[layout], "data_as_of": as_of, "players": players}
+    return {"squads": len(squads), "layout": list(layout), "layout_squads": layouts[layout], "data_as_of": as_of,
+            "players": _with_new_traits(conn, players)}
 
 
 def role_slots(conn: sqlite3.Connection, formation: str, mode: str = "1vs1") -> tuple[dict[str, int], int]:

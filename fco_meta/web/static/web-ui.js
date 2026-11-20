@@ -194,7 +194,8 @@ function pitch(players, emptyText, detailOf) {
     const short = (p.name || "?").trim().split(" ").pop(); // DB 이름 끝에 공백이 붙은 선수가 있다 ("A. 우에다 ")
     const icon = p.season_img ? el("img", { src: p.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
     const node = el("div", { class: "pp", style: `left:${x}%;top:${y}%` }, photo(p), el("div", { class: "nm" }, icon, short));
-    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}`);
+    const traits = p.new_traits?.length ? `\n신규특성: ${p.new_traits.join(", ")}` : ""; // 카드가 원래 가진 금특·신특
+    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}${traits}`);
     box.append(node);
   }
   return box;

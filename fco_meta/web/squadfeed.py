@@ -29,7 +29,7 @@ def lineup_of(result: dict[str, Any]) -> list[dict[str, Any]]:
         raise FeedError("규칙을 다 맞춘 스쿼드만 스쿼드메이커로 보낼 수 있어요.")
     return [
         {"role": p["role"], "player": p["player"].replace("★", "").strip(), "season": (p["card"].get("season") or "").split(" (")[0], "sp_id": p["card"]["sp_id"],
-         "pid": p.get("pid"), "season_img": p["card"].get("season_img"), "ovr": p.get("ovr"),
+         "pid": p.get("pid"), "season_img": p["card"].get("season_img"), "ovr": p.get("ovr"), "new_traits": p["card"].get("new_traits") or [],
          "grade": (p["card"].get("price_at_most_used_grade") or {}).get("grade") or p["card"].get("most_used_grade") or 1}
         for p in result["lineup"]
     ]  # fmt: skip
@@ -52,7 +52,7 @@ def place(lineup: list[dict[str, Any]], formation: str | None) -> list[dict[str,
     if left:
         raise FeedError("스쿼드의 자리가 스쿼드메이커 포메이션과 맞지 않아 보낼 수 없어요.")
     return [{"position": slot["role"], "code": POSITION_CODE[slot["role"]], "x": slot["x"], "y": slot["y"],
-             **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}}
+             **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}, "new_traits": p.get("new_traits") or []}
             for slot, p in zip(slots, taken)]
 
 
