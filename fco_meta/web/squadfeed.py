@@ -49,7 +49,7 @@ def place(lineup: list[dict[str, Any]], formation: str | None) -> list[dict[str,
             if taken[i] is None and (p := next((p for p in left if same(p["role"], role)), None)):
                 taken[i] = p
                 left.remove(p)
-    if left:
+    if left or None in taken:  # 남는 선수가 있거나 빈 자리가 있으면 (slots로 두세 자리만 짠 스쿼드 등) 그리지도 보내지도 않는다
         raise FeedError("스쿼드의 자리가 스쿼드메이커 포메이션과 맞지 않아 보낼 수 없어요.")
     return [{"position": slot["role"], "code": POSITION_CODE[slot["role"]], "x": slot["x"], "y": slot["y"],
              **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}, "new_traits": p.get("new_traits") or []}

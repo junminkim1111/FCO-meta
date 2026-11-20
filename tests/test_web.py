@@ -967,6 +967,11 @@ def test_squad_pitch_places_ram_lam_lineups_on_the_makers_rm_lm_slots():
         raise AssertionError("FeedError expected")
     except FeedError:
         pass
+    try:  # slots로 두세 자리만 짠 스쿼드(빈 자리가 남음): 그리지 않고 건너뛴다 (전엔 TypeError로 답 전체가 실패했다)
+        place([lineup[0], lineup[5], lineup[8]], "4-2-2-2")
+        raise AssertionError("FeedError expected")
+    except FeedError:
+        pass
 
 
 # --- 클로즈드 베타 (키 게이트 · 키별 하루 제한) ---
