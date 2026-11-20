@@ -1296,3 +1296,21 @@ def test_beta_check_results_are_logged_and_not_counted_as_questions(beta):
     assert "key" not in json.dumps(log.pending)
     s = log.summary(1)
     assert s["total"] == 0 and s["recent"] == [] and s["visits"]["by_day"][0]["beta_ok"] == 1 and s["visits"]["by_day"][0]["beta_fail"] == 1
+
+
+def test_search_engine_files(client):
+    import re
+
+    from fco_meta.web.app import GUIDE_TOPICS
+
+    robots = client.get("/robots.txt")
+    assert robots.headers["content-type"].startswith("text/plain")
+    assert "Sitemap: https://fclm.kr/sitemap.xml" in robots.text and "Disallow: /admin" in robots.text
+    locs = re.findall(r"<loc>https://fclm\.kr(.*?)</loc>", client.get("/sitemap.xml").text)
+    assert locs == ["/", "/guide", *(f"/guide/{t}" for t in GUIDE_TOPICS)]
+    for path in locs:  # 지도에 있는 페이지는 모두 열리고, 자기 주소를 canonical로 단다
+        page = client.get(path)
+        assert page.status_code == 200 and f'<link rel="canonical" href="https://fclm.kr{path}">' in page.text, path
+        assert "onrender" not in page.text, path
+    assert 'name="robots" content="noindex"' in client.get("/send").text
+    assert client.get("/").headers["strict-transport-security"]

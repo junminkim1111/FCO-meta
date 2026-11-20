@@ -42,6 +42,7 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send", "data")  # /guide/<주제> → static/guide-<주제>.html
+SITE = "https://fclm.kr"  # 검색엔진에 알리는 대표 주소 (fclm.onrender.com도 같은 앱이라 canonical은 이쪽으로)
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
@@ -579,7 +580,21 @@ def create_app(
         response = await call_next(request)
         response.headers.setdefault("Cache-Control", "no-cache")
         response.headers.setdefault("X-Frame-Options", "DENY")  # 다른 사이트가 iframe으로 끼워 넣지 못하게 (/admin 등)
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")  # https로만 (Cloudflare·Render 모두 https)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
         return response
+
+    # --- 검색엔진: 색인할 공개 페이지 목록 (/admin·/api는 막음. /send는 막지 않고 페이지의 noindex로 뺀다: 막으면 noindex를 못 읽음) ---
+    @app.get("/robots.txt", include_in_schema=False)
+    def robots() -> Response:
+        body = f"User-agent: *\nDisallow: /admin\nDisallow: /api/\n\nSitemap: {SITE}/sitemap.xml\n"
+        return Response(body, media_type="text/plain")
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    def sitemap() -> Response:
+        urls = "".join(f"<url><loc>{SITE}{p}</loc></url>" for p in ("/", "/guide", *(f"/guide/{t}" for t in GUIDE_TOPICS)))
+        body = f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+        return Response(body, media_type="application/xml")
 
     def tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         key = name + json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
