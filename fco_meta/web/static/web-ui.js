@@ -400,11 +400,10 @@ const MODELS = { deepseek: ["deep_r", "DeepSeek V4.1 Flash Eco", "deepseek"], gp
 const DEFAULT_MODEL = "deepseek"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
-// 클로즈드 베타: 서버가 켜져 있다고 알리면 키(localStorage)를 X-Beta-Key로 붙이고, 키가 없으면 질문·팀 불러오기 때 입력창을 띄운다
+// 클로즈드 베타: 서버가 켜져 있다고 알리면 키(localStorage)를 X-Beta-Key로 붙인다. 키가 없어도 하루 체험(질문 3개·팀 불러오기)은 되고, 서버가 401을 주면 입력창을 띄운다
 let beta = false, betaClosed = false, betaKey = "";
 try { betaKey = localStorage.getItem("fclm-beta-key") || ""; } catch {}
 const setBetaKey = (v) => { betaKey = v; try { v ? localStorage.setItem("fclm-beta-key", v) : localStorage.removeItem("fclm-beta-key"); } catch {} };
-const needKey = () => beta && !betaClosed && !betaKey;
 const headers = () => ({ "Content-Type": "application/json", ...(betaKey && { "X-Beta-Key": betaKey }) });
 fetch("/api/visit", { method: "POST", keepalive: true, headers: headers(), body: JSON.stringify({ path: location.pathname, ref: document.referrer }) }).catch(() => {}); // 방문 통계 (IP·UA는 서버가 해시로만)
 function askKey(note = "") {
@@ -860,7 +859,6 @@ function showTeam(pending = null) {
 }
 async function loadTeam() {
   if ($("team-ok").disabled) return;
-  if (needKey()) { askKey(); return; }
   const value = $("team-name").value.trim().replace(/^[@#]/, "");
   if (!value) { teamInput.error(); $("team-name").focus(); return; }
   const nickname = teamMark === "#" ? "#" + value : value;

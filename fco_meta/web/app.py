@@ -64,7 +64,7 @@ DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash Eco 생각 끔", "deep_r": "DeepSeek 
 LUNA_LABEL = {"luna": "GPT-6 Luna 생각 끔", "luna_r": "GPT-6 Luna 생각 켬"}
 
 
-TRIAL_PER_VISITOR = 2  # 베타 키 없는 방문자의 하루 체험 질문 수
+TRIAL_PER_VISITOR = 3  # 베타 키 없는 방문자의 하루 체험 질문 수
 TRIAL_USED = "체험 질문을 다 썼어요. 베타 키를 받으면 계속 물어볼 수 있어요."
 
 
@@ -846,8 +846,9 @@ def create_app(
     @app.post("/api/team")
     def attach_team(req: TeamRequest, request: Request) -> dict[str, Any]:
         """@닉네임: that user's latest starting XI, attached to the conversation (sent ahead of each question).
-        "#피드ID" instead: the starting XI of that squad maker feed."""
-        beta_id(request)
+        "#피드ID" instead: the starting XI of that squad maker feed. Visitors on a trial (no key) may attach a team too."""
+        if not trial_id(request):  # 체험 방문자도 @·# 팀을 붙일 수 있다 (넥슨 API는 TEAM_PER_HOUR로 따로 제한)
+            beta_id(request)
         nickname = req.nickname.strip()
         feed = nickname.startswith("#")
         if not feed and not os.environ.get("NEXON_API_KEY"):
@@ -874,7 +875,8 @@ def create_app(
 
     @app.delete("/api/team")
     def detach_team(request: Request, session_id: str = Query(max_length=64)) -> dict[str, bool]:
-        beta_id(request)
+        if not trial_id(request):
+            beta_id(request)
         session_for(session_id).team = None
         return {"ok": True}
 
