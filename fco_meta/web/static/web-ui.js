@@ -338,10 +338,11 @@ const say = (who, text) => {
 };
 // 질문을 채팅창 맨 위로 (LLM 서비스처럼): #log 아래 여백을 늘려 올릴 자리를 만들고, 답이 길어지는 만큼 여백을 줄인다
 let pinned = null;
+const PIN_GAP = 4; // 맨 위로 올린 질문과 채팅창 위 가장자리 사이
 function fillPin() {
   const log = $("log");
   if (!pinned || !log.lastElementChild) return 0;
-  const room = log.clientHeight - (log.lastElementChild.getBoundingClientRect().bottom - pinned.getBoundingClientRect().top);
+  const room = log.clientHeight - PIN_GAP - (log.lastElementChild.getBoundingClientRect().bottom - pinned.getBoundingClientRect().top); // 맨 아래로 내려도 질문이 위에서 PIN_GAP 아래에 오게
   log.style.paddingBottom = `${Math.max(12, room)}px`; // 12 = 원래 아래 여백
   return room;
 }
@@ -350,7 +351,7 @@ let pinFree = false, pinReady = false; // pinReady: 올라가는 애니메이션
 const holdPin = new ResizeObserver(() => {
   const log = $("log");
   if (!pinned || pinFree || !pinReady || fillPin() < 12) return;
-  log.scrollTop += pinned.getBoundingClientRect().top - log.getBoundingClientRect().top - 4;
+  log.scrollTop += pinned.getBoundingClientRect().top - log.getBoundingClientRect().top - PIN_GAP;
 });
 $("log").addEventListener("wheel", () => { pinFree = true; }, { passive: true });
 $("log").addEventListener("touchmove", () => { pinFree = true; }, { passive: true });
@@ -363,7 +364,7 @@ function pinQuestion(q, ...below) {
   holdPin.disconnect();
   below.forEach((e) => e && holdPin.observe(e));
   fillPin();
-  log.scrollTo({ top: log.scrollTop + q.getBoundingClientRect().top - log.getBoundingClientRect().top - 4,
+  log.scrollTo({ top: log.scrollTop + q.getBoundingClientRect().top - log.getBoundingClientRect().top - PIN_GAP,
                  behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 const THINKING = "랭커데이터를 살펴보고 있어요...";
@@ -485,9 +486,10 @@ async function send(text) {
     shown = Math.min(answer.length, shown + Math.max(2, Math.ceil((answer.length - shown) / 12))); // 밀리면 빨리 따라잡는다
     const log = $("log"), stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40; // 위로 올려 읽는 중이면 끌어내리지 않는다
     renderMarkdown(bubble, splitNext(splitChoices(answer.slice(0, shown))[0])[0]);
-    fillPin();
-    if (stick) log.scrollTop = log.scrollHeight;
-    else $("jump").hidden = false;
+    // 답이 아직 화면보다 짧으면(여백이 남으면) 질문 고정은 holdPin이 맡는다 — 여기서 맨 아래로 내리면 둘이 몇 px씩 서로 당겨 화면이 떨린다
+    const fits = fillPin() > 12;
+    if (!stick) $("jump").hidden = false;
+    else if (!fits) log.scrollTop = log.scrollHeight;
     frame = shown < answer.length ? requestAnimationFrame(draw) : 0;
     if (!frame && !inflight) { $("jump").hidden = true; finishTrace(); } // 답이 다 써지면 '…'를 지운다
   };
