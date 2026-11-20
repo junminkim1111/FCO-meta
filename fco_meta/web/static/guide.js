@@ -272,9 +272,9 @@ const SCENES = {
     await t.wait(500);
     for (const i of [0, 1, 2, 1, 0]) { select(i); await t.wait(650); }
     menu.remove(); txt.textContent = "";
-    const models = ["GPT-6 Luna", "Gemini 3.5 Flash", "DeepSeek V4.1 Flash"]; // 모델 선택창
+    const models = ["GPT-6 Luna", "DeepSeek V4.1 Flash Eco"]; // 모델 선택창
     menu = t.put(form, `<ul class="m-menu">${models.map((m) => `<li>${m}</li>`).join("")}</ul>`, "m-pop");
-    for (const i of [2, 1, 0]) { select(i); await t.wait(i === 0 ? 900 : 500); }
+    for (const i of [1, 0]) { select(i); await t.wait(i === 0 ? 900 : 500); }
     menu.remove();
     t.put(t.q(".m-log"), `<p class="m-note">model: GPT-6 Luna</p>`);
     await t.wait(1500);
@@ -323,7 +323,7 @@ document.body.append(html(`<footer class="foot">
   <p>FCLM은 FC Online 유저를 위한 비공식 랭커 데이터 통계 서비스입니다. FC Online 관련 데이터는 NEXON Open API(Data based on NEXON Open API)와
     FC온라인 데이터센터의 공개 정보를 기반으로 제공됩니다. FCLM은 NEXON 및 EA SPORTS와 공식적으로 관련이 없습니다.
     게임 관련 상표, 이미지, 선수 정보 및 저작권은 EA SPORTS 및 NEXON에 있습니다.</p>
-  <p>질문은 AI 모델(Google Gemini·DeepSeek·OpenAI)로 처리되며 서비스 개선을 위해 기록됩니다.</p>
+  <p>질문은 AI 모델(DeepSeek·OpenAI)로 처리되며 서비스 개선을 위해 기록됩니다.</p>
   <p class="contact">버그 / 문의사항
     <a href="https://open.kakao.com/o/s3axuDWi" target="_blank" rel="noopener noreferrer" aria-label="카카오톡 오픈채팅으로 문의하기" title="카카오톡 오픈채팅">
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FEE500"/>

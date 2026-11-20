@@ -1,4 +1,4 @@
-"""Golden-set checks catch a broken squad and a wrong route, without any model."""
+"""Golden-set checks catch a broken squad without any model."""
 
 import json
 import sqlite3
@@ -17,15 +17,15 @@ class FakeToolbox:
         return json.dumps(self.result, ensure_ascii=False), False
 
 
-def test_squad_outside_the_team_color_over_budget_and_light_route_fail():
+def test_squad_outside_the_team_color_and_over_budget_fail():
     squad = {"team_color": "FC 바르셀로나", "total_salary": 300, "total_price_bp": 20_000_000_000, "total_price": "200억",
              "lineup": [{"pid": 10, "player": "페드리", "card": {"sp_id": 1}}, {"pid": 20, "player": "벨링엄", "card": {"sp_id": 2}}]}
-    expect = {"route": "heavy", "squad": {"team_color": "FC 바르셀로나", "players": 2, "max_price": 15_000_000_000}}
-    record = {"outcome": "ok", "route": "Jev → 기본 Flash-Lite", "unverified": ["99%"]}
+    expect = {"squad": {"team_color": "FC 바르셀로나", "players": 2, "max_price": 15_000_000_000}}
+    record = {"outcome": "ok", "unverified": ["99%"]}
     results = {name: ok for name, ok, _ in check(expect, record, [("recommend_squad", {})], "총액 200억, 총 급여 300", FakeToolbox(squad))}
     assert results["2명 · 중복 없음"] and results["답에 총액·총 급여"] and results["급여 ≤ 315"]
     assert not results["전원 팀컬러 소속 (카드 상세)"]  # 벨링엄은 바르샤 경력이 없다
-    assert not results["총액 ≤ 15,000,000,000"] and not results["라우팅 heavy"] and not results["수치 확인"]
+    assert not results["총액 ≤ 15,000,000,000"] and not results["수치 확인"]
 
 
 def test_blocked_question_only_checks_the_refusal():

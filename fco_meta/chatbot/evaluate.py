@@ -1,6 +1,6 @@
 """Run a fixed question set through the chatbot and write a review report.
 
-    python -m fco_meta.chatbot.evaluate                        # Gemini, eval/questions.txt → reports/chatbot-eval-*.md
+    python -m fco_meta.chatbot.evaluate --model openai/gpt-6-luna   # OpenRouter, eval/questions.txt → reports/chatbot-eval-*.md (유료 호출)
     python -m fco_meta.chatbot.evaluate --backend rules
     python -m fco_meta.chatbot.evaluate --questions my.txt     # 한 줄에 "질문 || 기대 동작" (기대 동작은 생략 가능)
     python -m fco_meta.chatbot.evaluate --only 1-5,12          # 일부 질문만
@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 from ..config import load_env
-from .gemini import choose_backend
 from .numbers import unsupported_numbers
 from .prompt import SYSTEM_PROMPT
 from .rules import RuleBot
@@ -62,10 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     load_env()
     parser = argparse.ArgumentParser(prog="python -m fco_meta.chatbot.evaluate")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--backend", choices=["gemini", "claude", "openai", "rules"], default="gemini",
+    parser.add_argument("--backend", choices=["claude", "openai", "rules"], default="openai",
                         help="모델 비교용: claude (.env의 ANTHROPIC_API_KEY), openai = OpenAI 호환 API "
                              "(기본 OpenRouter, .env의 OPENROUTER_API_KEY; --model 예: qwen/qwen3.8-flash)")
-    parser.add_argument("--model", help="모델 (기본: Gemini는 .env의 GEMINI_MODEL, Claude는 claude-sonnet-5-5)")
+    parser.add_argument("--model", help="모델 (openai는 필수, Claude는 기본 claude-sonnet-5-5)")
     parser.add_argument("--extra", type=json.loads, default=None,
                         help='openai: 요청 본문에 더할 JSON (예: \'{"reasoning": {"enabled": false}}\')')
     parser.add_argument("--deadline", type=float, default=None, help="질문당 대기 상한(초). 기본은 웹의 일반 질문과 같은 120초")
@@ -74,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS, help="질문 파일 (기본 eval/questions.txt)")
     parser.add_argument("--only", help="이 번호의 질문만 (예: 1-5,12)")
     parser.add_argument("--out", type=Path, help=f"보고서 경로 (기본: {DEFAULT_OUT_DIR}/chatbot-eval-날짜.md)")
-    parser.add_argument("--pause", type=float, default=4.0, help="질문 사이 대기(초) — Gemini 분당 한도 여유")
+    parser.add_argument("--pause", type=float, default=4.0, help="질문 사이 대기(초) — 제공사 분당 한도 여유")
     args = parser.parse_args(argv)
 
     if not args.db.exists():
@@ -95,21 +94,11 @@ def main(argv: list[str] | None = None) -> int:
 
     toolbox.run = recording_run  # type: ignore[method-assign]
 
-    backend, notice = choose_backend(args.backend)
-    if notice:
-        print(notice, file=sys.stderr)
-    if backend == "gemini":
-        from google import genai
-
-        from .gemini import GeminiChat, describe_error, models_from_env
-
-        primary, fallbacks = models_from_env(args.model)
-        client = genai.Client()
-    elif backend in ("claude", "openai"):
+    backend = args.backend
+    if backend in ("claude", "openai"):
         import os
 
-        from .gemini import describe_error
-        from .llm import ClaudeChat, OpenAIChat
+        from .llm import ClaudeChat, OpenAIChat, describe_error
 
         if backend == "claude":
             if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -139,10 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         started = time.monotonic()
         calls: list[tuple[str, dict[str, Any]]] = []
         model, used = None, Counter()
-        if backend in ("gemini", "claude", "openai"):
-            if backend == "gemini":  # 질문마다 새 대화
-                chat = GeminiChat(client, toolbox, model=primary, fallback_models=fallbacks, judge=judge)
-            elif backend == "claude":
+        if backend in ("claude", "openai"):  # 질문마다 새 대화
+            if backend == "claude":
                 chat = ClaudeChat(client, toolbox, model=args.model, judge=judge)
             else:
                 chat = OpenAIChat(client, toolbox, model=args.model, extra=args.extra, judge=judge)
@@ -176,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         report.append(f"- 확인 필요 숫자: {', '.join(missing) if missing else '없음'}")
         report += ["", "```text", answer, "```", ""]
         out.write_text("\n".join(report) + "\n", encoding="utf-8")  # 질문마다 저장: 중간에 멈춰도 끝난 질문은 남는다
-        if backend == "gemini" and n < len(questions):
+        if backend != "rules" and n < len(questions):
             time.sleep(args.pause)
 
     report.insert(3, f"확인 필요 숫자가 있는 답: {flagged}/{len(questions)}")

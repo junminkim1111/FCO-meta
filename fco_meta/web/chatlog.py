@@ -29,7 +29,7 @@ FLUSH_EVERY = 600.0  # 초: 이만큼마다 모아 둔 기록을 데이터셋에
 MAX_PENDING = 2000  # 올리지 못한 기록을 이 이상 쌓지 않는다 (오래된 것부터 버림)
 RECENT = 300  # 관리자 페이지에 보여 줄 최근 기록 수
 DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 날짜 폴더는 저장소에서 지운다, 저장한 것은 빼고)
-# 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(Gemini·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
+# 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(모델·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
 # · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
 # · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
 # 모델을 부른 질문은 tokens·cost(유료 등급 기준 달러 추정), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified

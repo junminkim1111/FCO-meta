@@ -5,8 +5,7 @@ from types import SimpleNamespace as NS
 from test_analytics import db  # noqa: F401
 from test_chatbot import toolbox  # noqa: F401
 
-from fco_meta.chatbot.llm import REFUSED, ClaudeChat
-from fco_meta.chatbot.gemini import RESET, ToolCall
+from fco_meta.chatbot.llm import REFUSED, RESET, ClaudeChat, ToolCall
 
 
 def message(*blocks, stop="end_turn"):
@@ -168,7 +167,7 @@ def test_openai_compatible_request_is_cut_at_the_deadline(toolbox, monkeypatch):
     import pytest
 
     from fco_meta.chatbot import llm
-    from fco_meta.chatbot.gemini import AnswerTimeout
+    from fco_meta.chatbot.llm import AnswerTimeout
 
     def keepalive():  # 연결 유지 신호만 보내며 답하지 않는 서버 (읽기 타임아웃이 끝나지 않음)
         for _ in range(100):
@@ -203,7 +202,7 @@ def test_a_figure_left_unverified_is_not_evidence_for_the_next_answer(toolbox): 
 
 
 def test_squad_check_tracks_success_and_later_changes():
-    from fco_meta.chatbot.gemini import unchecked_squad
+    from fco_meta.chatbot.llm import unchecked_squad
 
     assert unchecked_squad(False, "squad_candidates", {}, False)
     assert unchecked_squad(True, "check_squad", {"ok": False}, False)

@@ -14,11 +14,11 @@ services:
         sync: false
       - key: HF_TOKEN       # 데이터셋 쓰기 권한 토큰 (DB 받기 + 답변 기록을 logs/에 올림)
         sync: false
-      - key: GEMINI_API_KEY
+      - key: OPENGATEWAY_API_KEY  # /model deepseek (DeepSeek V4.1 Flash Eco, OpenGateway). 없으면 그 모델만 꺼짐
         sync: false
       - key: ADMIN_KEY      # /admin 답변 기록 페이지 비밀번호 (없으면 페이지가 꺼져 있음)
         sync: false
-      - key: OPENROUTER_API_KEY  # Jev(질문 거르기·모델 선택)와 /deep·/compare의 DeepSeek (없으면 키워드 규칙, 그 명령어만 꺼짐)
+      - key: OPENROUTER_API_KEY  # Jev(질문 거르기·모델 선택)와 기본 모델 GPT-6 Luna (없으면 Jev 없이, 기본 모델은 "지금은 쓸 수 없어요")
         sync: false
       - key: NEXON_API_KEY  # 채팅의 @닉네임 팀 불러오기 (없으면 그 기능만 꺼짐)
         sync: false

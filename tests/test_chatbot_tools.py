@@ -635,7 +635,7 @@ def test_judge_tools_show_candidates_and_check_the_models_picks(toolbox):  # noq
     # 큰 모델만 직접 고른다: 도구와 지시문이 갈린다
     names = lambda judge: {t["name"] for t in tools_for(judge)}  # noqa: E731
     assert names(True) - names(False) == {"squad_candidates", "check_squad"} and "recommend_squad" in names(True)
-    assert judges("gemini-3.5-flash") and judges("deepseek/deepseek-v4.1-flash-1017") and not judges("gemini-3.5-flash-lite")
+    assert judges("openai/gpt-6-luna") and judges("deepseek/deepseek-v4.1-flash-eco") and not judges("example/model-lite")
     assert "초안" in JUDGE_PROMPT and "check_squad" in JUDGE_PROMPT
 
 

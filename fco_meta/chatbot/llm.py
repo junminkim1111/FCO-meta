@@ -1,11 +1,12 @@
-"""Other LLM backends for comparing answer quality with Gemini — the same turn as GeminiChat: the model picks
-tools, the Toolbox runs them, figures no tool result backs up get one rewrite, the question has the same time cap.
+"""LLM backends: the model picks tools, the Toolbox runs them against SQLite, figures no tool result backs up get one
+rewrite, and the question has a time cap.
 
 - ClaudeChat: Anthropic API (ANTHROPIC_API_KEY), default claude-sonnet-5-5
-- OpenAIChat: any OpenAI-compatible chat API — OpenRouter by default (OPENROUTER_API_KEY), so one key reaches Qwen,
-  DeepSeek, GPT and others; OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY for another provider (Groq, DashScope …)
+- OpenAIChat: any OpenAI-compatible chat API — OpenRouter by default (OPENROUTER_API_KEY), so one key reaches GPT,
+  Qwen and others; base_url / api_key for another provider (OpenGateway for /model deepseek), or OPENAI_COMPAT_BASE_URL /
+  OPENAI_COMPAT_API_KEY (Groq, DashScope …)
 
-For now only `python -m fco_meta.chatbot.evaluate --backend claude|openai` uses them.
+The web uses OpenAIChat; `python -m fco_meta.chatbot.evaluate --backend claude|openai` can use either.
 """
 
 from __future__ import annotations
@@ -16,21 +17,129 @@ import os
 import time
 from collections import Counter
 from collections.abc import Callable, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
-from .gemini import (
-    ANSWER_DEADLINE, CHECK_REQUEST, MAX_EVIDENCE, MAX_HISTORY_TURNS, MAX_TOOL_ROUNDS, MIN_REQUEST_TIMEOUT, RECHECK_REQUEST, RESET, AnswerTimeout,
-    GeminiTurn, Recheck, Reset, Thought, ToolCall, ToolResult, UNVERIFIED_SQUAD, _drain, _preview, unchecked_squad,
-)  # fmt: skip
 from .numbers import RECHECK_AT, unsupported_numbers
 from .prompt import JUDGE_PROMPT, SYSTEM_PROMPT, judges
 from .tools import Toolbox, for_model, tools_for
 
 log = logging.getLogger(__name__)
 
+MAX_HISTORY_TURNS = 10  # 이전 질문·답은 최근 이만큼만 모델에 다시 보낸다 (긴 대화의 토큰과 흐려지는 맥락을 막는다)
+MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
+MAX_EVIDENCE = 4  # Turn.evidence 줄 수
+# 한 질문의 전체 대기 상한(초): 도구 단계를 모두 합쳐. 넘으면 그 질문은 실패(화면에는 혼잡 안내).
+# 요청마다 남은 시간을 타임아웃으로 걸어, 응답이 늦은 요청도 이 안에서 끊는다
+ANSWER_DEADLINE = 120.0
+MIN_REQUEST_TIMEOUT = 10.0  # 남은 시간이 이보다 적으면 새 요청을 보내지 않는다 (초)
+
+
+class AnswerTimeout(Exception):
+    """The question used up ANSWER_DEADLINE (tool rounds together)."""
+
+
+class Reset:
+    """Streamed text so far was a preamble to tool calls, not the answer: clear it (ask_stream event)."""
+
+
+RESET = Reset()
+
+
+@dataclass
+class ToolCall:
+    """The model is calling a tool now (ask_stream event, before the tool runs)."""
+
+    name: str
+    args: dict[str, Any]
+
+
+@dataclass
+class Recheck:
+    """The answer had figures no tool result backs up; a rewrite follows (ask_stream event, after RESET)."""
+
+    numbers: list[str]
+
+
+@dataclass
+class Thought:
+    """What the model thought before answering (ask_stream event, only when asked for with thoughts=True)."""
+
+    text: str
+
+
+@dataclass
+class ToolResult:
+    """A tool just ran (ask_stream event, after its ToolCall): a short preview of what the model receives."""
+
+    name: str
+    ok: bool
+    preview: str
+    result: dict[str, Any] | None = None  # 전체 결과 (스쿼드 도구면 화면 왼쪽 스쿼드 칸에 그린다)
+
+
+TRACE_PREVIEW = 600  # ToolResult.preview 길이 (관리자 생각 표시용)
+
+
+def _preview(payload: Any) -> str:
+    text = json.dumps(payload, ensure_ascii=False)
+    return text if len(text) <= TRACE_PREVIEW else text[:TRACE_PREVIEW] + "…"
+
+
+# 답에 도구 결과에 없는 수치가 있을 때 한 번 다시 쓰게 하는 요청
+RECHECK_REQUEST = (
+    "방금 답에 쓴 수치 중 {numbers}는 이번 도구 결과에 없습니다. 도구 결과에 있는 값만 써서 답 전체를 다시 쓰세요. "
+    "결과에 없는 값은 빼고, 결과에 있는 값은 미수집이라고 하지 말고 그대로 쓰세요. 다시 쓴다는 말은 하지 마세요."
+)
+
+
+# 스쿼드 후보를 받고 검사 없이 답했을 때 한 번 돌려보내는 요청 (작은 모델은 지시문만으로는 검사를 건너뛴다)
+CHECK_REQUEST = (
+    "고른 라인업을 아직 check_squad로 검사하지 않았습니다. squad_candidates에 준 조건과 picks로 check_squad를 부르고, "
+    "ok인 라인업과 그 결과의 총 급여·총액으로 답 전체를 다시 쓰세요. 다시 쓴다는 말은 하지 마세요."
+)
+
+
+UNVERIFIED_SQUAD = "요청한 조건을 만족하는 스쿼드를 검증하지 못했습니다. 조건을 조정해 다시 요청해 주세요."
+
+
+def unchecked_squad(pending: bool, name: str, result: dict[str, Any], is_error: bool) -> bool:
+    """Candidates invalidate the previous check; only a successful final squad clears it."""
+    if name in ("squad_candidates", "check_squad"):
+        return not (name == "check_squad" and not is_error and result.get("ok") is True)
+    if name == "recommend_squad" and not is_error and result.get("lineup"):
+        return False
+    return pending
+
+
+def _drain(gen: Generator[Any, None, Any]) -> Any:
+    while True:
+        try:
+            next(gen)
+        except StopIteration as stop:
+            return stop.value
+
+
+@dataclass
+class Turn:
+    text: str
+    tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    finish_reason: str | None = None
+    evidence: list[str] = field(default_factory=list)  # 도구 결과로 만든 근거 줄 (답 본문에는 넣지 않는다)
+
+
+def describe_error(exc: Exception) -> str:
+    """Short Korean description of a model failure for the logs (no key values)."""
+    if isinstance(exc, AnswerTimeout):
+        return f"답변 대기 시간 상한({ANSWER_DEADLINE:.0f}초) 초과 — {exc}"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"모델 API 오류 {exc.response.status_code}"
+    return f"모델 처리 중 오류 ({type(exc).__name__}): {exc}"
+
+
+LUNA_MODEL = "openai/gpt-6-luna"  # 기본 모델 (OpenRouter) — 웹과 CLI가 같이 쓴다
 REFUSED = "이 질문에는 답할 수 없어요. FC온라인 랭커 데이터에 관한 질문으로 다시 물어봐 주세요."
 
 
@@ -79,12 +188,12 @@ class ToolChat:
     def remember(self, question: str, answer: str) -> None:
         self.history.append((question, answer))
 
-    def ask(self, question: str) -> GeminiTurn:
+    def ask(self, question: str) -> Turn:
         return _drain(self.ask_stream(question))
 
     def ask_stream(
         self, question: str, *, thoughts: bool = False, deadline: float | None = None
-    ) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
+    ) -> Generator[str | Reset | ToolCall | Recheck, None, Turn]:
         self._ends_at = self.now() + (deadline or self.deadline)
         self.thoughts, self.unverified = thoughts, []
         try:
@@ -100,7 +209,7 @@ class ToolChat:
             raise AnswerTimeout(f"{self.model} 요청 전")
         return left
 
-    def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, GeminiTurn]:
+    def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, Turn]:
         messages = self._start(question)
         calls: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()
@@ -114,14 +223,14 @@ class ToolChat:
             if reply.stop == "refusal":
                 yield RESET
                 yield REFUSED
-                return GeminiTurn(REFUSED, calls, "refusal")
+                return Turn(REFUSED, calls, "refusal")
             messages.append(reply.message)  # 받은 그대로 (생각 블록 포함)
             if not reply.uses or final:
                 text = reply.text.strip()
                 if not text:
                     note = "답을 만들지 못했습니다. 질문을 좀 더 구체적으로 해 주세요."
                     yield note
-                    return GeminiTurn(note, calls, "tool_limit")
+                    return Turn(note, calls, "tool_limit")
                 if not final and not nudged and pending_squad:
                     nudged = True
                     log.warning("squad answered without check_squad — sending it back once")
@@ -131,13 +240,13 @@ class ToolChat:
                 if pending_squad:
                     yield RESET
                     yield UNVERIFIED_SQUAD
-                    return GeminiTurn(UNVERIFIED_SQUAD, calls, "unverified_squad")
+                    return Turn(UNVERIFIED_SQUAD, calls, "unverified_squad")
                 if results:
                     text = yield from self._checked(messages, question, text, results)
                 if reply.stop == "max_tokens":
                     yield "\n\n(답변이 길이 제한으로 잘렸습니다)"
                     text += "\n\n(답변이 길이 제한으로 잘렸습니다)"
-                return GeminiTurn(text, calls, "STOP" if reply.stop == "end" else reply.stop, evidence[:MAX_EVIDENCE])
+                return Turn(text, calls, "STOP" if reply.stop == "end" else reply.stop, evidence[:MAX_EVIDENCE])
             if reply.text.strip():  # 도구를 부르기 전에 쓴 글("찾아볼게요")은 답이 아니다
                 yield RESET
             out: list[tuple[str, str, bool]] = []

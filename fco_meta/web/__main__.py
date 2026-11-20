@@ -1,6 +1,6 @@
 """Run the web UI.
 
-    python -m fco_meta.web                          # http://127.0.0.1:8000 (챗봇: Gemini, 키 없으면 규칙 기반)
+    python -m fco_meta.web                          # http://127.0.0.1:8000 (챗봇: 모델로 답함)
     python -m fco_meta.web --backend rules          # 챗봇을 규칙 기반으로
     python -m fco_meta.web --host 0.0.0.0 --port 8080
 """
@@ -24,8 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--host", default="127.0.0.1", help="외부에 열려면 0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--backend", choices=["gemini", "rules"], default="gemini", help="챗봇 (기본 gemini)")
-    parser.add_argument("--model", help="Gemini 모델")
+    parser.add_argument("--backend", choices=["llm", "rules"], default="llm", help="챗봇 (기본 llm: 모델로 답함, 키는 서버 환경 변수)")
     parser.add_argument("--log-to-dataset", metavar="REPO", help="답변 기록을 이 비공개 HF 데이터셋의 logs/에 올린다 (Render, cloud serve)")
     args = parser.parse_args(argv)
     # 챗봇 도구 호출·재시도 로그를 서버 터미널에 남긴다 (문제 확인용)
@@ -42,12 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.db.exists():
         print(f"DB가 없습니다: {args.db}", file=sys.stderr)
         return 2
-    from ..chatbot.gemini import choose_backend
-
-    backend, notice = choose_backend(args.backend)
-    if notice:
-        print(notice, file=sys.stderr)
-    print(f"http://{args.host}:{args.port} 에서 열립니다 (챗봇: {'Gemini' if backend == 'gemini' else '규칙 기반'})", flush=True)
+    print(f"http://{args.host}:{args.port} 에서 열립니다 (챗봇: {'모델로 답함' if args.backend == 'llm' else '규칙 기반'})", flush=True)
     from .chatlog import ChatLog, HfLogStore
 
     if args.log_to_dataset:
@@ -57,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=chat_log.run_flusher, daemon=True).start()
     else:
         chat_log = ChatLog()  # 기록은 이 프로세스 메모리에만
-    app = create_app(args.db, backend=backend, gemini_model=args.model, chat_log=chat_log)
+    app = create_app(args.db, backend=args.backend, chat_log=chat_log)
     threading.Thread(target=app.state.warm, daemon=True).start()  # 첫 화면 조회를 미리 (요청은 그동안에도 받는다)
     uvicorn.run(app, host=args.host, port=args.port)  # 꺼질 때 남은 기록은 앱의 lifespan이 올린다
     return 0

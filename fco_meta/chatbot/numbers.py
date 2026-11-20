@@ -1,6 +1,6 @@
 """Numbers in an answer that no tool result backs up — made-up percentages, prices and head counts.
 
-Used live (GeminiChat asks the model to rewrite once) and by the evaluation report.
+Used live (ToolChat asks the model to rewrite once) and by the evaluation report.
 """
 
 from __future__ import annotations

@@ -390,12 +390,11 @@ const TOOL_STATUS = {
   get_team_color_info: (a) => `${a.team_color || a.player || a.effect || ""} 팀컬러 정보를 찾고 있어요...`,
   get_meta_trends: () => "요즘 메타 흐름을 비교하고 있어요...",
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
-  escalate: () => "더 정확한 답을 위해 깊게 분석하고 있어요...", // Flash-Lite → 3.5 Flash로 넘김
 };
 // 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침 전까지), /trace = 사고과정 표시 (한 번 더 치면 끔)
 let model = null, traceOn = true; // { key: "gpt" }, null이면 기본 (GPT-6 Luna). /trace는 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬)
 // 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. gpt는 생각 켬, deepseek은 생각 끔 (2026-11-16: DeepSeek은 켬이 14% 비싸고 39% 느린데 도구·답은 같음)
-const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], gemini: ["gemini", "Gemini 3.5 Flash", "gemini"], deepseek: ["deep", "DeepSeek V4.1 Flash", "deepseek"] }; // 선택창 순서
+const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], deepseek: ["deep", "DeepSeek V4.1 Flash Eco", "deepseek"] }; // 선택창 순서
 const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode

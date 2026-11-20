@@ -281,7 +281,6 @@
     {
       "q": "바르샤 150억 스쿼드 짜줘",
       "expect": {
-        "route": "heavy",
         "squad": {
           "team_color": "FC 바르셀로나",
           "max_price": 15000000000
@@ -318,7 +317,6 @@
     {
       "q": "현역 레알마드리드 100억으로 짜줘",
       "expect": {
-        "route": "heavy",
         "squad": {
           "team_color": "레알 마드리드",
           "max_price": 10000000000,
@@ -638,14 +636,12 @@
     {
       "q": "안녕",
       "expect": {
-        "route": "light",
         "no_tools": true
       }
     },
     {
       "q": "고마워",
       "expect": {
-        "route": "light",
         "no_tools": true
       }
     },

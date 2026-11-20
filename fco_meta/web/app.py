@@ -29,8 +29,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from ..beta_keys import key_hash
-from ..chatbot import gemini
-from ..chatbot.gemini import RESET, Escalate, Recheck, Thought, ToolCall, ToolResult, describe_error
+from ..chatbot.llm import LUNA_MODEL, RESET, Recheck, Thought, ToolCall, ToolResult, describe_error
 from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
@@ -46,46 +45,22 @@ GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send", "data")  # 
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수
 BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시 후 다시 물어봐 주세요."
-FLASH_MODEL = "gemini-3.5-flash"  # 스쿼드·복잡한 질문, 그리고 Flash-Lite가 두 번째 도구를 부르면 이어받는 모델
-DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # 기본(/model 없을 때), /model deepseek (OpenRouter, 서버 환경 변수 OPENROUTER_API_KEY)
-LUNA_MODEL = "openai/gpt-6-luna"  # /model gpt (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-eco"  # /model deepseek (OpenGateway, 서버 환경 변수 OPENGATEWAY_API_KEY)
+DEEPSEEK_BASE_URL = "https://apis.opengateway.ai/v1"
+# 기본(/model 없을 때)·/model gpt는 llm.LUNA_MODEL (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)
 LONG_DEADLINE = 300.0  # /model deepseek·gpt의 질문당 대기 상한(초). 일반 질문은 120초
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
-# 유료 등급 기준 100만 토큰당 달러 (입력, 출력 — 생각 포함). 앞에서부터 모델 이름에 들어 있는 것으로 (lite를 flash보다 먼저).
-# 무료 등급이라 실제 청구는 없고 유료 전환 판단용 추정치. ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
-PRICES = {"deepseek": (0.30, 1.20), "luna": (0.10, 0.50), "flash-lite": (0.30, 2.50), "flash": (1.50, 9.00)}  # 앞에서부터: deepseek-v4.1-flash가 "flash"로 잡히지 않게
+# 100만 토큰당 달러 (입력, 출력 — 생각 포함). 모델 이름에 들어 있는 것으로 찾는다.
+# deepseek: OpenGateway 상시 할인가 (2026-11-20, 정가 0.30/1.20, 별도 공지로 끝날 수 있음)
+# ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
+PRICES = {"deepseek": (0.03, 0.12), "luna": (0.10, 0.50)}
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 VISIT_PER_HOUR = 120  # 방문 기록: 한 IP가 1시간에 (UA를 바꿔 가며 기록을 늘리는 것을 막는다)
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
 TEAM_CACHE_SECONDS = 600  # 같은 닉네임은 이 동안 다시 부르지 않는다
 SQUAD_TOOLS = ("recommend_squad", "check_squad")
-# 스쿼드 구성·복잡한 질문에 자주 나오는 말 (띄어쓰기 무시) → 처음부터 3.5 Flash
-HEAVY_WORDS = re.compile(r"짜(줘|봐|라|주세요|$)|스쿼드|라인업|베스트11|업그레이드|대신|바꾸|바꿔|급여합|합쳐서|케미|단일|현역|달수있")
-DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash 생각 끔", "deep_r": "DeepSeek V4.1 Flash 생각 켬"}
+DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash Eco 생각 끔", "deep_r": "DeepSeek V4.1 Flash Eco 생각 켬"}
 LUNA_LABEL = {"luna": "GPT-6 Luna 생각 끔", "luna_r": "GPT-6 Luna 생각 켬"}
-GEMINI_LABEL = "Gemini 3.5 Flash"  # /model gemini의 Gemini (Jev 판단 없이 이 모델)
-
-
-def gemini_fallbacks(models: Iterable[str]) -> list[str]:
-    """/model gemini·flash: when 3.5 Flash fails, the other Flash models first, then the Lite ones."""
-    others = [m for m in models if m != FLASH_MODEL]
-    return [m for m in others if "lite" not in m] + [m for m in others if "lite" in m]
-
-
-def heavy_word(question: str) -> str | None:
-    """The first heavy-question word in `question` (spaces ignored), or None."""
-    m = HEAVY_WORDS.search("".join(question.split()))
-    return m.group(0) if m else None
-
-
-def gemini_pick(question: str) -> tuple[dict[str, Any], str]:
-    """(GeminiChat options, why) for a question on a server without OpenRouter: a heavy word → 3.5 Flash from the start,
-    otherwise Flash-Lite handing over to 3.5 Flash from the second tool call."""
-    word = heavy_word(question)
-    why = f"키워드 '{word}'" if word else "키워드 없음"
-    if word:
-        return {"model": FLASH_MODEL}, f"{why} → {FLASH_MODEL}"
-    return {"escalate_to": FLASH_MODEL}, f"{why} → 기본 Flash-Lite (두 번째 도구부터 {FLASH_MODEL})"
 
 
 TRIAL_PER_VISITOR = 2  # 베타 키 없는 방문자의 하루 체험 질문 수
@@ -93,7 +68,7 @@ TRIAL_USED = "체험 질문을 다 썼어요. 베타 키를 받으면 계속 물
 
 
 class RateLimit:
-    """Questions per person per minute and per day, and for the whole service per day — the Gemini quota
+    """Questions per person per minute and per day, and for the whole service per day — the model budget
     is shared by everyone. A person is the visitor's IP as the tunnel or proxy passes it (see chat())."""
 
     def __init__(self, per_minute: int = 6, per_day: int = 60, total_per_day: int = 300, now: Callable[[], float] = time.time):
@@ -384,13 +359,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             if trace:
                 yield _event(type="trace", kind="recheck", **extra)
             line = {"kind": "recheck", "text": "결과에 없는 수치: " + ", ".join(piece.numbers)}
-        elif isinstance(piece, Escalate):
-            yield _event(type="tool", name="escalate", args={}, **extra)
-            line = {"kind": "escalate", "text": f"{piece.reason} → {piece.model}이 이어받음"}
         elif isinstance(piece, Thought):
             line = {"kind": "thought", "text": piece.text}
-        elif isinstance(piece, gemini.Fallback):
-            line = {"kind": "fallback", "text": f"{piece.failed} {piece.reason} → {piece.model}이 대신"}
         elif isinstance(piece, ToolResult):
             line = {"kind": "result", "name": piece.name, "ok": piece.ok and (piece.result or {}).get("ok", True), "text": piece.preview}
             if piece.ok and piece.name in SQUAD_TOOLS and piece.result and piece.result.get("ok", True):  # 짜는 중인 스쿼드도 왼쪽 칸에 바로 그린다
@@ -453,7 +423,7 @@ def _event(**fields: Any) -> str:
 
 class AnswerCache:
     """Answers to the first question of a conversation, reused for the same question until the DB file
-    changes (daily collection, price refresh) — repeated questions cost no Gemini quota. Follow-ups are
+    changes (daily collection, price refresh) — repeated questions cost no model call. Follow-ups are
     not cached: their answer depends on the conversation."""
 
     def __init__(self, db_path: Path, size: int = MAX_CACHED):
@@ -516,10 +486,9 @@ class Visit(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     session_id: str | None = Field(default=None, max_length=64)
-    # auto(/model 없이: GPT-6 Luna 생각 끔, OpenRouter 키가 없으면 키워드로 고른 Gemini) · gemini(모델 선택창의 Gemini 3.5 Flash, 안 되면
-    # 다른 Gemini) · deep(DeepSeek 생각 끔) · deep_r(DeepSeek + think) · luna(GPT-6 Luna 생각 끔) · luna_r(GPT-6 Luna + think)
-    mode: Literal["auto", "gemini", "deep", "deep_r", "luna", "luna_r"] = "auto"
-    think: bool = False  # Gemini + think: 생각 깊이 HIGH (기본은 모델이 정함). gpt·deepseek의 think는 mode luna_r·deep_r
+    # auto(/model 없이: Jev 판단으로 GPT-6 Luna 생각 끔·켬) · deep(DeepSeek 생각 끔) · deep_r(DeepSeek + think)
+    # · luna(GPT-6 Luna 생각 끔) · luna_r(GPT-6 Luna + think)
+    mode: Literal["auto", "deep", "deep_r", "luna", "luna_r"] = "auto"
     trace: bool = False  # /trace: 모델의 생각·도구 결과·모델 전환도 보낸다
 
 
@@ -533,7 +502,6 @@ def create_app(
     db_path: Path | str,
     *,
     backend: str = "rules",
-    gemini_model: str | None = None,
     limit: RateLimit | None = None,
     chat_log: ChatLog | None = None,
     admin_key: str | None = None,
@@ -554,7 +522,7 @@ def create_app(
     conn = _open_readonly(db_path)
     lock = threading.Lock()  # sqlite 연결 하나를 스레드풀 요청이 나눠 쓴다
     toolbox = Toolbox(conn)
-    gemini_tools = _LockedTools(toolbox, lock)
+    locked_tools = _LockedTools(toolbox, lock)
     rules = RuleBot(toolbox)
     answers = AnswerCache(db_path)
     # 화면 조회(포메이션·팀컬러 정보 등)도 DB가 바뀔 때까지 결과를 재사용한다 (Render 무료 CPU에선 한 번에 수 초)
@@ -716,9 +684,7 @@ def create_app(
             return session
 
     def make_bot(key: str, session: _Session | None = None) -> Callable[[], Any]:
-        tools = _SessionTools(gemini_tools, session) if session else gemini_tools
-        if key == "gemini":
-            return lambda: _gemini_chat(tools, gemini_model)
+        tools = _SessionTools(locked_tools, session) if session else locked_tools
         if key in LUNA_LABEL:
             return lambda: _luna_chat(tools, reasoning=key == "luna_r")
         return lambda: _deepseek_chat(tools, reasoning=key == "deep_r")
@@ -741,7 +707,7 @@ def create_app(
             if refused == TRIAL_USED:  # 체험을 다 썼다 → 프론트가 401이면 키 입력창을 띄운다
                 raise HTTPException(status_code=401, detail=refused)
             raise HTTPException(status_code=429, detail=refused)
-        if backend != "gemini":
+        if backend != "llm":
             with lock:
                 answer = rules.ask(req.message)
             chat_log.record(q=req.message, outcome="ok", model="rules", tools=[answer.tool] if answer.tool else [], **who_key)
@@ -769,7 +735,7 @@ def create_app(
 
         def answer_events(entry: dict[str, Any], keep: _TraceLog, ask: str, team: Team | None):
             yield _event(type="start", session_id=session_id)
-            # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 gemini_tools가 잡는다).
+            # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 locked_tools가 잡는다).
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
             with session.lock:
                 first = not session.history  # 대화의 첫 질문만 캐시한다
@@ -784,8 +750,8 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode in ("auto", "gemini"):  # auto: GPT-6 Luna (키가 없는 서버만 키워드로 Flash-Lite·3.5 Flash). gemini: 3.5 Flash
-                    cached = answers.get(req.message) if req.mode == "auto" and first and not team else None
+                if req.mode == "auto":  # GPT-6 Luna (OpenRouter)
+                    cached = answers.get(req.message) if first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
                         entry.update(outcome="cached", chars=len(cached))
@@ -794,40 +760,34 @@ def create_app(
                         yield _event(type="delta", text=cached)
                         yield _event(type="done", tool_calls=[], cached=True, id=entry["id"])
                         return
-                    key = "gemini"
-                    options, why = gemini_pick(req.message)
-                    if req.mode == "gemini":  # 모델 선택창의 Gemini 3.5 Flash (안 되면 다른 Flash 먼저, 그다음 Lite)
-                        entry["mode"] = req.mode
-                        options, why = {"model": FLASH_MODEL}, f"/model gemini → {GEMINI_LABEL} (안 되면 다른 Gemini 모델)"
-                    elif _deepseek_ready():  # 기본은 GPT-6 Luna 생각 켬 하나 — 실패해도 다른 모델로 넘기지 않는다 (OpenRouter 키가 없는 서버만 Gemini)
-                        # 2026-11-15 DeepSeek과 같은 하네스로 비교: 품질은 비슷하고 비용은 약 2.5분의 1 (DeepSeek은 한글이 안 깨지는 제공사가 비싸다)
-                        # 2026-11-16 생각 켬: 불필요한 도구 호출이 줄어 비용은 크게 늘지 않고 의도 구분이 나아짐 (reports/luna-thinking-20261116)
-                        # 생각 끔은 세션 첫 질문 · 팀(@·#) 없음 · Jev가 단순 조회(light)라고 확신할 때만. 나머지는 모두 생각 켬
-                        light = bool(route and route.light and first and not team)
-                        key, options = ("luna" if light else "luna_r"), {"deadline": LONG_DEADLINE}
-                        why = f"{route.describe() if route else 'Jev 없음'} → {LUNA_LABEL[key]}"
-                    entry["route"] = why
-                else:  # deep·luna (OpenRouter)
-                    if not _deepseek_ready():
+                    if not _luna_ready():
                         entry.update(outcome="error", error="OPENROUTER_API_KEY 없음")
                         yield _event(type="delta", text="지금은 이 모델을 쓸 수 없어요 (서버에 OpenRouter 키가 없습니다).")
                         yield _event(type="done", tool_calls=[], error="unavailable")
                         return
+                    # 기본은 GPT-6 Luna 하나 — 실패해도 다른 모델로 넘기지 않는다
+                    # 2026-11-15 DeepSeek과 같은 하네스로 비교: 품질은 비슷하고 비용은 약 2.5분의 1 (DeepSeek은 한글이 안 깨지는 제공사가 비싸다)
+                    # 2026-11-16 생각 켬: 불필요한 도구 호출이 줄어 비용은 크게 늘지 않고 의도 구분이 나아짐 (reports/luna-thinking-20261116)
+                    # 생각 끔은 세션 첫 질문 · 팀(@·#) 없음 · Jev가 단순 조회(light)라고 확신할 때만. 나머지는 모두 생각 켬
+                    light = bool(route and route.light and first and not team)
+                    key, options = ("luna" if light else "luna_r"), {"deadline": LONG_DEADLINE}
+                    why = f"{route.describe() if route else 'Jev 없음'} → {LUNA_LABEL[key]}"
+                    entry["route"] = why
+                else:  # deep(OpenGateway)·luna(OpenRouter)
+                    deep = req.mode in DEEP_LABEL
+                    if not (_deepseek_ready() if deep else _luna_ready()):
+                        entry.update(outcome="error", error="OPENGATEWAY_API_KEY 없음" if deep else "OPENROUTER_API_KEY 없음")
+                        yield _event(type="delta", text=f"지금은 이 모델을 쓸 수 없어요 (서버에 {'OpenGateway' if deep else 'OpenRouter'} 키가 없습니다).")
+                        yield _event(type="done", tool_calls=[], error="unavailable")
+                        return
                     label = {**DEEP_LABEL, **LUNA_LABEL}[req.mode]
-                    name = {"deep": "deepseek", "luna": "gpt"}[req.mode.removesuffix("_r")]
+                    name = "deepseek" if deep else "gpt"
                     key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {name} → {label}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
-                if req.think and key == "gemini":
-                    why += " · think: 생각 깊게 (HIGH)"
-                    entry["route"] = why
                 keep.add("route", text=why)
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key, session))
-                if key == "gemini" and req.mode == "gemini":  # 3.5 Flash가 안 되면 다른 Flash 먼저, 그다음 Lite
-                    options["fallbacks"] = gemini_fallbacks(getattr(bot, "fallback_models", ()))
-                if key == "gemini" and req.think:  # think: Gemini가 가장 깊게 생각
-                    options["think"] = entry["think"] = True
                 stream = bot.ask_stream(ask, **options)
                 try:
                     turn = yield from _relay(stream, req.trace, keep)
@@ -977,7 +937,7 @@ def create_app(
 
 
 class _LockedTools:
-    """The toolbox as Gemini sees it: the DB lock is held only while a tool runs."""
+    """The toolbox as the model sees it: the DB lock is held only while a tool runs."""
 
     def __init__(self, toolbox: Toolbox, lock: threading.Lock):
         self.toolbox, self.lock = toolbox, lock
@@ -1056,17 +1016,6 @@ def _lineup_changes(before: list[dict[str, Any]] | None, after: list[dict[str, A
     return out
 
 
-
-
-def _gemini_chat(toolbox: Toolbox | _LockedTools, model: str | None):
-    from google import genai
-
-    from ..chatbot.gemini import GeminiChat, models_from_env
-
-    primary, fallbacks = models_from_env(model)
-    return GeminiChat(genai.Client(), toolbox, model=primary, fallback_models=fallbacks)
-
-
 _HTTP: Any = None
 
 
@@ -1104,18 +1053,21 @@ def _nexon() -> Any:
 
 
 def _deepseek_ready() -> bool:
+    return bool(os.environ.get("OPENGATEWAY_API_KEY"))
+
+
+def _luna_ready() -> bool:
     return bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_COMPAT_API_KEY"))
 
 
 def _deepseek_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):
     from ..chatbot.llm import OpenAIChat
 
-    # fp4 제공사(Sail Research 등)는 도구 인자를 빠뜨린다 (2026-11-15: 같은 질문 5/5에서 팀컬러·포메이션 누락, DeepInfra는 5/5 정상)
-    # DeepInfra는 긴 답에서 한글이 깨진다 (2026-11-15: temperature 기본 72개 중 6개, 0.3에서도 71개 중 2개 — "사요률", "포메숀").
-    # 같은 측정에서 Nebius·Fireworks는 0.3으로 48개씩 깨짐 0. 다른 제공사로 넘기지 않는다
-    provider = {"only": ["nebius", "fireworks"]}
-    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL,
-                      extra={"reasoning": {"enabled": reasoning}, "provider": provider, "temperature": 0.3})
+    # OpenGateway: 생각은 기본이 켜져 있다 → 끌 때만 reasoning.enabled=false를 보낸다 (OpenRouter 제공사 고정은 쓰지 않는다)
+    extra: dict[str, Any] = {"temperature": 0.3}
+    if not reasoning:
+        extra["reasoning"] = {"enabled": False}
+    return OpenAIChat(_http(), toolbox, model=DEEPSEEK_MODEL, base_url=DEEPSEEK_BASE_URL, api_key=os.environ.get("OPENGATEWAY_API_KEY"), extra=extra)
 
 
 def _luna_chat(toolbox: Toolbox | _LockedTools, *, reasoning: bool):

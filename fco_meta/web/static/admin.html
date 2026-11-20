@@ -269,8 +269,8 @@
 
 <script>
 const LABEL = { ok: "정상", cached: "캐시", busy: "혼잡 안내", limited: "질문 수 제한", cancelled: "정지·끊김", compare: "비교", blocked: "차단" };
-const MODE = { deep: "model: DeepSeek V4.1 Flash", deep_r: "model: DeepSeek V4.1 Flash (think)", luna: "model: GPT-6 Luna", luna_r: "model: GPT-6 Luna (think)",
-               gemini: "model: Gemini", flash: "/model flash", lite: "/model lite" }; // flash·lite는 예전 기록. Gemini의 think는 기록의 think
+const MODE = { deep: "model: DeepSeek V4.1 Flash Eco", deep_r: "model: DeepSeek V4.1 Flash Eco (think)", luna: "model: GPT-6 Luna", luna_r: "model: GPT-6 Luna (think)",
+               flash: "/model flash", lite: "/model lite" }; // flash·lite는 예전 기록 (예전 gemini 기록은 mode 이름 그대로 보인다)
 const TRACE_LABEL = { route: "모델 선택", thought: "생각", tool: "도구 호출", result: "도구 결과", escalate: "모델 전환", fallback: "모델 대체", recheck: "수치 검사",
                       first: "첫 글자", done: "완료", error: "오류" };
 const VIEWS = { overview: "개요", traces: "Traces", feedback: "피드백", saved: "저장됨", visits: "방문", models: "모델 API", errors: "오류" };
@@ -522,7 +522,7 @@ const traceText = (t) => (t.kind === "tool" ? `${t.name} ${JSON.stringify(t.args
 
 // AI 에이전트에 붙여 넣을 글: 질문 / 답변(trace 포함). 대화면 질문마다 이어 붙인다
 function copyText(r, d) {
-  const meta = [r.t, LABEL[r.outcome] || r.outcome, r.model, MODE[r.mode], r.route, sec(r.ms), r.tools?.length ? "도구 " + r.tools.join(", ") : null,
+  const meta = [r.t, LABEL[r.outcome] || r.outcome, r.model, MODE[r.mode] || r.mode, r.route, sec(r.ms), r.tools?.length ? "도구 " + r.tools.join(", ") : null,
                 r.vote ? "피드백 " + VOTE[r.vote] : null, r.error ? "오류 " + r.error : null].filter(Boolean).join(" · ");
   if (d?.compare) {
     const c = d.compare;
@@ -579,7 +579,7 @@ function turnBlock(r, d, n, mdBox, buttons) {
   const parts = [
     n ? el("div", { class: "turn-head" }, el("h3", { class: "turn-no", text: `${n}번째 질문 · ${when(r.t)}` }), ...buttons) : null,
     el("p", { class: "dr-q", text: r.q }),
-    el("div", { class: "chips" }, chip("상태", LABEL[r.outcome] || r.outcome, r.outcome), chip("모델", modelOf(r)), chip("모드", MODE[r.mode]), chip("경로", r.route),
+    el("div", { class: "chips" }, chip("상태", LABEL[r.outcome] || r.outcome, r.outcome), chip("모델", modelOf(r)), chip("모드", MODE[r.mode] || r.mode), chip("경로", r.route),
       chip("시간", sec(r.ms)), chip("토큰", r.tokens && num(r.tokens)), chip("비용", r.cost != null && usd(r.cost)), chip("도구", r.tools?.join(", ")),
       chip("피드백", r.vote && VOTE[r.vote]), chip("팀", r.team), chip("세션", !n && r.session)),
     r.error ? el("p", { class: "note warn", text: "오류: " + r.error }) : null,

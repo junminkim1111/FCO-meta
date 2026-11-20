@@ -32,7 +32,7 @@
     <rect x="274" y="240" width="212" height="76" rx="10" fill="#ecfdf5" stroke="#6ee7b7"/>
     <text x="380" y="268" text-anchor="middle" font-weight="700">GPT-6 Luna</text>
     <text x="380" y="290" text-anchor="middle" font-size="12" fill="#065f46">단순 조회만 생각 끔 (OpenRouter)</text>
-    <text x="380" y="306" text-anchor="middle" font-size="12" fill="#065f46">키 없는 서버만 Gemini</text>
+    <text x="380" y="306" text-anchor="middle" font-size="12" fill="#065f46">키가 없으면 쓸 수 없다고 안내</text>
 
     <path d="M130 316V606H286" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/>
 

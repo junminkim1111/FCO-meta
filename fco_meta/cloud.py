@@ -6,7 +6,7 @@
     python -m fco_meta.cloud rollback-db  # 올린 DB가 잘못됐을 때: 직전 DB(백업)로 되돌리고 Render에 재배포를 요청
 
 맥 .env: HF_TOKEN(쓰기 권한), 선택으로 HF_DATA_REPO(기본 <계정>/fclm-data), RENDER_DEPLOY_HOOK(Render의 Deploy Hook 주소).
-서버 환경 변수: HF_DATA_REPO, HF_TOKEN(쓰기 권한 — 답변 기록을 logs/에 올림), GEMINI_API_KEY, ADMIN_KEY(/admin 비밀번호). 포트는 PORT(Render가 넣어 줌).
+서버 환경 변수: HF_DATA_REPO, HF_TOKEN(쓰기 권한 — 답변 기록을 logs/에 올림), OPENROUTER_API_KEY, OPENGATEWAY_API_KEY, ADMIN_KEY(/admin 비밀번호). 포트는 PORT(Render가 넣어 줌).
 """
 
 from __future__ import annotations

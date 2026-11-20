@@ -7,7 +7,6 @@
 
 Each case's `expect` (all optional):
     blocked            Jev가 막아 모델을 부르지 않는다
-    route              "light"(Flash-Lite로 시작) | "heavy"(처음부터 3.5 Flash) — Gemini가 답할 때만 확인
     no_tools           도구를 부르지 않는다
     tools / tools_any  모두 / 하나 이상 불러야 할 도구
     max_calls          도구 호출 수 상한 (한 명씩 조회하는 비효율 잡기)
@@ -70,9 +69,6 @@ def check(expect: dict[str, Any], record: dict[str, Any] | None, calls: list[tup
             return out
         add("정상 답", record["outcome"] in ("ok", "cached"), record.get("error") or record["outcome"])
         add("수치 확인", not record.get("unverified"), ", ".join(record.get("unverified") or []))
-        if (route := expect.get("route")) and "Flash" in (record.get("route") or ""):  # DeepSeek·Luna는 Gemini 라우팅이 없다
-            light = "Flash-Lite" in (record.get("route") or "")
-            add(f"라우팅 {route}", light == (route == "light"), record.get("route") or "")
     names = [n for n, _ in calls]
     if expect.get("no_tools"):
         add("도구 없음", not calls, ", ".join(names))
@@ -189,7 +185,7 @@ def run_live(cases: list[tuple[int, dict]], db: Path, toolbox: Toolbox, mode: st
     from ..web.chatlog import ChatLog
 
     log = ChatLog()
-    client = TestClient(create_app(db, backend="gemini", chat_log=log, limit=RateLimit(10**6, 10**6, 10**6)))
+    client = TestClient(create_app(db, backend="llm", chat_log=log, limit=RateLimit(10**6, 10**6, 10**6)))
     rows = []
     for i, case in cases:
         started = time.monotonic()
