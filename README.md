@@ -66,7 +66,7 @@ Shift+Enter는 줄바꿈, 답하는 동안 보내기 버튼은 ■ 정지가 됩
 
 | 명령어 | 하는 일 |
 |---|---|
-| `/model` | 모델 선택창: GPT-6 Luna(기본) · DeepSeek V4.1 Flash Eco. 새로고침 전까지 계속 적용 |
+| `/model` | 모델 선택창: DeepSeek V4.1 Flash Eco(기본) · GPT-6 Luna. 새로고침 전까지 계속 적용 |
 | `/trace` | 모델의 사고과정을 답 위에 표시: 생각함 · 도구 이름(예: 스쿼드 구성함) · 수치 재검토함 · 답변 작성함 (거절된 질문은 답변 거절됨). 머리글에 걸린 초가 보이고, 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬) |
 | `/help` | 가이드의 명령어 페이지를 새 탭에 |
 
@@ -75,7 +75,7 @@ Shift+Enter는 줄바꿈, 답하는 동안 보내기 버튼은 ■ 정지가 됩
 ![질문 처리 흐름](docs/images/flow.svg)
 
 - **Jev**(가벼운 분류 모델)가 먼저 질문을 나눕니다. 범위 밖이거나 지시를 바꾸려는 입력은 모델 없이 거절합니다.
-- 기본 모델 **GPT-6 Luna**는 생각을 켜고 답합니다. 팀을 붙이지 않은 세션의 첫 질문이 Jev가 보기에 단순 조회일 때만 생각을 끕니다. OpenRouter 키가 없는 서버는 기본 모델을 쓸 수 없어요. `/model`의 DeepSeek V4.1 Flash Eco는 OpenGateway 키(`OPENGATEWAY_API_KEY`)로 답합니다.
+- 기본 모델 **DeepSeek V4.1 Flash Eco**(OpenGateway, `OPENGATEWAY_API_KEY`)는 생각을 켜고 답합니다. 팀을 붙이지 않은 세션의 첫 질문이 Jev가 보기에 단순 조회일 때만 생각을 끕니다. OpenGateway 키가 없는 서버는 GPT-6 Luna(OpenRouter 키)로 답합니다. `/model`에서 GPT-6 Luna를 고를 수도 있어요.
 - 모델은 숫자를 지어내지 않고 랭커 DB를 조회하는 **도구 결과로만** 답합니다. 결과에 없는 숫자가 있으면 한 번 다시 씁니다(수치 재검토). 답은 한 줄씩 스트리밍됩니다.
 
 ## 데이터 기준
@@ -90,7 +90,7 @@ Shift+Enter는 줄바꿈, 답하는 동안 보내기 버튼은 ■ 정지가 됩
 | Backend | Python 3.12, FastAPI + Uvicorn (NDJSON streaming) |
 | Data | SQLite, stored in a private Hugging Face dataset |
 | Collection | NEXON Open API, FC Online Data Center scraping (httpx + selectolax) |
-| AI | GPT-6 Luna (default, OpenRouter), DeepSeek V4.1 Flash Eco (OpenGateway, /model); DB queries via tool calling |
+| AI | DeepSeek V4.1 Flash Eco (default, OpenGateway), GPT-6 Luna (OpenRouter, /model); DB queries via tool calling |
 | Question routing | Jev (OpenRouter Decisions API) |
 | Frontend | Vanilla HTML / CSS / JS (ES modules), marked + DOMPurify, border-beam, thinking-orbs |
 | Automation / Deploy | GitHub Actions (daily collection), Render |

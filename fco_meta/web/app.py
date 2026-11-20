@@ -766,7 +766,7 @@ def create_app(
                     yield _event(type="delta", text=REFUSAL)
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
-                if req.mode == "auto":  # GPT-6 Luna (OpenRouter)
+                if req.mode == "auto":  # 기본: DeepSeek V4.1 Flash Eco (OpenGateway). 그 키가 없는 서버만 GPT-6 Luna (OpenRouter)
                     cached = answers.get(req.message) if first and not team else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
@@ -776,18 +776,20 @@ def create_app(
                         yield _event(type="delta", text=cached)
                         yield _event(type="done", tool_calls=[], cached=True, id=entry["id"])
                         return
-                    if not _luna_ready():
-                        entry.update(outcome="error", error="OPENROUTER_API_KEY 없음")
-                        yield _event(type="delta", text="지금은 이 모델을 쓸 수 없어요 (서버에 OpenRouter 키가 없습니다).")
+                    deep = _deepseek_ready()
+                    if not (deep or _luna_ready()):
+                        entry.update(outcome="error", error="OPENGATEWAY_API_KEY·OPENROUTER_API_KEY 없음")
+                        yield _event(type="delta", text="지금은 답할 모델을 쓸 수 없어요 (서버에 모델 키가 없습니다).")
                         yield _event(type="done", tool_calls=[], error="unavailable")
                         return
-                    # 기본은 GPT-6 Luna 하나 — 실패해도 다른 모델로 넘기지 않는다
-                    # 2026-11-15 DeepSeek과 같은 하네스로 비교: 품질은 비슷하고 비용은 약 2.5분의 1 (DeepSeek은 한글이 안 깨지는 제공사가 비싸다)
-                    # 2026-11-16 생각 켬: 불필요한 도구 호출이 줄어 비용은 크게 늘지 않고 의도 구분이 나아짐 (reports/luna-thinking-20261116)
+                    # 기본 모델 하나 — 실패해도 다른 모델로 넘기지 않는다
+                    # 2026-11-21 기본을 GPT-6 Luna → DeepSeek V4.1 Flash Eco로: OpenGateway 상시 할인가로 질문당 비용이 약 1/3~1/4
+                    # (할인이 끝나면 정가가 Luna보다 비싸다 — 그때는 OPENGATEWAY_API_KEY를 빼면 Luna로 돌아간다)
                     # 생각 끔은 세션 첫 질문 · 팀(@·#) 없음 · Jev가 단순 조회(light)라고 확신할 때만. 나머지는 모두 생각 켬
                     light = bool(route and route.light and first and not team)
-                    key, options = ("luna" if light else "luna_r"), {"deadline": LONG_DEADLINE}
-                    why = f"{route.describe() if route else 'Jev 없음'} → {LUNA_LABEL[key]}"
+                    key = ("deep" if light else "deep_r") if deep else ("luna" if light else "luna_r")
+                    options = {"deadline": LONG_DEADLINE}
+                    why = f"{route.describe() if route else 'Jev 없음'} → {(DEEP_LABEL if deep else LUNA_LABEL)[key]}"
                     entry["route"] = why
                 else:  # deep(OpenGateway)·luna(OpenRouter)
                     deep = req.mode in DEEP_LABEL

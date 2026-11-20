@@ -394,10 +394,10 @@ const TOOL_STATUS = {
   check_numbers: () => RECHECK, // 답에 조회 결과에 없는 수치가 있어 고쳐 쓰는 중
 };
 // 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침 전까지), /trace = 사고과정 표시 (한 번 더 치면 끔)
-let model = null, traceOn = true; // { key: "gpt" }, null이면 기본 (GPT-6 Luna). /trace는 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬)
+let model = null, traceOn = true; // { key: "gpt" }, null이면 기본 (DeepSeek V4.1 Flash Eco). /trace는 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬)
 // 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. 둘 다 생각 켬 (2026-11-20 DeepSeek Eco도 켬으로: OpenGateway 할인가라 켬의 추가 비용이 작다)
-const MODELS = { gpt: ["luna_r", "GPT-6 Luna", "openai"], deepseek: ["deep_r", "DeepSeek V4.1 Flash Eco", "deepseek"] }; // 선택창 순서
-const DEFAULT_MODEL = "gpt"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
+const MODELS = { deepseek: ["deep_r", "DeepSeek V4.1 Flash Eco", "deepseek"], gpt: ["luna_r", "GPT-6 Luna", "openai"] }; // 선택창 순서
+const DEFAULT_MODEL = "deepseek"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
 // 클로즈드 베타: 서버가 켜져 있다고 알리면 키(localStorage)를 X-Beta-Key로 붙이고, 키가 없으면 질문·팀 불러오기 때 입력창을 띄운다
@@ -934,7 +934,7 @@ const note = (text) => say("bot note done", text); // 명령어가 적용됐다�
 $("model-cancel").addEventListener("click", () => $("model-dialog").close("no")); // 제출 버튼이 아니어야 창 안의 Enter가 '적용'이 된다
 // /model이나 명령어 목록에서 /model을 고르면 뜨는 선택창. 지금 설정이 골라져 있다
 async function pickModel() {
-  const dialog = $("model-dialog"), now = model || { key: DEFAULT_MODEL }; // 고르지 않았으면 기본 GPT-6 Luna
+  const dialog = $("model-dialog"), now = model || { key: DEFAULT_MODEL }; // 고르지 않았으면 기본 DeepSeek V4.1 Flash Eco
   $("model-opts").replaceChildren(...Object.entries(MODELS).map(([key, [, name, logo]]) => el("label", { class: "opt" },
     el("input", { type: "radio", name: "model", value: key, checked: key === now.key }),
     el("img", { src: `/static/vendor/lobehub-icons/${logo}.svg`, alt: "", width: 20, height: 20 }), el("b", { text: name }),

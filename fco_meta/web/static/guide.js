@@ -272,9 +272,9 @@ const SCENES = {
     await t.wait(500);
     for (const i of [0, 1, 2, 1, 0]) { select(i); await t.wait(650); }
     menu.remove(); txt.textContent = "";
-    const models = ["GPT-6 Luna", "DeepSeek V4.1 Flash Eco"]; // 모델 선택창
+    const models = ["DeepSeek V4.1 Flash Eco", "GPT-6 Luna"]; // 모델 선택창
     menu = t.put(form, `<ul class="m-menu">${models.map((m) => `<li>${m}</li>`).join("")}</ul>`, "m-pop");
-    for (const i of [1, 0]) { select(i); await t.wait(i === 0 ? 900 : 500); }
+    for (const i of [0, 1]) { select(i); await t.wait(i === 1 ? 900 : 500); } // 기본(DeepSeek)에서 GPT-6 Luna로 바꿔 고르는 모습
     menu.remove();
     t.put(t.q(".m-log"), `<p class="m-note">model: GPT-6 Luna</p>`);
     await t.wait(1500);

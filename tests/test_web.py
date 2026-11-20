@@ -41,7 +41,7 @@ def no_network(monkeypatch):
     monkeypatch.delenv("OPENGATEWAY_API_KEY", raising=False)
     monkeypatch.delenv("NEXON_API_KEY", raising=False)
     monkeypatch.setattr(web_app, "_luna_ready", lambda: True)  # 모델은 가짜로 바꿔 끼우니 키가 있는 것으로 (Jev는 환경 변수를 따로 본다)
-    monkeypatch.setattr(web_app, "_deepseek_ready", lambda: True)
+    monkeypatch.setattr(web_app, "_deepseek_ready", lambda: False)  # 기본은 OpenGateway 키 없는 서버(→ Luna). DeepSeek 테스트는 True로 켠다
     for name in ("ADMIN_KEY", "BETA_KEY_HASHES", "BETA_PER_DAY", "BETA_CLOSED", "CHAT_TOTAL_PER_DAY"):  # 로컬 .env의 값에 영향받지 않게
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(web_app, "_http", lambda: Offline())
@@ -441,22 +441,23 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: bots.setdefault(f"deep{reasoning}", Recorder(f"deep{reasoning}", asked)))
     monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: bots.setdefault(f"luna{reasoning}", Recorder(f"luna{reasoning}", asked)))
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(web_app, "_deepseek_ready", lambda: True)  # OpenGateway 키가 있는 서버: 기본은 DeepSeek
     limit = web_app.RateLimit(per_minute=20)
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm", admin_key="secret", limit=limit))
 
-    _, done = ask(client, "아스널 볼란치 추천")  # 기본은 GPT-6 Luna 생각 끔 (시간 상한 5분)
+    _, done = ask(client, "아스널 볼란치 추천")  # 기본은 DeepSeek V4.1 Flash Eco 생각 켬 (Jev가 없으면 생각 켬, 시간 상한 5분)
     sid = done["session_id"]
-    ask(client, "리버풀 100억으로 짜 줘", session_id=sid)  # 스쿼드 말이어도 생각 끔
-    res = client.post("/api/chat", json={"message": "업그레이드 추천", "session_id": sid, "mode": "deep_r"})
+    ask(client, "리버풀 100억으로 짜 줘", session_id=sid)
+    res = client.post("/api/chat", json={"message": "업그레이드 추천", "session_id": sid, "mode": "luna_r"})
     assert [(n, q, o) for n, q, o in asked] == [
-        ("lunaTrue", "아스널 볼란치 추천", {"deadline": web_app.LONG_DEADLINE}),
-        ("lunaTrue", "리버풀 100억으로 짜 줘", {"deadline": web_app.LONG_DEADLINE}),
-        ("deepTrue", "업그레이드 추천", {"deadline": web_app.LONG_DEADLINE}),  # DeepSeek + think
+        ("deepTrue", "아스널 볼란치 추천", {"deadline": web_app.LONG_DEADLINE}),
+        ("deepTrue", "리버풀 100억으로 짜 줘", {"deadline": web_app.LONG_DEADLINE}),
+        ("lunaTrue", "업그레이드 추천", {"deadline": web_app.LONG_DEADLINE}),  # /model gpt
     ]  # fmt: skip
-    assert bots["deepTrue"].remembered == [("아스널 볼란치 추천", "lunaTrue 답"), ("리버풀 100억으로 짜 줘", "lunaTrue 답")]  # 앞 대화를 맥락으로
+    assert bots["lunaTrue"].remembered == [("아스널 볼란치 추천", "deepTrue 답"), ("리버풀 100억으로 짜 줘", "deepTrue 답")]  # 앞 대화를 맥락으로
     ask(client, "그럼 더 싼 걸로", session_id=sid)
-    assert bots["lunaTrue"].remembered == [("업그레이드 추천", "deepTrue 답")]  # 다른 모델이 답한 턴도 이어서 안다
-    assert "deepTrue 답" in res.text
+    assert bots["deepTrue"].remembered == [("업그레이드 추천", "lunaTrue 답")]  # 다른 모델이 답한 턴도 이어서 안다
+    assert "lunaTrue 답" in res.text
 
     # /trace는 생각과 도구 이름: 모델 선택은 사용자에게 보내지 않는다 (/admin 기록에만)
     res = client.post("/api/chat", json={"message": "볼란치", "trace": True})
@@ -464,7 +465,7 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
 
     # 서버에 키가 없으면 그 모델은 쓸 수 없다고 안내하고 모델을 부르지 않는다
     asked.clear()
-    for ready, mode in (("_luna_ready", "auto"), ("_deepseek_ready", "deep")):
+    for ready, mode in (("_luna_ready", "luna_r"), ("_deepseek_ready", "deep"), ("_deepseek_ready", "auto")):  # auto: 두 키가 다 없을 때
         monkeypatch.setattr(web_app, ready, lambda: False)
         res = client.post("/api/chat", json={"message": "레알 볼란치 추천 (새 질문)", "mode": mode})
         events = [json.loads(line) for line in res.text.splitlines()]
@@ -686,13 +687,17 @@ def test_model_command_picks_the_model(db, tmp_path, monkeypatch):  # noqa: F811
     asked = []
     monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder(f"deep{reasoning}", asked))
     monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Recorder("luna", asked))
+    monkeypatch.setattr(web_app, "_deepseek_ready", lambda: True)
     log = ChatLog()
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm", chat_log=log))
     client.post("/api/chat", json={"message": "리버풀 짜줘", "mode": "deep", "trace": True})  # /model deepseek
     name, _, options = asked[0]
     assert name == "deepFalse" and options == {"deadline": web_app.LONG_DEADLINE}
     assert log.pending[-1]["mode"] == "deep" and "/model deepseek → DeepSeek V4.1 Flash Eco 생각 끔" == log.details_pending[-1]["trace"][0]["text"]
-    client.post("/api/chat", json={"message": "레알 짜줘"})  # 명령어 없으면 기본 Luna가
+    client.post("/api/chat", json={"message": "레알 짜줘"})  # 명령어 없으면 기본 DeepSeek (생각 켬)
+    assert asked[-1][0] == "deepTrue"
+    monkeypatch.setattr(web_app, "_deepseek_ready", lambda: False)  # OpenGateway 키가 없는 서버는 Luna가
+    client.post("/api/chat", json={"message": "첼시 짜줘"})
     assert asked[-1][0] == "luna"
     for gone in ("flash", "lite", "gemini"):  # 없앤 /model 값
         assert client.post("/api/chat", json={"message": "바르샤 짜줘", "mode": gone}).status_code == 422
