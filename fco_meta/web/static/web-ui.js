@@ -656,11 +656,24 @@ function feedRow(id, sq) {
 let shownSquad = null;
 const SQUAD_STEPS = ["squad_candidates", "recommend_squad", "check_squad"];
 // prev: 바로 앞에 그린 스쿼드. 처음이면 골키퍼부터 한 명씩, 고쳐 짠 거면 바뀐 선수만 새로 들어온다
+// 모바일(한 줄로 쌓인 화면): 스쿼드 칸은 챗봇 바로 아래 따로 뜨고(상세 칸을 가리지 않는다), 화면 밖이면 "아래에서 확인" 말풍선
+const NARROW = matchMedia("(max-width: 860px)");
+const squadHint = el("button", { type: "button", class: "squad-hint", text: "아래에서 스쿼드를 확인해보세요! ↓", hidden: true });
+document.body.append(squadHint);
+squadHint.addEventListener("click", () => { squadHint.hidden = true; $("squad-panel").scrollIntoView({ behavior: "smooth", block: "start" }); });
+let hintY = 0;
+addEventListener("scroll", () => { if (!squadHint.hidden && scrollY > hintY + 24) squadHint.hidden = true; }, { passive: true }); // 아래로 내리면 사라진다
+function showSquadHint() {
+  if (!NARROW.matches || $("squad-panel").getBoundingClientRect().top < innerHeight * .6) return; // 칸이 화면 위쪽까지 올라와 있으면(이미 보이면) 띄우지 않는다
+  hintY = scrollY; squadHint.hidden = false;
+}
 function showSquad(sq, { status = null, prev = null } = {}) {
-  const panel = $("squad-panel");
+  const panel = $("squad-panel"), opening = sq && !shownSquad;
   shownSquad = sq;
   panel.hidden = !sq;
-  $("fdetail").hidden = !!sq;
+  $("fdetail").hidden = !!sq && !NARROW.matches;
+  if (!sq) squadHint.hidden = true;
+  else if (opening) requestAnimationFrame(showSquadHint);
   syncSquadButtons(...document.querySelectorAll(".squad-toggle"));
   if (!sq) return;
   const close = el("button", { type: "button", text: "✕", ariaLabel: "스쿼드 닫기", title: "닫기" });
