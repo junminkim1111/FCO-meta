@@ -1306,7 +1306,16 @@ def test_search_engine_files(client):
     robots = client.get("/robots.txt")
     assert robots.headers["content-type"].startswith("text/plain")
     assert "Sitemap: https://fclm.kr/sitemap.xml" in robots.text and "Disallow: /admin" in robots.text
-    locs = re.findall(r"<loc>https://fclm\.kr(.*?)</loc>", client.get("/sitemap.xml").text)
+    import xml.etree.ElementTree as ET
+
+    sm = client.get("/sitemap.xml")
+    assert sm.headers["content-type"] == "application/xml"
+    ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+    root = ET.fromstring(sm.content)  # 프로토콜대로: urlset > url > loc
+    assert root.tag == f"{ns}urlset"
+    locs = [u.find(f"{ns}loc").text.removeprefix("https://fclm.kr") for u in root.findall(f"{ns}url")]
+    for path in ("/sitemap.xml", "/robots.txt"):  # HEAD도 200 (405면 검사기가 가져올 수 없음으로 본다)
+        assert client.head(path).status_code == 200, path
     assert locs == ["/", "/guide", *(f"/guide/{t}" for t in GUIDE_TOPICS)]
     for path in locs:  # 지도에 있는 페이지는 모두 열리고, 자기 주소를 canonical로 단다
         page = client.get(path)

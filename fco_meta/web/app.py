@@ -585,15 +585,16 @@ def create_app(
         return response
 
     # --- 검색엔진: 색인할 공개 페이지 목록 (/admin·/api는 막음. /send는 막지 않고 페이지의 noindex로 뺀다: 막으면 noindex를 못 읽음) ---
-    @app.get("/robots.txt", include_in_schema=False)
+    # HEAD도 받는다: GET만 열면 HEAD가 405라 sitemap 검사기·일부 크롤러가 '가져올 수 없음'으로 본다
+    @app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
     def robots() -> Response:
         body = f"User-agent: *\nDisallow: /admin\nDisallow: /api/\n\nSitemap: {SITE}/sitemap.xml\n"
         return Response(body, media_type="text/plain")
 
-    @app.get("/sitemap.xml", include_in_schema=False)
+    @app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
     def sitemap() -> Response:
-        urls = "".join(f"<url><loc>{SITE}{p}</loc></url>" for p in ("/", "/guide", *(f"/guide/{t}" for t in GUIDE_TOPICS)))
-        body = f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+        urls = "".join(f"  <url>\n    <loc>{SITE}{p}</loc>\n  </url>\n" for p in ("/", "/guide", *(f"/guide/{t}" for t in GUIDE_TOPICS)))
+        body = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{urls}</urlset>\n'
         return Response(body, media_type="application/xml")
 
     def tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
