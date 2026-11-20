@@ -385,7 +385,7 @@ class OpenAIChat(ToolChat):
                     for choice in data.get("choices") or []:
                         delta = choice.get("delta") or {}
                         finish = choice.get("finish_reason") or finish
-                        reasoning += delta.get("reasoning") or ""  # OpenRouter는 생각을 켠 모델의 추론을 reasoning에 준다
+                        reasoning += delta.get("reasoning") or delta.get("reasoning_content") or ""  # 생각: OpenRouter는 reasoning, OpenGateway(DeepSeek)는 reasoning_content
                         for part in delta.get("tool_calls") or []:
                             call = calls.setdefault(part.get("index", 0), {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                             call["id"] = part.get("id") or call["id"]

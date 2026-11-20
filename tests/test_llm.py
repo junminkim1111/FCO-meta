@@ -161,6 +161,24 @@ def test_openai_compatible_tool_round(toolbox):  # noqa: F811
     assert second["messages"][3]["tool_call_id"] == "c1" and chat.tokens == {"input": 200, "output": 20}
 
 
+def test_openai_compatible_thoughts_from_reasoning_content(toolbox):  # noqa: F811
+    # OpenGateway(DeepSeek)는 생각을 delta.reasoning_content로 보낸다 (OpenRouter는 delta.reasoning)
+    import json
+
+    from fco_meta.chatbot.llm import OpenAIChat, Thought
+
+    lines = completion("답입니다.")
+    lines.insert(2, "data: " + json.dumps({"choices": [{"delta": {"reasoning_content": "먼저 생각"}}]}))
+    chat = OpenAIChat(FakeHttp([lines]), toolbox, model="deepseek/deepseek-v4.1-flash-eco", base_url="https://example.test/v1", api_key="k")
+    gen, pieces = chat.ask_stream("질문", thoughts=True), []
+    while True:
+        try:
+            pieces.append(next(gen))
+        except StopIteration:
+            break
+    assert [p.text for p in pieces if isinstance(p, Thought)] == ["먼저 생각"]
+
+
 def test_openai_compatible_request_is_cut_at_the_deadline(toolbox, monkeypatch):  # noqa: F811
     import time
 
