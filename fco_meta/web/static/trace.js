@@ -39,7 +39,7 @@ const TOOL_LABELS = {
   recommend_players: "선수 추천", recommend_squad: "스쿼드 구성", squad_candidates: "자리별 후보 수집", check_squad: "급여·조건 검사",
   diagnose_team: "팀 진단", get_player_detail: "선수 기록 조회", query_squads: "랭커 스쿼드 집계", query_rankers: "랭킹 집계",
   get_formation_overview: "포메이션 전적 조회", get_team_color_overview: "팀컬러 랭커 조회", get_team_color_info: "팀컬러 정보 조회",
-  get_meta_trends: "메타 흐름 비교",
+  get_meta_trends: "메타 흐름 비교", analyze_playstyle: "플레이스타일 분석",
 };
 
 export function traceBox() {
