@@ -239,3 +239,25 @@ def test_prior_answer_is_not_numeric_evidence(toolbox):
     chat.remember("이전 질문", "사용률은 77.7%입니다.")
     chat.ask("포메이션 사용률")
     assert chat.unverified == ["77.7%"]
+
+
+def test_tool_calls_stop_at_the_cap_and_the_model_answers_with_what_it_has(toolbox):  # noqa: F811
+    # 한 번에 여러 도구를 부르면 ROUNDS로는 못 막는다: MAX_TOOL_CALLS 넘는 호출은 실행하지 않고, 다음 번은 도구 없이 답만
+    from fco_meta.chatbot.llm import MAX_TOOL_CALLS, OpenAIChat
+
+    calls = [{"id": f"c{i}", "type": "function", "function": {"name": "recommend_players", "arguments": f'{{"team_color": "아스널", "role": "DM", "top_n": {i + 1}}}'}}
+             for i in range(MAX_TOOL_CALLS + 5)]  # fmt: skip
+    http = FakeHttp([completion(tool_calls=calls, finish="tool_calls"), completion("지금까지 결과로 답합니다.")])
+    chat = OpenAIChat(http, toolbox, model="m", base_url="https://example.test/v1", api_key="k")
+    gen = chat.ask_stream("팀컬러마다 다 찾아줘")
+    while True:
+        try:
+            next(gen)
+        except StopIteration as done:
+            turn = done.value
+            break
+    assert len(turn.tool_calls) == MAX_TOOL_CALLS and turn.text == "지금까지 결과로 답합니다."
+    second = http.requests[1]
+    assert second["tool_choice"] == "none"  # 상한에 닿은 다음 번은 도구 없이
+    refused = [m for m in second["messages"] if m["role"] == "tool" and "한도" in m["content"]]
+    assert len(refused) == 5

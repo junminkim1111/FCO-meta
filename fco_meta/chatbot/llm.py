@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 
 MAX_HISTORY_TURNS = 10  # 이전 질문·답은 최근 이만큼만 모델에 다시 보낸다 (긴 대화의 토큰과 흐려지는 맥락을 막는다)
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
+MAX_TOOL_CALLS = 25  # 한 질문에서 실행하는 도구 호출 상한 (한 번에 여러 개를 부르면 ROUNDS로는 못 막는다. 2026-11-22 운영 최대 23번)
 MAX_EVIDENCE = 4  # Turn.evidence 줄 수
 # 한 질문의 전체 대기 상한(초): 도구 단계를 모두 합쳐. 넘으면 그 질문은 실패(화면에는 혼잡 안내).
 # 요청마다 남은 시간을 타임아웃으로 걸어, 응답이 늦은 요청도 이 안에서 끊는다
@@ -217,8 +218,9 @@ class ToolChat:
         results: list[Any] = []
         pending_squad = False
         nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
+        capped = False  # 도구 호출 상한에 닿으면 다음 번은 도구 없이 답만
         for round_no in range(MAX_TOOL_ROUNDS + 1):
-            final = round_no == MAX_TOOL_ROUNDS
+            final = round_no == MAX_TOOL_ROUNDS or capped
             reply = yield from self._round(messages, final)
             if reply.stop == "refusal":
                 yield RESET
@@ -254,6 +256,11 @@ class ToolChat:
                 key = json.dumps([name, args], sort_keys=True, ensure_ascii=False)
                 if key in seen:  # 같은 호출 반복 → 실행하지 않는다
                     out.append((call_id, "같은 도구를 같은 인자로 이미 호출했습니다. 앞서 받은 결과로 답하세요.", False))
+                    continue
+                if len(calls) >= MAX_TOOL_CALLS:  # 거의 끝없이 부르는 경우만 막는다 → 지금까지의 결과로 답하게
+                    capped = True
+                    out.append((call_id, f"도구 호출 한도({MAX_TOOL_CALLS}번)에 닿았습니다. 더 부르지 말고 지금까지 받은 결과로 답하세요"
+                                         " (확인하지 못한 범위는 답에 밝힐 것).", True))
                     continue
                 seen.add(key)
                 calls.append((name, args))
