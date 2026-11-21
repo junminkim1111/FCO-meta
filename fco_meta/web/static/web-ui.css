@@ -66,6 +66,33 @@
      페이지 끝에서 칸이 밀려 올라갈 때도 같이 올라가 챗봇 칸과 겹치지 않는다 */
   @media (min-width: 861px) { .guide-link { right: 0; top: calc(var(--head-h) / 2); } }
   .guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 처음 온 사람에게 가이드 링크 옆에 붙는 말풍선 (한 번 보면 이 기기에서는 다시 뜨지 않는다 — web-ui.js) */
+  .guide-bubble { position: absolute; right: calc(100% + 12px); top: 50%; transform: translateY(-50%);
+                  width: max-content; max-width: 236px; padding: 8px 12px; border-radius: 10px; text-align: left;
+                  background: var(--bg-2); border: 1px solid var(--line-strong); color: var(--text);
+                  font-size: 13px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  .guide-bubble[hidden] { display: none; }
+  .guide-bubble b { font-weight: 600; }
+  .guide-bubble { padding-right: 30px; } /* 오른쪽 위 ✕ 자리 */
+  .guide-bubble .gb-x { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; display: grid; place-items: center;
+                        border-radius: 6px; color: var(--muted); font-size: 11px; line-height: 1; cursor: pointer; }
+  @media (hover: hover) { .guide-bubble .gb-x:hover { color: var(--text); background: rgba(255, 255, 255, .06); } }
+  /* 꼬리: 테두리 삼각형(::after) 위에 바탕 삼각형(::before)을 겹쳐 링크 쪽을 가리킨다 */
+  .guide-bubble::after, .guide-bubble::before { content: ""; position: absolute; top: 50%; width: 0; height: 0;
+                  border: 6px solid transparent; transform: translateY(-50%); }
+  .guide-bubble::after { left: 100%; border-left-color: var(--line-strong); }
+  .guide-bubble::before { left: calc(100% - 1px); border-width: 5px; border-left-color: var(--bg-2); }
+  /* 좁은 화면: 로고 줄 오른쪽 끝의 링크라 말풍선은 아래로 (꼬리는 위를 가리킨다) */
+  @media (max-width: 860px) {
+    .guide-bubble { right: 0; top: calc(100% + 10px); transform: none; max-width: 210px; }
+    .guide-bubble::after, .guide-bubble::before { left: auto; right: 22px; top: auto; transform: none; }
+    .guide-bubble::after { bottom: 100%; border-color: transparent transparent var(--line-strong); }
+    .guide-bubble::before { bottom: calc(100% - 1px); border-width: 5px; border-color: transparent transparent var(--bg-2); }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .guide-bubble:not([hidden]) { animation: bubble-in .35s cubic-bezier(.2, .8, .3, 1) backwards; }
+    @keyframes bubble-in { from { opacity: 0; scale: .96; } }
+  }
   footer.foot .contact { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
   footer.foot .contact a { display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
   footer.foot .contact a:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }

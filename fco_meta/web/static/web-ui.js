@@ -1017,6 +1017,35 @@ mountPills($("dist-mode"), [{ value: "formation", label: "포메이션 분포" }
 });
 loadChart();
 
+// 처음 온 사람: 가이드 링크 옆에 말풍선을 잠깐 띄운다. 한 번 보면 이 기기에서는 다시 뜨지 않는다 (localStorage)
+const guideBubble = document.querySelector(".guide-bubble");
+if (guideBubble) {
+  let seen = true;
+  try { seen = localStorage.getItem("fclm-guide-hint") === "1"; } catch {}
+  if (!seen) {
+    try { localStorage.setItem("fclm-guide-hint", "1"); } catch {}
+    let dismissed = false;
+    const hide = () => {
+      if (dismissed) return;
+      dismissed = true;
+      guideBubble.hidden = true;
+      clearTimeout(timer);
+      removeEventListener("keydown", onKey);
+      $("msg")?.removeEventListener("focus", hide);
+      $("send")?.removeEventListener("pointerdown", hide);
+    };
+    const onKey = (e) => { if (e.key === "Escape") hide(); };
+    const timer = setTimeout(hide, 15000); // 읽고 넘어가지 않아도 이만큼 지나면 스스로 사라진다
+    setTimeout(() => { if (!dismissed) guideBubble.hidden = false; }, 700); // 첫 화면이 그려진 뒤 살짝 늦게
+    addEventListener("keydown", onKey);
+    $("msg")?.addEventListener("focus", hide);
+    $("send")?.addEventListener("pointerdown", hide);
+    guideBubble.closest("a")?.addEventListener("click", hide);
+    // ✕: 링크 안에 있으니 가이드로 넘어가지 않게 막고 말풍선만 닫는다 (키보드는 Esc)
+    guideBubble.querySelector(".gb-x")?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); hide(); });
+  }
+}
+
 // 두 칸 사이 손잡이 (메인, 넓은 화면): 왼쪽으로 끌면 채팅창이 넓어진다. 왼쪽 칸은 스쿼드 경기장(최대 494px + 칸 여백)까지만 줄고,
 // 오른쪽으로는 반반까지. 키보드: ←→ 40px. 새로고침하면 반반으로
 const split = $("split");

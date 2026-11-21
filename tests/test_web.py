@@ -1351,6 +1351,15 @@ def test_search_result_look(client):
     assert '"@type": "WebSite", "name": "FCLM"' in home
 
 
+def test_first_visit_guide_hint_is_hidden_until_js(client):
+    """처음 온 사람: 가이드 링크 옆 말풍선은 숨겨서 내려보내고, web-ui.js가 이 기기 첫 방문에만 띄운다"""
+    home = client.get("/").text
+    assert 'class="guide-link" href="/guide"' in home
+    assert '<span class="guide-bubble" aria-hidden="true" hidden><b>FCLM이 처음이신가요?</b>' in home and 'class="gb-x"' in home  # ✕로 닫는다
+    js = client.get("/static/web-ui.js").text
+    assert 'localStorage.getItem("fclm-guide-hint")' in js and 'setItem("fclm-guide-hint", "1")' in js
+
+
 def test_playstyle_tool_summarizes_the_attached_teams_recent_matches(db, monkeypatch):  # noqa: F811
     # @팀을 붙인 대화에서만: 최근 공식경기를 넥슨 기록으로 집계하고, 같은 구단주는 캐시 (넥슨 API를 다시 부르지 않음)
     import copy
