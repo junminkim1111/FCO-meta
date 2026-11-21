@@ -64,7 +64,7 @@ DEEP_LABEL = {"deep": "DeepSeek V4.1 Flash Eco 생각 끔", "deep_r": "DeepSeek 
 LUNA_LABEL = {"luna": "GPT-6 Luna 생각 끔", "luna_r": "GPT-6 Luna 생각 켬"}
 
 
-TRIAL_PER_VISITOR = 3  # 베타 키 없는 방문자의 하루 체험 질문 수
+TRIAL_PER_VISITOR = 10  # 베타 키 없는 방문자의 하루 체험 질문 수
 TRIAL_USED = "체험 질문을 다 썼어요. 베타 키를 받으면 계속 물어볼 수 있어요."
 
 

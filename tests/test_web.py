@@ -1143,14 +1143,16 @@ def test_restart_refills_todays_counts_from_the_log(beta):
     assert log.today_counts()[key_hash("fclm-WXYZ-2345")[:12]] == 1
 
 
-def test_no_key_visitor_gets_three_trial_questions_a_day(beta):
-    c = beta()
-    assert [chat(c).status_code for _ in range(3)] == [200, 200, 200]
+def test_no_key_visitor_gets_trial_questions_a_day(beta):
+    from fco_meta.web.app import TRIAL_PER_VISITOR as n, RateLimit
+
+    c = beta(limit=RateLimit(per_minute=100))  # 분당 6개 제한은 따로 (체험 수만 본다)
+    assert [chat(c).status_code for _ in range(n)] == [200] * n
     second = chat(c)
     assert second.status_code == 401 and "체험 질문을 다 썼어요" in second.json()["detail"]
     assert chat(c, ip="2.2.2.2").status_code == 200  # 다른 방문자
     assert chat(c, ip="3.3.3.3", key="fclm-NOPE-NOPE").json()["detail"] == "베타 키가 맞지 않아요"  # 틀린 키는 체험이 아니다
-    assert [chat(c, ip="3.3.3.3").status_code for _ in range(4)] == [200, 200, 200, 401]  # ...체험을 쓰지도 않았다
+    assert [chat(c, ip="3.3.3.3").status_code for _ in range(n + 1)] == [200] * n + [401]  # ...체험을 쓰지도 않았다
     assert chat(c, KEY).status_code == 200  # 키가 있으면 제한 없이 키 쪽
     assert c.post("/api/team", json={"nickname": "x", "session_id": "s"}).status_code == 503  # 체험도 팀은 붙인다 (키 검사를 지나 넥슨 키 없음까지)
     assert c.post("/api/team", json={"nickname": "x"}, headers={"X-Beta-Key": "fclm-NOPE-NOPE"}).status_code == 401  # 틀린 키는 체험이 아니다
@@ -1174,8 +1176,11 @@ def test_restart_refills_trial_counts_from_the_log(beta):
     from fco_meta.web.chatlog import ChatLog
 
     log = ChatLog()
-    first = beta(chat_log=log, admin_key="salt")
-    assert [chat(first).status_code for _ in range(3)] == [200, 200, 200]  # 방문자 id의 소금은 admin_key(또는 VISIT_SALT)라 재시작 뒤에도 같다
+    from fco_meta.web.app import TRIAL_PER_VISITOR as n, RateLimit
+
+    first = beta(chat_log=log, admin_key="salt", limit=RateLimit(per_minute=100))
+
+    assert [chat(first).status_code for _ in range(n)] == [200] * n  # 방문자 id의 소금은 admin_key(또는 VISIT_SALT)라 재시작 뒤에도 같다
     again = beta(chat_log=log, admin_key="salt")
     assert chat(again).status_code == 401
     assert chat(again, ip="2.2.2.2").status_code == 200
