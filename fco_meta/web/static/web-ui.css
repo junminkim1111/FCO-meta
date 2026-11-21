@@ -143,11 +143,14 @@
   .pp .gr.silver { background: linear-gradient(140deg, #d8d9dc, #b8bdca); color: #4e545e; }
   .pp .gr.gold { background: linear-gradient(140deg, #f9dd62, #dca908); color: #695100; }
   .pp .gr.platinum { background: #dfe3f5 url(https://ssl.nexon.com/s2/game/fc/online/obt/datacenter/bg_plt.png) 0 0 / 100% 100%; color: #000; }
+  .pp .tr { position: absolute; left: -7px; bottom: -4px; z-index: 1; display: flex; flex-direction: column-reverse; gap: 1px; pointer-events: none; }
+  .pp .tr img { width: 20px; height: 20px; display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .5)); } /* 넥슨 육각형 그대로 */
   .pp .nm { margin-top: 4px; max-width: 100%; font-size: 14px; color: var(--pitch-name); text-align: center; white-space: nowrap; overflow: hidden;
             text-overflow: ellipsis; text-shadow: var(--name-shadow); display: flex; align-items: center; gap: 2px; }
   .pp .nm img { height: 14px; }
   @media (max-width: 520px) { .pp .ph { width: 34px; height: 34px; } .pp .nm { font-size: 10px; } .pp .nm img { height: 11px; }
-                              .pp .gr { font-size: 10px; line-height: 14px; padding: 0 4px; } }
+                              .pp .gr { font-size: 10px; line-height: 14px; padding: 0 4px; }
+                              .pp .tr { left: -5px; bottom: -3px; } .pp .tr img { width: 13px; height: 13px; } }
   .empty-pitch { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--pitch-name); opacity: .75; padding: 20%; font-size: 13px; height: 100%; }
   .mu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; font-size: 13px; }
   .mu .f { font-variant-numeric: tabular-nums; }

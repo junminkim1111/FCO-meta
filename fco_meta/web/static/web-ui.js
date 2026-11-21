@@ -157,6 +157,11 @@ function mountPills(container, items, { value = items[0].value, onChange, ariaLa
 // --- formation detail ---
 // 선수 사진: 카드 사진 → 선수 기본 사진 → 이름 첫 글자 (넥슨 이미지 CDN을 못 쓰면 글자로 표시)
 const IMG = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common";
+// 신규특성 → 넥슨 육각형 아이콘 번호 (datacenter PlayerPreView의 trait_icon_NN.png, 2026-11-21 카드 상세에서 확인)
+const TRAIT_IMG = "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/traits/trait_icon_";
+const TRAIT_ICON = { "아크로바틱 피니셔": 50, "크로스 포쳐": 51, "라인 브레이커": 52, "와일드 태클러": 53, "체이서": 54, "2개의 심장": 55, "파이터": 56,
+  "GK 빠른 반응": 57, "커맨더": 59, "GK 공중볼 장악": 60, "블로커": 62, "스피드스터": 63, "타이탄": 64, "트릭스터": 65, "레이저 슈터": 66,
+  "프레데터": 67, "GK 데드아이": 68 };
 function photo(p) {
   const box = el("div", { class: "ph", ariaHidden: "true" });
   const sources = [`${IMG}/playersAction/p${p.sp_id}.png`, `${IMG}/players/p${p.pid}.png`];
@@ -169,7 +174,10 @@ function photo(p) {
   };
   next();
   const g = p.grade, tier = g >= 11 ? "platinum" : g >= 8 ? "gold" : g >= 5 ? "silver" : g >= 2 ? "bronze" : "";
-  return el("div", { class: "pw" }, box, g ? el("span", { class: "gr " + tier, text: String(g) }) : null);
+  const traits = (p.new_traits || []).filter((t) => TRAIT_ICON[t]); // 사진 왼쪽 아래에 신규특성 육각형 (이름은 툴팁에)
+  const hex = traits.length ? el("span", { class: "tr" }, ...traits.map((t) =>
+    el("img", { src: `${TRAIT_IMG}${TRAIT_ICON[t]}.png`, alt: t, loading: "lazy", onerror() { this.remove(); } }))) : null;
+  return el("div", { class: "pw" }, box, g ? el("span", { class: "gr " + tier, text: String(g) }) : null, hex);
 }
 
 // spposition 코드 → 경기장 위치 [x%, y%] (위쪽이 공격 방향, 오른쪽이 R 포지션)
