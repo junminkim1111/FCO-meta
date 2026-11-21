@@ -1364,3 +1364,12 @@ def test_includes_competing_for_the_same_role_all_get_a_slot(toolbox):  # noqa: 
     assert all(r["include"].values()) and sorted(s["player"] for s in r["lineup"]) == ["볼란치L", "볼란치R"]
     assert sorted(s["role"] for s in r["lineup"]) == ["CAM", "DM"] and "problems" not in r
     assert len(r["include_used_elsewhere"]) == 2  # note 하나 + 밀려난 선수 하나
+
+
+def test_evidence_skips_player_detail_entries_without_rankers(toolbox):  # noqa: F811
+    # 랭커 기록이 없는 선수는 카드 정보만(scope 없음) — 출처 줄을 만들다 KeyError로 답 전체가 실패했다
+    no_usage = {"name": "K. 마치다", "roles": [], "season_cards": [{"season": "PTG", "salary": 26}]}
+    used = {"name": "T. 와타나베", "scope": {"team_color": "일본(국가)", "formation": "4-2-2-1-1", "sample_size": 1, "data_as_of": "2026-11-21T06:00:00+09:00"}}
+    assert toolbox.evidence("get_player_detail", {"players": [no_usage]}) is None
+    line = toolbox.evidence("get_player_detail", {"players": [no_usage, used]})
+    assert line.startswith("T. 와타나베 — 일본(국가) 4-2-2-1-1 랭커 1명") and "마치다" not in line

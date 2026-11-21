@@ -3878,9 +3878,9 @@ class Toolbox:
             return f"{result['team_color']} {fm if fm != '전체' else '전체 포메이션'} {result['role']} — 랭커 {result['sample_size']}명 스쿼드 ({as_of})"
         if name in ("recommend_squad", "check_squad") and result.get("lineup"):
             return f"{result['team_color']} {result['formation']} 스쿼드 — 랭커 {result['sample_size']}명 스쿼드 ({as_of})"
-        if name == "get_player_detail" and result.get("players"):
-            s = result["players"][0]["scope"]
-            who = ", ".join(p["name"] for p in result["players"])
+        if name == "get_player_detail" and (scoped := [p for p in result.get("players") or [] if p.get("scope")]):
+            s = scoped[0]["scope"]  # 랭커 기록이 없는 선수는 카드 정보만 와서 scope가 없다 (그런 선수만이면 출처 줄 없음)
+            who = ", ".join(p["name"] for p in scoped)
             fm = s["formation"] if s["formation"] != "전체" else "전체 포메이션"
             return f"{who} — {s['team_color']} {fm} 랭커 {s['sample_size']}명 스쿼드 ({format_as_of(s['data_as_of'])})"
         if name == "get_meta_trends" and result.get("data_as_of"):
