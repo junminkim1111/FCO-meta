@@ -1334,3 +1334,13 @@ def test_search_engine_files(client):
         assert "onrender" not in page.text, path
     assert 'name="robots" content="noindex"' in client.get("/send").text
     assert client.get("/").headers["strict-transport-security"]
+
+
+def test_search_result_look(client):
+    """검색 결과: 아이콘(48px 배수), 설명은 meta description에서 (푸터 안내문은 data-nosnippet)"""
+    home = client.get("/").text
+    assert 'sizes="144x144" href="/static/favicon-144.png"' in home
+    assert client.get("/static/favicon-144.png").status_code == 200
+    assert client.get("/favicon.ico").headers["content-type"] == "image/png"
+    assert "<div data-nosnippet>" in home.split("<footer")[1]
+    assert '"@type": "WebSite", "name": "FCLM"' in home

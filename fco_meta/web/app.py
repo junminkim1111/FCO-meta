@@ -591,6 +591,10 @@ def create_app(
         body = f"User-agent: *\nDisallow: /admin\nDisallow: /api/\n\nSitemap: {SITE}/sitemap.xml\n"
         return Response(body, media_type="text/plain")
 
+    @app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+    def favicon() -> FileResponse:
+        return FileResponse(STATIC_DIR / "favicon-144.png", media_type="image/png")  # Google 검색 결과 아이콘: 48px 배수 정사각형
+
     @app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
     def sitemap() -> Response:
         urls = "".join(f"  <url>\n    <loc>{SITE}{p}</loc>\n  </url>\n" for p in ("/", "/guide", *(f"/guide/{t}" for t in GUIDE_TOPICS)))
