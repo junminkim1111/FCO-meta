@@ -22,6 +22,7 @@ const el = (tag, props = {}, ...children) => {
 };
 const pct = (x) => (x * 100).toFixed(1) + "%";
 const season = (s) => (s || "?").split(" (")[0];
+const toMan = (s) => (s == null ? s : String(s).replace(/([조억만])\s+[\d,]+$/, "$1")); // "15억 4,123만 3,000" → "15억 4,123만", "15억 3,000" → "15억" (만 단위 미만은 버린다)
 
 async function failure(res) {
   const d = (await res.json().catch(() => ({}))).detail;
@@ -202,8 +203,8 @@ function pitch(players, emptyText, detailOf) {
     const short = (p.name || "?").trim().split(" ").pop(); // DB 이름 끝에 공백이 붙은 선수가 있다 ("A. 우에다 ")
     const icon = p.season_img ? el("img", { src: p.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
     const node = el("div", { class: "pp", style: `left:${x}%;top:${y}%` }, photo(p), el("div", { class: "nm" }, icon, short));
-    const traits = p.new_traits?.length ? `\n신규특성: ${p.new_traits.join(", ")}` : ""; // 카드가 원래 가진 금특·신특
-    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}${traits}`);
+    const price = p.owned ? "\n보유 카드" : p.price ? `\n${toMan(p.price)}` : ""; // 그 강화의 시세 (신규특성은 사진 위 육각형으로)
+    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}${price}`);
     box.append(node);
   }
   return box;
@@ -713,11 +714,11 @@ function showSquad(sq, { status = null, prev = null } = {}) {
     if (subs.length) substitute(field, subs);
   }
   const tiles = el("div", { class: "tiles" }, tile("팀컬러", sq.team_color ? plain(sq.team_color) : sq.players.length ? "없음" : "-", ""),
-                  tile("포메이션", sq.formation || "-", ""), tile("총 금액", sq.price || "-", ""),
+                  tile("포메이션", sq.formation || "-", ""), tile("총 금액", toMan(sq.price) || "-", ""),
                   tile("총 급여", sq.salary != null ? String(sq.salary) : "-", ""));
   // 짜는 중에 값이 바뀌면 금액·급여 숫자를 굴린다 (다시 열 때나 움직임 줄이기 설정이면 그냥 보인다)
   if (status && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    [[2, sq.price, prev?.price], [3, sq.salary, prev?.salary]].forEach(([i, now, was]) => {
+    [[2, toMan(sq.price), toMan(prev?.price)], [3, sq.salary, prev?.salary]].forEach(([i, now, was]) => {
       if (now == null || String(now) === String(was ?? "")) return;
       tiles.children[i].querySelector(".val").replaceChildren(roll(String(now), String(was ?? "")));
     });

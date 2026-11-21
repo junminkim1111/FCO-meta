@@ -96,6 +96,7 @@ def top_ranker_squad(
     players = _with_new_traits(conn, [_player(p) for p in cur.execute(_PLAYERS, (r["match_id"], r["ouid"]))])
     prices, _ = _card_values(conn, {p["sp_id"] for p in players})
     priced = [prices[(p["sp_id"], p["grade"])] for p in players if (p["sp_id"], p["grade"]) in prices]
+    players = [{**p, "price": format_bp(prices[(p["sp_id"], p["grade"])])} if (p["sp_id"], p["grade"]) in prices else p for p in players]  # 툴팁의 시세
     return {
         "rank": r["rank"], "elo": r["elo"], "wins": r["wins"], "draws": r["draws"], "losses": r["losses"],
         "team_color": r["team_color_name"], "played_formation": r["inferred_formation"],
