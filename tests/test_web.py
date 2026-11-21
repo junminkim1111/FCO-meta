@@ -1344,3 +1344,46 @@ def test_search_result_look(client):
     assert client.get("/favicon.ico").headers["content-type"] == "image/png"
     assert "<div data-nosnippet>" in home.split("<footer")[1]
     assert '"@type": "WebSite", "name": "FCLM"' in home
+
+
+def test_playstyle_tool_summarizes_the_attached_teams_recent_matches(db, monkeypatch):  # noqa: F811
+    # @팀을 붙인 대화에서만: 최근 공식경기를 넥슨 기록으로 집계하고, 같은 구단주는 캐시 (넥슨 API를 다시 부르지 않음)
+    import copy
+    import json
+    import threading
+    from pathlib import Path
+
+    import fco_meta.web.app as web_app
+    from fco_meta.web.team import Team
+
+    detail = json.loads((Path(__file__).parent / "fixtures/openapi/match_detail.json").read_text())
+    me = "00000000000000000000000000000001"  # 랭커1 (5:? 경기)
+
+    class FakeApi:
+        calls = 0
+
+        def user_matches(self, ouid, matchtype=50, offset=0, limit=10):
+            FakeApi.calls += 1
+            return ["m1", "m2"] if matchtype == 50 else []
+
+        def match_detail(self, match_id):
+            FakeApi.calls += 1
+            return copy.deepcopy(detail)
+
+    monkeypatch.setenv("NEXON_API_KEY", "test")
+    monkeypatch.setattr(web_app, "_nexon", FakeApi)
+    monkeypatch.setattr(web_app, "_PLAYSTYLE", {})
+    session = web_app._Session()
+    tools = web_app._SessionTools(web_app._LockedTools(Toolbox(db.conn), threading.Lock()), session)
+    content, is_error = tools.run("analyze_playstyle", {})
+    assert is_error and "@구단주명" in json.loads(content)["error"]  # 붙은 팀이 없으면 되묻게
+    session.attached = Team("피드", "스쿼드 피드", None, "4-2-3-1", [], mark="#")
+    assert tools.run("analyze_playstyle", {})[1]  # 피드 팀은 경기 기록이 없다
+    session.attached = Team("랭커1", "공식경기", None, "4-2-3-1", [], ouid=me)
+    content, is_error = tools.run("analyze_playstyle", {})
+    r = json.loads(content)
+    mine = next(i for i in detail["matchInfo"] if i["ouid"] == me)
+    assert not is_error and r["owner"] == "@랭커1" and r["matches"] == 2 and r["match_types"] == {"공식경기": 2}
+    assert r["goals"]["경기당 득점"] == mine["shoot"]["goalTotal"] and r["record"][mine["matchDetail"]["matchResult"]] == 2
+    calls = FakeApi.calls
+    assert tools.run("analyze_playstyle", {})[0] == content and FakeApi.calls == calls  # 1시간 캐시

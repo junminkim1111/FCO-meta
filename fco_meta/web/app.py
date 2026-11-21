@@ -275,6 +275,7 @@ class _Session:
         self.history: list[tuple[str, str]] = []
         self.bots: dict[str, list[Any]] = {}  # key → [chat, history 중 이 chat이 아는 개수]
         self.team: Team | None = None  # @닉네임으로 붙인 팀: 다음 질문 하나가 가져간다 (멘션처럼)
+        self.attached: Team | None = None  # 붙인 팀 (떼기 전까지): 플레이스타일 분석이 그 구단주의 경기를 찾는다
         self.last: str | None = None  # 마지막 질문 (팀 블록 없이, Jev가 이어지는 질문인지 볼 때)
         self.squad: dict[str, Any] | None = None  # 마지막으로 짠 스쿼드의 recommend_squad 인자 (기록엔 답 글만 남아 다음 질문에 붙인다)
         self.before_lineup: list[dict[str, Any]] | None = None
@@ -533,7 +534,7 @@ def create_app(
     feedback_limit = HourlyLimit(FEEDBACK_PER_HOUR)
     visit_limit = HourlyLimit(VISIT_PER_HOUR)
     teams: dict[str, tuple[float, Team]] = {}  # 닉네임 → (가져온 시각, 팀)
-    team_lock = threading.Lock()  # 넥슨 API 클라이언트는 한 번에 하나씩
+    team_lock = _NEXON_LOCK  # 넥슨 API 클라이언트는 한 번에 하나씩 (플레이스타일 분석과 같이 쓴다)
     squads: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()  # 답 id → 그 답의 스쿼드 도구 호출 (최근 것만)
     restored = threading.Lock()  # 첫 베타 질문에서 한 번만 오늘 기록으로 키별 카운터를 채운다 (잡은 채로 둠 = 끝)
 
@@ -874,14 +875,16 @@ def create_app(
                 raise HTTPException(status_code=503, detail="넥슨 서버에서 팀을 가져오지 못했어요. 잠시 후 다시 해 주세요.") from None
             teams[nickname] = (time.time(), team)
         session_id = req.session_id or uuid.uuid4().hex
-        session_for(session_id).team = team
+        session = session_for(session_id)
+        session.team = session.attached = team
         return {"session_id": session_id, **team.to_json()}
 
     @app.delete("/api/team")
     def detach_team(request: Request, session_id: str = Query(max_length=64)) -> dict[str, bool]:
         if not trial_id(request):
             beta_id(request)
-        session_for(session_id).team = None
+        session = session_for(session_id)
+        session.team = session.attached = None
         return {"ok": True}
 
     @app.post("/api/squad-link")
@@ -983,6 +986,8 @@ class _SessionTools(_LockedTools):
         self.session = session
 
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        if name == "analyze_playstyle":
+            return self._playstyle()
         content, is_error = super().run(name, tool_input)
         if name == "squad_candidates" or name in SQUAD_TOOLS:
             self.session.turn_lineup = None
@@ -1014,6 +1019,38 @@ class _SessionTools(_LockedTools):
                 if not tool_input.get(k) and result.get(k) and not tool_input.get("slots"):
                     self.session.turn_squad[k] = result[k]
         return content, is_error
+
+
+    def _playstyle(self) -> tuple[str, bool]:
+        """The attached @team's recent matches summarized (NEXON API, cached per ouid for PLAYSTYLE_CACHE_SECONDS)."""
+        from .playstyle import player_names, recent_matches, summarize
+
+        team = self.session.attached
+        if team is None or not team.ouid:
+            why = "스쿼드 피드(#)로 붙인 팀은 경기 기록이 없음" if team else "대화에 붙은 @팀이 없음"
+            return json.dumps({"error": f"{why} — 사용자에게 @구단주명으로 팀을 불러오라고 할 것"}, ensure_ascii=False), True
+        hit = _PLAYSTYLE.get(team.ouid)
+        if hit and time.time() - hit[0] < PLAYSTYLE_CACHE_SECONDS:
+            return hit[1], False
+        if not os.environ.get("NEXON_API_KEY"):
+            return json.dumps({"error": "서버에 넥슨 API 키가 없어 경기 기록을 가져올 수 없음"}, ensure_ascii=False), True
+        try:
+            with _NEXON_LOCK:  # 넥슨 클라이언트는 한 번에 하나씩 (@팀 불러오기와 같이)
+                api = _nexon()
+                details = [(kind, api.match_detail(m)) for m, kind in recent_matches(api, team.ouid)]
+        except Exception as e:  # 예산 초과·넥슨 오류: 모델이 사용자에게 알린다
+            log.warning("playstyle analysis failed: %s", e)
+            return json.dumps({"error": "넥슨 경기 기록을 가져오지 못함 (잠시 후 다시)"}, ensure_ascii=False), True
+        sp_ids = {int(p["spId"]) for _, d in details for i in d.get("matchInfo") or [] if i.get("ouid") == team.ouid for p in i.get("player") or []}
+        with self.lock:
+            names = player_names(self.toolbox.conn, sorted(sp_ids))
+        result = {"owner": team.mark + team.nickname, **summarize(team.ouid, details, names),
+                  "note": "넥슨 기록은 약 2시간 전 경기까지. 답에 분석한 경기 수·종류·기간을 밝힐 것"}  # fmt: skip
+        content = json.dumps(result, ensure_ascii=False)
+        _PLAYSTYLE[team.ouid] = (time.time(), content)
+        while len(_PLAYSTYLE) > MAX_SESSIONS:
+            _PLAYSTYLE.pop(next(iter(_PLAYSTYLE)))
+        return content, False
 
 
 def _lineup_changes(before: list[dict[str, Any]] | None, after: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1065,6 +1102,11 @@ def _jev_route(question: str, previous: str | None) -> Route | None:
 _NEXON: Any = None
 
 
+_NEXON_LOCK = threading.Lock()  # 넥슨 Open API 클라이언트를 한 번에 하나씩 (@팀 불러오기·플레이스타일 분석)
+PLAYSTYLE_CACHE_SECONDS = 3600  # 같은 구단주의 플레이스타일 분석은 이 동안 다시 부르지 않는다 (분석 1번 ≈ 넥슨 API 21회)
+_PLAYSTYLE: dict[str, tuple[float, str]] = {}  # ouid → (분석한 시각, 결과 JSON)
+
+
 def _nexon() -> Any:
     """One NEXON Open API client for @닉네임 lookups (its own daily call budget, in memory)."""
     global _NEXON
@@ -1072,7 +1114,7 @@ def _nexon() -> Any:
         from ..openapi.budget import CallBudget
         from ..openapi.client import NexonOpenApiClient
 
-        _NEXON = NexonOpenApiClient(budget=CallBudget(daily_limit=int(os.environ.get("NEXON_DAILY_LIMIT", "2000"))))
+        _NEXON = NexonOpenApiClient(budget=CallBudget(daily_limit=int(os.environ.get("NEXON_DAILY_LIMIT", "20000"))))
     return _NEXON
 
 

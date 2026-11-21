@@ -51,6 +51,7 @@ class Team:
     totals: dict[str, Any] = field(default_factory=dict)
     colors: list[str] = field(default_factory=list)  # 이 팀의 팀컬러 하나 + 발동한 케미 ("FC 바르셀로나 11명", "… 케미 5명")
     mark: str = "@"  # "@" 구단주명 · "#" 피드 ID
+    ouid: str | None = None  # @구단주명: 넥슨 계정 식별자 (플레이스타일 분석이 최근 경기를 찾는다). 피드는 없음
 
     def label(self) -> str:
         """For the chip tooltip: '10-09 공식경기 · 4-2-3-1 · 선발 11명'."""
@@ -110,6 +111,7 @@ def fetch_team(
     return Team(
         nickname=nickname, source=source, played_at=played_at, formation=FormationTable.load().infer(pos for _, pos, _ in starters),
         lineup=lineup, old=now - played_at > OLD_AFTER, totals=_totals(lineup), colors=_team_colors(conn, catalog, team_color_info, lineup),
+        ouid=ouid,
     )  # fmt: skip
 
 

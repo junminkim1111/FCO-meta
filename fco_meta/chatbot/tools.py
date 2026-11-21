@@ -698,6 +698,15 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": None,
     },
     {
+        "name": "analyze_playstyle",
+        "description": (
+            "@구단주명으로 불러온 사용자 팀의 최근 경기(공식경기 최대 20, 적으면 친선 포함)를 넥슨 기록으로 집계한다: 승무패·경기당 득점/실점, "
+            "득점·실점 경로(헤더·박스 안/밖·프리킥·PK), 슈팅 수·유효슈팅·결정률, 패스 종류별 비중·성공률, 점유율, 태클·블록, 많이 넣은 선수. "
+            "플레이스타일·득실점·공격 루트·약점(실점 경로) 질문에 한 번 부른다. 인자 없음 — 대화에 붙은 @팀(구단주)을 쓴다"
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "get_player_detail",
         "description": (
             "선수 이름(일부 가능)으로 랭커 사용 현황을 조회한다: 역할별 사용률과 그 역할 내 순위, 경기 평점, 시즌 카드별 사용 수·강화·시세, "
@@ -1006,6 +1015,7 @@ class Toolbox:
             "check_squad": self.check_squad,
             "diagnose_team": self.diagnose_team,
             "get_player_detail": self.get_player_detail,
+            "analyze_playstyle": self.analyze_playstyle,
             "get_meta_trends": self.get_meta_trends,
             "get_ranker_squad": self.get_ranker_squad,
             "query_squads": self.query_squads,
@@ -1271,6 +1281,10 @@ class Toolbox:
             self.conn.execute(f"SELECT 1 FROM {t} WHERE REPLACE(name, ' ', '') LIKE ? LIMIT 1", (f"%{key}%",)).fetchone()
             for t in ("meta_spid", "card")
         )
+
+    def analyze_playstyle(self) -> dict[str, Any]:
+        """Runs only in the web chat (it needs the attached @team and the NEXON API) — see web.app._SessionTools."""
+        raise ToolError("플레이스타일 분석은 웹에서 @구단주명으로 팀을 불러온 대화에서만 쓸 수 있음")
 
     def _require_one_player(self, name: str, team_color: Any) -> str | None:
         """'실바'처럼 이름이 여러 선수에 걸리면 (정확히 같은 이름이 없을 때) — 팀컬러가 있으면 그 소속 카드가 있는 선수만 세고 —
