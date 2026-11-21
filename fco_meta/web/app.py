@@ -515,7 +515,7 @@ def create_app(
     limit = limit or RateLimit(total_per_day=int(os.environ.get("CHAT_TOTAL_PER_DAY", "300")))
     admin_key = admin_key if admin_key is not None else os.environ.get("ADMIN_KEY", "")
     beta = BetaGate(os.environ.get("BETA_KEY_HASHES", "").split(","), int(os.environ.get("BETA_PER_DAY", "30")), os.environ.get("BETA_CLOSED") == "1", admin_key=admin_key,
-                    trial_per_day=int(os.environ.get("BETA_TRIAL_PER_DAY", "50")))
+                    trial_per_day=int(os.environ.get("BETA_TRIAL_PER_DAY", "200")))  # 체험 질문 하루 합계 (방문자당 TRIAL_PER_VISITOR)
     chat_log = chat_log or ChatLog()
     visits = VisitTracker(os.environ.get("VISIT_SALT") or admin_key, chat_log.now)
     admin = AdminGuard(admin_key)
