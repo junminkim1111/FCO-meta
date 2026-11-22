@@ -661,7 +661,7 @@ function feedRow(id, sq) {
     const b = el("button", { type: "button", class: "squad-toggle" });
     b.squad = sq;
     b.addEventListener("click", () => showSquad(shownSquad === sq ? null : sq));
-    row.append(b);
+    row.prepend(b); // 스쿼드 펼치기·접기를 앞에, 스쿼드메이커로 내보내기를 뒤에
     syncSquadButtons(b);
   }
   return row;
