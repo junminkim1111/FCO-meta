@@ -61,3 +61,13 @@ docs/TROUBLESHOOTING.md
 
 # 클로즈드 베타 키 원문 (python -m fco_meta.beta_keys)
 beta_keys*.csv
+
+# 서버(Render)·매일 수집(GitHub Actions)과 무관한 로컬 도구·설정 (파일은 로컬에 그대로 두고 git에서만 뺀다)
+.agents/
+.claude/
+.obsidian/
+orca-progress/
+prompts.py
+.worktreeinclude
+docs/ORCA_START.md
+docs/WORKFLOW.md

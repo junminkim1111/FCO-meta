@@ -1,3 +1,0 @@
-# 공개 테스트만 후보 worktree에 복사한다.
-# .env/API 키, DB, eval의 별도 검증 사례는 자동 복사하지 않는다.
-tests
