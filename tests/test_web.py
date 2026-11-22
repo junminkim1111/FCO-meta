@@ -1401,3 +1401,14 @@ def test_playstyle_tool_summarizes_the_attached_teams_recent_matches(db, monkeyp
     assert r["goals"]["경기당 득점"] == mine["shoot"]["goalTotal"] and r["record"][mine["matchDetail"]["matchResult"]] == 2
     calls = FakeApi.calls
     assert tools.run("analyze_playstyle", {})[0] == content and FakeApi.calls == calls  # 1시간 캐시
+
+
+def test_adsense_on_public_pages_only(client):
+    # 공개 페이지 head에만 애드센스 스크립트, 관리자·404에는 없음. ads.txt는 같은 게시자 ID
+    tag = "pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1315876984941536"
+    for path in ("/", "/guide", "/guide/team"):
+        page = client.get(path).text
+        assert tag in page and page.index(tag) < page.index("</head>")
+    assert tag not in client.get("/admin").text and tag not in client.get("/없는-페이지").text
+    ads = client.get("/ads.txt")
+    assert ads.status_code == 200 and ads.text.strip() == "google.com, pub-1315876984941536, DIRECT, f08c47fec0942fa0"

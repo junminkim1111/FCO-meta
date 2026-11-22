@@ -592,6 +592,10 @@ def create_app(
         body = f"User-agent: *\nDisallow: /admin\nDisallow: /api/\n\nSitemap: {SITE}/sitemap.xml\n"
         return Response(body, media_type="text/plain")
 
+    @app.api_route("/ads.txt", methods=["GET", "HEAD"], include_in_schema=False)
+    def ads_txt() -> Response:  # 구글 애드센스 판매자 확인 (각 페이지 head의 adsbygoogle.js와 같은 게시자 ID)
+        return Response("google.com, pub-1315876984941536, DIRECT, f08c47fec0942fa0\n", media_type="text/plain")
+
     @app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
     def favicon() -> FileResponse:
         return FileResponse(STATIC_DIR / "favicon-144.png", media_type="image/png")  # Google 검색 결과 아이콘: 48px 배수 정사각형
