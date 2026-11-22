@@ -482,6 +482,7 @@ def model_view(value: Any, key: str = "") -> Any:
 # 화면·내부용 값: 모델의 답에는 쓰이지 않아 모델에게는 보내지 않는다 (입력 토큰을 줄인다)
 SCREEN_ONLY = {"season_img", "sp_id", "pid", "fetched_at", "mode"}
 MAX_DETAIL_ROLES, MAX_DETAIL_CARDS, MAX_DETAIL_USAGE = 6, 6, 10  # get_player_detail을 모델에게 줄 때 남기는 수
+MAX_MATCHUP_OPPONENTS = 20  # 포메이션 상대 전적: 경기 많은 상대만 모델에게 (상위 20개가 경기의 ~97%, 나머지는 합계 한 줄. 화면은 전부)
 
 
 def for_model(name: str, result: Any) -> Any:
@@ -490,7 +491,19 @@ def for_model(name: str, result: Any) -> Any:
     use. The web and the number check keep the full result."""
     if name == "get_player_detail" and isinstance(result, dict):
         result = _brief_player_detail(result)
+    if name == "get_formation_overview" and isinstance(result, dict) and isinstance(result.get("matchups"), dict):
+        result = {**result, "matchups": _top_matchups(result["matchups"])}
     return model_view(_strip(result))
+
+
+def _top_matchups(matchups: dict[str, Any]) -> dict[str, Any]:
+    """The opponents with the most games; the long tail of rare formations as one summary line."""
+    ops = sorted(matchups.get("opponents") or [], key=lambda o: -(o.get("games") or 0))
+    if len(ops) <= MAX_MATCHUP_OPPONENTS:
+        return matchups
+    rest = ops[MAX_MATCHUP_OPPONENTS:]
+    return {**matchups, "opponents": ops[:MAX_MATCHUP_OPPONENTS],
+            "other_opponents": {"formations": len(rest), "games": sum(o.get("games") or 0 for o in rest)}}
 
 
 def _strip(value: Any, key: str = "") -> Any:
@@ -524,7 +537,13 @@ def _brief_player_detail(result: dict[str, Any]) -> dict[str, Any]:
         prices.setdefault(card, {})[str(row.get("grade"))] = row.get("price")
     out = {**result, "players": players}
     if "usage" in result:
-        out["usage"] = sorted(result["usage"], key=lambda u: -u.get("rankers", 0))[:MAX_DETAIL_USAGE]
+        rows = sorted(result["usage"], key=lambda u: -u.get("rankers", 0))[:MAX_DETAIL_USAGE]
+        # 행마다 같은 값(선수 한 명이면 이름, 모두 같은 기준 시각)은 반복하지 않는다
+        same = [k for k in ("player", "data_as_of") if rows and len({r.get(k) for r in rows}) == 1]
+        if same:
+            out["usage_common"] = {k: rows[0].get(k) for k in same}
+            rows = [{k: v for k, v in r.items() if k not in same} for r in rows]
+        out["usage"] = rows
     if "prices" in result:
         out["prices"] = [{"season": season, "price_by_grade": by_grade} for season, by_grade in prices.items()]
     return out
@@ -3241,6 +3260,12 @@ class Toolbox:
             )
             players = [{"name": player_name, "pid": pid, "roles": [], "season_cards": self._season_cards(pid)}
                        for pid, player_name in collected]
+        # '라이스'가 '브라이스 삼바'에도 걸린다: 이름의 한 단어(또는 전체)와 정확히 맞는 선수가 있으면 단어 중간에만 걸린 선수는 뺀다
+        query = name.replace(" ", "")
+        exact = lambda n: (n or "").replace(" ", "") == query or query in (n or "").split()  # noqa: E731
+        if any(exact(r["name"]) for r in rows) or any(exact(p["name"]) for p in players):
+            rows = [r for r in rows if exact(r["name"])]
+            players = [p for p in players if exact(p["name"])]
         if not rows and not players:
             if (fixed := self._typo_name(name)) and not _typo_retry:
                 out = self._player_detail(fixed, team_color, formation, True)

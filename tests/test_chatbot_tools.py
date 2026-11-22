@@ -1373,3 +1373,28 @@ def test_evidence_skips_player_detail_entries_without_rankers(toolbox):  # noqa:
     assert toolbox.evidence("get_player_detail", {"players": [no_usage]}) is None
     line = toolbox.evidence("get_player_detail", {"players": [no_usage, used]})
     assert line.startswith("T. 와타나베 — 일본(국가) 4-2-2-1-1 랭커 1명") and "마치다" not in line
+
+
+def test_model_gets_top_matchups_and_one_line_for_the_rest():
+    # 포메이션 상대 전적: 모델에게는 경기 많은 상대 MAX_MATCHUP_OPPONENTS개 + 나머지 합계 (화면용 원본은 그대로)
+    from fco_meta.chatbot.tools import MAX_MATCHUP_OPPONENTS, for_model
+
+    ops = [{"opponent": f"F{i}", "games": 100 - i, "wins": 1, "draws": 0, "losses": 0, "win_rate": 0.5} for i in range(MAX_MATCHUP_OPPONENTS + 5)]
+    raw = {"formation": "4-2-3-1", "matchups": {"games": 999, "opponents": ops}}
+    m = for_model("get_formation_overview", raw)["matchups"]
+    assert len(m["opponents"]) == MAX_MATCHUP_OPPONENTS and m["opponents"][0]["opponent"] == "F0"
+    assert m["other_opponents"] == {"formations": 5, "games": sum(o["games"] for o in ops[MAX_MATCHUP_OPPONENTS:])}
+    assert len(raw["matchups"]["opponents"]) == MAX_MATCHUP_OPPONENTS + 5  # 원본은 건드리지 않는다
+
+
+def test_player_detail_drops_mid_word_matches_when_a_whole_word_matches(toolbox):  # noqa: F811
+    # '라이스'가 '브라이스 삼바'에도 걸렸다: 이름의 한 단어와 정확히 맞는 선수가 있으면 단어 중간에만 걸린 선수는 뺀다
+    row = toolbox.conn.execute("SELECT * FROM usage_stats WHERE formation != '*' LIMIT 1").fetchone()
+    cols = list(row.keys())
+    for sp_id, pid, name in ((999000777, 777, "데클런 테스트"), (999000778, 778, "브테스트 삼바")):
+        fake = {**{k: row[k] for k in cols}, "sp_id": sp_id, "pid": pid}
+        toolbox.conn.execute(f"INSERT INTO usage_stats ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", [fake[k] for k in cols])
+        toolbox.conn.execute("INSERT INTO meta_spid (sp_id, name) VALUES (?, ?)", (sp_id, name))
+    toolbox.conn.commit()
+    assert json.loads(toolbox.run("get_player_detail", {"player": "테스트"})[0])["matched_names"] == ["데클런 테스트"]
+    assert json.loads(toolbox.run("get_player_detail", {"player": "브테스트"})[0])["matched_names"] == ["브테스트 삼바"]  # 그 이름으로 찾으면 나온다
