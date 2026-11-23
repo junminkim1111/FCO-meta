@@ -450,9 +450,9 @@ def test_questions_are_routed_by_words_and_deep_mode(db, tmp_path, monkeypatch):
     ask(client, "리버풀 100억으로 짜 줘", session_id=sid)
     res = client.post("/api/chat", json={"message": "업그레이드 추천", "session_id": sid, "mode": "luna_r"})
     assert [(n, q, o) for n, q, o in asked] == [
-        ("deepTrue", "아스널 볼란치 추천", {"deadline": web_app.LONG_DEADLINE}),
-        ("deepTrue", "리버풀 100억으로 짜 줘", {"deadline": web_app.LONG_DEADLINE}),
-        ("lunaTrue", "업그레이드 추천", {"deadline": web_app.LONG_DEADLINE}),  # /model gpt
+        ("deepTrue", "아스널 볼란치 추천", {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER}),
+        ("deepTrue", "리버풀 100억으로 짜 줘", {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER}),
+        ("lunaTrue", "업그레이드 추천", {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER}),  # /model gpt
     ]  # fmt: skip
     assert bots["lunaTrue"].remembered == [("아스널 볼란치 추천", "deepTrue 답"), ("리버풀 100억으로 짜 줘", "deepTrue 답")]  # 앞 대화를 맥락으로
     ask(client, "그럼 더 싼 걸로", session_id=sid)
@@ -518,7 +518,7 @@ def test_jev_blocks_out_of_scope_and_picks_the_model(db, tmp_path, monkeypatch):
     ask(client, "이 스쿼드 업그레이드", session_id=done["session_id"])
     ask(client, "그럼 더 싸게", session_id=done["session_id"])
     ask(client, "고마워", session_id=done["session_id"])
-    assert [(n, o) for n, _, o in asked] == [("lunaTrue", {"deadline": web_app.LONG_DEADLINE})] * 4
+    assert [(n, o) for n, _, o in asked] == [("lunaTrue", {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER})] * 4
     assert jev.states[-2] == "이전 질문: 이 스쿼드 업그레이드\n현재 질문: 그럼 더 싸게"  # 이어지는 말은 앞 질문과 함께 판단
     assert sorted(r["outcome"] for r in log.pending) == ["blocked", "blocked", "ok", "ok", "ok", "ok"]
 
@@ -563,7 +563,7 @@ def test_without_jev_the_default_model_still_answers(db, tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Recorder(f"luna{reasoning}", asked))
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm"))
     answer, _ = ask(client, "리버풀 짜줘")  # Jev 실패 → 막지 않고 생각 켠 Luna가
-    assert answer == "lunaTrue 답" and asked[0][2] == {"deadline": web_app.LONG_DEADLINE}
+    assert answer == "lunaTrue 답" and asked[0][2] == {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER}
 
 
 def test_failed_default_question_gets_the_busy_note(db, tmp_path, monkeypatch):  # noqa: F811
@@ -583,7 +583,7 @@ def test_failed_default_question_gets_the_busy_note(db, tmp_path, monkeypatch): 
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm", admin_key="secret"))
     res = client.post("/api/chat", json={"message": "리버풀 100억으로 짜 줘", "trace": True})
     events = [json.loads(line) for line in res.text.splitlines()]
-    assert [(n, o) for n, _, o in asked] == [("lunaTrue", {"deadline": web_app.LONG_DEADLINE})]  # 기본은 Luna 하나, 다른 모델로 넘기지 않는다
+    assert [(n, o) for n, _, o in asked] == [("lunaTrue", {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER})]  # 기본은 Luna 하나, 다른 모델로 넘기지 않는다
     kinds = [e.get("kind") or e["type"] for e in events]
     assert "".join(e["text"] for e in events[kinds.index("reset"):] if e["type"] == "delta") == web_app.BUSY_MESSAGE  # 쓰다 만 글은 지우고 혼잡 안내
 
@@ -692,7 +692,7 @@ def test_model_command_picks_the_model(db, tmp_path, monkeypatch):  # noqa: F811
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm", chat_log=log))
     client.post("/api/chat", json={"message": "리버풀 짜줘", "mode": "deep", "trace": True})  # /model deepseek
     name, _, options = asked[0]
-    assert name == "deepFalse" and options == {"deadline": web_app.LONG_DEADLINE}
+    assert name == "deepFalse" and options == {"deadline": web_app.LONG_DEADLINE, "wrap_after": web_app.WRAP_UP_AFTER}
     assert log.pending[-1]["mode"] == "deep" and "/model deepseek → DeepSeek V4.1 Flash Eco 생각 끔" == log.details_pending[-1]["trace"][0]["text"]
     client.post("/api/chat", json={"message": "레알 짜줘"})  # 명령어 없으면 기본 DeepSeek (생각 켬)
     assert asked[-1][0] == "deepTrue"

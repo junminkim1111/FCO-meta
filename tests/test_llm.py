@@ -261,3 +261,57 @@ def test_tool_calls_stop_at_the_cap_and_the_model_answers_with_what_it_has(toolb
     assert second["tool_choice"] == "none"  # 상한에 닿은 다음 번은 도구 없이
     refused = [m for m in second["messages"] if m["role"] == "tool" and "한도" in m["content"]]
     assert len(refused) == 5
+
+
+def _drain(gen):
+    while True:
+        try:
+            next(gen)
+        except StopIteration as done:
+            return done.value
+
+
+def test_after_wrap_up_time_the_model_answers_without_tools_or_thinking(toolbox):  # noqa: F811
+    # 마무리 시각(wrap_after)이 지나면 다음 요청은 도구 없이(tool_choice none), 생각도 끈 채(reasoning enabled false) 답만
+    from fco_meta.chatbot.llm import OpenAIChat
+
+    clock = [0.0]
+    call = {"id": "c1", "type": "function", "function": {"name": "recommend_players", "arguments": '{"team_color": "아스널", "role": "DM"}'}}
+    http = FakeHttp([completion(tool_calls=[call], finish="tool_calls"), completion("지금까지 결과로 답합니다.")])
+    chat = OpenAIChat(http, toolbox, model="m", base_url="https://example.test/v1", api_key="k", now=lambda: clock[0])
+    gen = chat.ask_stream("질문", deadline=360, wrap_after=300)
+    next(gen)  # 첫 요청이 끝나고 도구를 부르는 동안 시간이 흐른다
+    clock[0] = 301
+    turn = _drain(gen)
+    assert turn.text == "지금까지 결과로 답합니다."
+    first, second = http.requests
+    assert first["tool_choice"] == "auto" and "reasoning" not in first
+    assert second["tool_choice"] == "none" and second["reasoning"] == {"enabled": False}
+
+
+def test_thinking_past_wrap_up_time_is_dropped_for_a_plain_answer(toolbox):  # noqa: F811
+    # 아직 생각만 하는 중에 마무리 시각을 넘기면 그 요청은 버리고 바로 답만 (답을 쓰기 시작했으면 끝까지 둔다)
+    import json
+
+    from fco_meta.chatbot.llm import OpenAIChat
+
+    clock = [0.0]
+    thinking = [": OPENROUTER PROCESSING"] + ["data: " + json.dumps({"choices": [{"delta": {"reasoning_content": "생각"}}]})] * 3
+
+    class SlowClock(FakeHttp):  # 첫 요청의 생각 줄을 받는 사이 305초가 된다
+        def stream(self, method, url, headers, timeout, json):
+            res = super().stream(method, url, headers=headers, timeout=timeout, json=json)
+            clock[0] = 305
+            return res
+
+    http = SlowClock([thinking, completion("바로 답합니다.")])
+    chat = OpenAIChat(http, toolbox, model="m", base_url="https://example.test/v1", api_key="k", now=lambda: clock[0])
+    turn = _drain(chat.ask_stream("질문", deadline=360, wrap_after=300))
+    assert turn.text == "바로 답합니다." and len(http.requests) == 2
+    assert http.requests[1]["tool_choice"] == "none" and http.requests[1]["reasoning"] == {"enabled": False}
+
+
+def test_timeout_message_names_the_deadline_that_applied(toolbox):  # noqa: F811
+    from fco_meta.chatbot.llm import AnswerTimeout, describe_error
+
+    assert "360초" in describe_error(AnswerTimeout("m 응답 없음 (상한 360초)")) and "120초" not in describe_error(AnswerTimeout("m 응답 없음 (상한 360초)"))

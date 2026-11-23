@@ -38,6 +38,10 @@ ANSWER_DEADLINE = 120.0
 MIN_REQUEST_TIMEOUT = 10.0  # 남은 시간이 이보다 적으면 새 요청을 보내지 않는다 (초)
 
 
+class _WrapUp(Exception):
+    """마무리할 시각이 지났는데 아직 생각만 하는 중: 그 요청을 버리고 도구·생각 없이 답만 쓰게 한다."""
+
+
 class AnswerTimeout(Exception):
     """The question used up ANSWER_DEADLINE (tool rounds together)."""
 
@@ -134,7 +138,7 @@ class Turn:
 def describe_error(exc: Exception) -> str:
     """Short Korean description of a model failure for the logs (no key values)."""
     if isinstance(exc, AnswerTimeout):
-        return f"답변 대기 시간 상한({ANSWER_DEADLINE:.0f}초) 초과 — {exc}"
+        return f"답변 대기 시간 상한 초과 — {exc}"  # 상한(초)은 예외 문구에 (질문마다 다르다)
     if isinstance(exc, httpx.HTTPStatusError):
         return f"모델 API 오류 {exc.response.status_code}"
     return f"모델 처리 중 오류 ({type(exc).__name__}): {exc}"
@@ -167,6 +171,9 @@ class ToolChat:
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치
         self._ends_at = float("inf")
+        self._deadline = ANSWER_DEADLINE
+        self._wrap_at: float | None = None  # 이 시각이 지나면 더 부르지 않고 생각도 끈 채 지금까지 결과로 답한다
+        self._no_think = False
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
 
     # --- provider hooks ---
@@ -193,9 +200,13 @@ class ToolChat:
         return _drain(self.ask_stream(question))
 
     def ask_stream(
-        self, question: str, *, thoughts: bool = False, deadline: float | None = None
+        self, question: str, *, thoughts: bool = False, deadline: float | None = None, wrap_after: float | None = None
     ) -> Generator[str | Reset | ToolCall | Recheck, None, Turn]:
-        self._ends_at = self.now() + (deadline or self.deadline)
+        started = self.now()
+        self._deadline = deadline or self.deadline
+        self._ends_at = started + self._deadline
+        self._wrap_at = started + wrap_after if wrap_after else None
+        self._no_think = False
         self.thoughts, self.unverified = thoughts, []
         try:
             turn = yield from self._ask(question)  # 실패·정지면 기록에 남기지 않는다
@@ -207,7 +218,7 @@ class ToolChat:
     def _left(self) -> float:
         left = self._ends_at - self.now()
         if left < MIN_REQUEST_TIMEOUT:
-            raise AnswerTimeout(f"{self.model} 요청 전")
+            raise AnswerTimeout(f"{self.model} 요청 전 (상한 {self._deadline:.0f}초)")
         return left
 
     def _ask(self, question: str) -> Generator[str | Reset | ToolCall | Recheck, None, Turn]:
@@ -220,8 +231,15 @@ class ToolChat:
         nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         capped = False  # 도구 호출 상한에 닿으면 다음 번은 도구 없이 답만
         for round_no in range(MAX_TOOL_ROUNDS + 1):
-            final = round_no == MAX_TOOL_ROUNDS or capped
-            reply = yield from self._round(messages, final)
+            if self._wrap_at is not None and self.now() >= self._wrap_at:
+                self._no_think = True  # 마무리 시각이 지났다: 도구도 생각도 없이 지금까지 결과로 답만
+            final = round_no == MAX_TOOL_ROUNDS or capped or self._no_think
+            try:
+                reply = yield from self._round(messages, final)
+            except _WrapUp:  # 생각만 하다 마무리 시각을 넘겼다 → 그 요청은 버리고 바로 답만
+                log.warning("wrap-up time passed while %s was still thinking — answering from what it has", self.model)
+                self._no_think = final = True
+                reply = yield from self._round(messages, final)
             if reply.stop == "refusal":
                 yield RESET
                 yield REFUSED
@@ -368,6 +386,8 @@ class OpenAIChat(ToolChat):
         left = self._left()
         body = {"model": self.model, "messages": messages, "tools": self.tools, "tool_choice": "none" if final else "auto",
                 "stream": True, "stream_options": {"include_usage": True}, **self.extra}  # fmt: skip
+        if self._no_think:  # 마무리: 생각 없이 바로 답 (OpenRouter·OpenGateway 같은 형식)
+            body["reasoning"] = {"enabled": False}
         text, reasoning, finish = "", "", None
         calls: dict[int, dict[str, Any]] = {}  # 도구 호출은 조각으로 온다: index → 모은 호출
         usage: dict[str, Any] = {}
@@ -379,8 +399,10 @@ class OpenAIChat(ToolChat):
                 res.raise_for_status()
                 for line in res.iter_lines():
                     # OpenRouter는 처리하는 동안 연결 유지 줄(": OPENROUTER PROCESSING")을 보내 읽기 타임아웃이 끝나지 않는다 → 줄마다 전체 시간을 본다
+                    if not final and not text and self._wrap_at is not None and self.now() >= self._wrap_at:
+                        raise _WrapUp()  # 아직 답을 쓰기 시작하지 않았다 (생각·도구 호출 중)
                     if self.now() >= self._ends_at:
-                        raise AnswerTimeout(f"{self.model} 응답 없음")
+                        raise AnswerTimeout(f"{self.model} 응답 없음 (상한 {self._deadline:.0f}초)")
                     if not line.startswith("data:") or (payload := line[5:].strip()) == "[DONE]":
                         continue
                     data = json.loads(payload)
@@ -405,7 +427,7 @@ class OpenAIChat(ToolChat):
                             text += piece
                             yield piece  # 도구를 부르기 전에 쓴 글이면 _ask가 RESET으로 지운다
         except httpx.TimeoutException:
-            raise AnswerTimeout(f"{self.model} 응답 없음") from None
+            raise AnswerTimeout(f"{self.model} 응답 없음 (상한 {self._deadline:.0f}초)") from None
         if reasoning and self.thoughts and not text:
             yield Thought(reasoning)
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함

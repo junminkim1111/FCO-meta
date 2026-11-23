@@ -49,7 +49,8 @@ BUSY_MESSAGE = "지금 서버가 혼잡해 답을 드리지 못했어요. 잠시
 DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-eco"  # /model deepseek (OpenGateway, 서버 환경 변수 OPENGATEWAY_API_KEY)
 DEEPSEEK_BASE_URL = "https://apis.opengateway.ai/v1"
 # 기본(/model 없을 때)·/model gpt는 llm.LUNA_MODEL (OpenRouter, OpenAI 제공사로 고정 — 2026-11-12 평가와 같은 설정)
-LONG_DEADLINE = 300.0  # /model deepseek·gpt의 질문당 대기 상한(초). 일반 질문은 120초
+LONG_DEADLINE = 360.0  # 모델로 답하는 질문의 대기 상한(초)
+WRAP_UP_AFTER = 300.0  # 이만큼 지나면 더 부르지 않고 생각도 끈 채 지금까지의 결과로 답을 쓴다
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
 # 100만 토큰당 달러 (입력, 출력 — 생각 포함). 모델 이름에 들어 있는 것으로 찾는다.
 # deepseek: OpenGateway 상시 할인가 (2026-11-20, 정가 0.30/1.20, 별도 공지로 끝날 수 있음)
@@ -797,7 +798,7 @@ def create_app(
                     # 생각 끔은 세션 첫 질문 · 팀(@·#) 없음 · Jev가 단순 조회(light)라고 확신할 때만. 나머지는 모두 생각 켬
                     light = bool(route and route.light and first and not team)
                     key = ("deep" if light else "deep_r") if deep else ("luna" if light else "luna_r")
-                    options = {"deadline": LONG_DEADLINE}
+                    options = {"deadline": LONG_DEADLINE, "wrap_after": WRAP_UP_AFTER}
                     why = f"{route.describe() if route else 'Jev 없음'} → {(DEEP_LABEL if deep else LUNA_LABEL)[key]}"
                     entry["route"] = why
                 else:  # deep(OpenGateway)·luna(OpenRouter)
@@ -809,7 +810,7 @@ def create_app(
                         return
                     label = {**DEEP_LABEL, **LUNA_LABEL}[req.mode]
                     name = "deepseek" if deep else "gpt"
-                    key, options, why = req.mode, {"deadline": LONG_DEADLINE}, f"/model {name} → {label}"
+                    key, options, why = req.mode, {"deadline": LONG_DEADLINE, "wrap_after": WRAP_UP_AFTER}, f"/model {name} → {label}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
                 keep.add("route", text=why)
