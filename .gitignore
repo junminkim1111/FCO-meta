@@ -71,3 +71,6 @@ prompts.py
 .worktreeinclude
 docs/ORCA_START.md
 docs/WORKFLOW.md
+
+# README는 git에 올리지 않는다 (로컬에만)
+README.md
