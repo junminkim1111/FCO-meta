@@ -179,6 +179,22 @@ def test_openai_compatible_thoughts_from_reasoning_content(toolbox):  # noqa: F8
     assert [p.text for p in pieces if isinstance(p, Thought)] == ["먼저 생각"]
 
 
+def test_thoughts_stream_piece_by_piece_before_the_answer(toolbox):  # noqa: F811
+    # 생각을 다 모았다 보내면 화면의 '생각함' 시간이 0.0초가 된다 → 조각마다 바로 보낸다
+    import json
+
+    from fco_meta.chatbot.llm import OpenAIChat, Thought
+
+    lines = completion("답입니다.")
+    for i, part in enumerate(["먼저 ", "생각"]):
+        lines.insert(2 + i, "data: " + json.dumps({"choices": [{"delta": {"reasoning_content": part}}]}))
+    chat = OpenAIChat(FakeHttp([lines]), toolbox, model="m", base_url="https://example.test/v1", api_key="k")
+    pieces = list(chat.ask_stream("질문", thoughts=True))
+    thoughts = [i for i, p in enumerate(pieces) if isinstance(p, Thought)]
+    assert [pieces[i].text for i in thoughts] == ["먼저 ", "생각"]
+    assert thoughts[-1] < next(i for i, p in enumerate(pieces) if isinstance(p, str))
+
+
 def test_openai_compatible_request_is_cut_at_the_deadline(toolbox, monkeypatch):  # noqa: F811
     import time
 

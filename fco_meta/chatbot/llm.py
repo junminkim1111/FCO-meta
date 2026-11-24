@@ -401,7 +401,7 @@ class OpenAIChat(ToolChat):
                 "stream": True, "stream_options": {"include_usage": True}, **self.extra}  # fmt: skip
         if self._no_think:  # 마무리: 생각 없이 바로 답 (OpenRouter·OpenGateway 같은 형식)
             body["reasoning"] = {"enabled": False}
-        text, reasoning, finish = "", "", None
+        text, finish = "", None
         calls: dict[int, dict[str, Any]] = {}  # 도구 호출은 조각으로 온다: index → 모은 호출
         usage: dict[str, Any] = {}
         try:
@@ -428,7 +428,10 @@ class OpenAIChat(ToolChat):
                     for choice in data.get("choices") or []:
                         delta = choice.get("delta") or {}
                         finish = choice.get("finish_reason") or finish
-                        reasoning += delta.get("reasoning") or delta.get("reasoning_content") or ""  # 생각: OpenRouter는 reasoning, OpenGateway(DeepSeek)는 reasoning_content
+                        # 생각: OpenRouter는 reasoning, OpenGateway(DeepSeek)는 reasoning_content. 오는 대로 보낸다 (모았다 보내면 화면의 생각 시간이 0초)
+                        if think := delta.get("reasoning") or delta.get("reasoning_content"):
+                            if self.thoughts:
+                                yield Thought(think)
                         for part in delta.get("tool_calls") or []:
                             call = calls.setdefault(part.get("index", 0), {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                             call["id"] = part.get("id") or call["id"]
@@ -436,14 +439,10 @@ class OpenAIChat(ToolChat):
                             call["function"]["name"] += fn.get("name") or ""
                             call["function"]["arguments"] += fn.get("arguments") or ""
                         if piece := delta.get("content"):
-                            if reasoning and self.thoughts and not text:
-                                yield Thought(reasoning)
                             text += piece
                             yield piece  # 도구를 부르기 전에 쓴 글이면 _ask가 RESET으로 지운다
         except httpx.TimeoutException:
             raise AnswerTimeout(f"{self.model} 응답 없음 (상한 {self._deadline:.0f}초)") from None
-        if reasoning and self.thoughts and not text:
-            yield Thought(reasoning)
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
         self.billed.setdefault(self.model, Counter()).update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))
         if thought := (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"):

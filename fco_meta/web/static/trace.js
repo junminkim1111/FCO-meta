@@ -99,6 +99,7 @@ export function traceBox() {
     const step = { row, icon, label: text, kind, done, detail, open, line, name, started: performance.now() };
     steps.push(step);
     status(step, "running");
+    open(false); // 내용(생각 글·도구 호출)은 줄을 눌러야 보인다
     return step;
   }
   function log(step, text, append = false) {
@@ -106,7 +107,12 @@ export function traceBox() {
     step.line.disabled = !step.detail.textContent;
   }
   function closeTransient() {
-    for (const step of steps) if (step.status === "running" && !step.name) status(step, "done");
+    for (const step of [...steps]) if (step.status === "running" && !step.name) {
+      if (step.waiting && !step.detail.textContent) { // 도구 뒤 미리 연 '생각중...'에 생각이 안 왔으면 (생각 끔) 뺀다
+        step.row.remove();
+        steps.splice(steps.indexOf(step), 1);
+      } else status(step, "done");
+    }
   }
   add("생각중...", "think");
   return {
@@ -125,13 +131,14 @@ export function traceBox() {
         closeTransient();
         const step = add(`${TOOL_LABELS[ev.name] || "도구 호출"} 중...`, "tool", ev.name);
         log(step, `1 도구 호출 ${ev.name}()`);
-        step.open(false); // 도구는 이름 줄만 (눌러야 호출·결과가 보인다)
       } else if (ev.kind === "result") {
         const step = steps.find((s) => s.name === ev.name && s.status === "running");
         if (step) {
           status(step, ev.ok ? "done" : "error");
           log(step, `\n2 도구 결과 ${ev.name}()${ev.ok ? "" : " (실패)"}`, true);
         }
+        // 도구 결과가 다 오면 바로 '생각중...' (모델이 결과를 읽고 첫 생각을 보내기까지의 시간도 생각 시간에 넣는다)
+        if (!steps.some((s) => s.name && s.status === "running")) add("생각중...", "think").waiting = true;
       } else if (ev.kind === "recheck") { // 답의 수치를 고쳐 쓰는 중 (다음 답 글이 오면 끝)
         closeTransient();
         add("수치 재검토 중...", "recheck");
