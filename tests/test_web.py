@@ -425,7 +425,7 @@ class Recorder:
     def ask_stream(self, message, **options):
         from fco_meta.chatbot.llm import Turn, Thought
 
-        self.asked.append((self.name, message, {k: v for k, v in options.items() if k != "thoughts"}))  # 생각은 항상 받는다
+        self.asked.append((self.name, message, {k: v for k, v in options.items() if k not in ("thoughts", "cancel")}))  # 생각은 항상 받는다
         if options.get("thoughts"):
             yield Thought("생각")
         yield f"{self.name} 답"
@@ -573,7 +573,7 @@ def test_failed_default_question_gets_the_busy_note(db, tmp_path, monkeypatch): 
 
     class Down(Recorder):
         def ask_stream(self, message, **options):
-            self.asked.append((self.name, message, {k: v for k, v in options.items() if k != "thoughts"}))
+            self.asked.append((self.name, message, {k: v for k, v in options.items() if k not in ("thoughts", "cancel")}))
             yield "쓰다 만 글"
             raise RuntimeError("deepseek: 503")
 
@@ -1412,3 +1412,68 @@ def test_adsense_on_public_pages_only(client):
     assert tag not in client.get("/admin").text and tag not in client.get("/없는-페이지").text
     ads = client.get("/ads.txt")
     assert ads.status_code == 200 and ads.text.strip() == "google.com, pub-1315876984941536, DIRECT, f08c47fec0942fa0"
+
+
+def test_disconnect_closes_the_answer_generator_and_signals_cancel():
+    # 연결이 끊기면(Starlette가 읽기를 멈추고 닫음) cancel을 켜고, 도는 중인 한 걸음이 끝나는 대로 생성기를 닫는다
+    # → finally(대화 잠금 해제·기록)가 바로 돈다 (2026-11-24: 잠금을 쥔 채 7시간 남았다)
+    import threading
+    import time
+
+    import anyio
+
+    from fco_meta.web.app import _close_on_disconnect
+
+    cancel, closed = threading.Event(), []
+
+    def answer():
+        try:
+            yield "첫 조각"
+            while not cancel.is_set():  # 모델을 기다리는 중 (cancel이 켜지면 멈춘다)
+                time.sleep(0.01)
+            yield "보낼 곳 없음"
+        finally:
+            closed.append(time.monotonic())
+
+    async def main():
+        got = []
+        with anyio.move_on_after(0.3):  # 0.3초 뒤 연결이 끊긴 것처럼 읽기를 멈춘다
+            async for chunk in _close_on_disconnect(answer(), cancel):
+                got.append(chunk)
+        return got
+
+    started = time.monotonic()
+    assert anyio.run(main) == ["첫 조각"]
+    assert cancel.is_set() and closed and closed[0] - started < 2
+
+
+def test_a_question_waits_only_so_long_for_the_one_before_in_the_same_chat(db, tmp_path, monkeypatch):  # noqa: F811
+    # 같은 대화의 앞 질문이 잠금을 쥐고 있으면 끝없이 기다리지 않고 SESSION_WAIT 뒤 안내로 끝난다
+    import json
+    import threading
+
+    import fco_meta.web.app as web_app
+
+    release, entered = threading.Event(), threading.Event()
+
+    class Slow(Recorder):
+        def ask_stream(self, message, **options):
+            entered.set()
+            release.wait(5)
+            yield "늦은 답"
+            from fco_meta.chatbot.llm import Turn
+
+            return Turn("늦은 답")
+
+    monkeypatch.setattr(web_app, "SESSION_WAIT", 0.2)
+    monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Slow("luna", []))
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm"))
+    sid = "same-chat"
+    first = threading.Thread(target=lambda: ask(client, "느린 질문", session_id=sid))
+    first.start()
+    assert entered.wait(5)
+    res = client.post("/api/chat", json={"message": "다음 질문", "session_id": sid})
+    events = [json.loads(line) for line in res.text.splitlines()]
+    assert any(e.get("text") == web_app.SESSION_BUSY for e in events) and events[-1].get("error") == "session_busy"
+    release.set()
+    first.join(5)

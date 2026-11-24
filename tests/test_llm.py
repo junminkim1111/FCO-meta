@@ -315,3 +315,20 @@ def test_timeout_message_names_the_deadline_that_applied(toolbox):  # noqa: F811
     from fco_meta.chatbot.llm import AnswerTimeout, describe_error
 
     assert "360초" in describe_error(AnswerTimeout("m 응답 없음 (상한 360초)")) and "120초" not in describe_error(AnswerTimeout("m 응답 없음 (상한 360초)"))
+
+
+def test_cancel_stops_the_model_loop(toolbox):  # noqa: F811
+    # 웹이 연결 끊김에 cancel을 켜면 모델 요청·도구를 더 진행하지 않는다
+    import threading
+
+    import pytest
+
+    from fco_meta.chatbot.llm import Cancelled, OpenAIChat
+
+    cancel = threading.Event()
+    cancel.set()
+    http = FakeHttp([completion("답")])
+    chat = OpenAIChat(http, toolbox, model="m", base_url="https://example.test/v1", api_key="k")
+    with pytest.raises(Cancelled):
+        _drain(chat.ask_stream("질문", cancel=cancel))
+    assert http.requests == []  # 요청을 보내기 전에 멈춘다

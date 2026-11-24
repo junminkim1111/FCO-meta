@@ -38,6 +38,10 @@ ANSWER_DEADLINE = 120.0
 MIN_REQUEST_TIMEOUT = 10.0  # 남은 시간이 이보다 적으면 새 요청을 보내지 않는다 (초)
 
 
+class Cancelled(Exception):
+    """사용자가 멈추거나 연결이 끊겼다 (cancel 이벤트): 모델 요청·도구를 더 진행하지 않는다."""
+
+
 class _WrapUp(Exception):
     """마무리할 시각이 지났는데 아직 생각만 하는 중: 그 요청을 버리고 도구·생각 없이 답만 쓰게 한다."""
 
@@ -174,6 +178,7 @@ class ToolChat:
         self._deadline = ANSWER_DEADLINE
         self._wrap_at: float | None = None  # 이 시각이 지나면 더 부르지 않고 생각도 끈 채 지금까지 결과로 답한다
         self._no_think = False
+        self._cancel: Any = None  # threading.Event: 켜지면 다음 줄·다음 차례에서 멈춘다 (웹이 연결 끊김에 켠다)
         self.thoughts = False  # 이번 질문의 생각을 Thought 이벤트로 (ask_stream이 정한다)
 
     # --- provider hooks ---
@@ -200,8 +205,10 @@ class ToolChat:
         return _drain(self.ask_stream(question))
 
     def ask_stream(
-        self, question: str, *, thoughts: bool = False, deadline: float | None = None, wrap_after: float | None = None
+        self, question: str, *, thoughts: bool = False, deadline: float | None = None, wrap_after: float | None = None,
+        cancel: Any = None,
     ) -> Generator[str | Reset | ToolCall | Recheck, None, Turn]:
+        self._cancel = cancel
         started = self.now()
         self._deadline = deadline or self.deadline
         self._ends_at = started + self._deadline
@@ -214,6 +221,10 @@ class ToolChat:
             self.thoughts = False
         self.history.append((question, turn.text))
         return turn
+
+    def _check_cancel(self) -> None:
+        if self._cancel is not None and self._cancel.is_set():
+            raise Cancelled(f"{self.model} 사용자가 멈춤·연결 끊김")
 
     def _left(self) -> float:
         left = self._ends_at - self.now()
@@ -231,6 +242,7 @@ class ToolChat:
         nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         capped = False  # 도구 호출 상한에 닿으면 다음 번은 도구 없이 답만
         for round_no in range(MAX_TOOL_ROUNDS + 1):
+            self._check_cancel()
             if self._wrap_at is not None and self.now() >= self._wrap_at:
                 self._no_think = True  # 마무리 시각이 지났다: 도구도 생각도 없이 지금까지 결과로 답만
             final = round_no == MAX_TOOL_ROUNDS or capped or self._no_think
@@ -280,6 +292,7 @@ class ToolChat:
                     out.append((call_id, f"도구 호출 한도({MAX_TOOL_CALLS}번)에 닿았습니다. 더 부르지 말고 지금까지 받은 결과로 답하세요"
                                          " (확인하지 못한 범위는 답에 밝힐 것).", True))
                     continue
+                self._check_cancel()
                 seen.add(key)
                 calls.append((name, args))
                 yield ToolCall(name, args)
@@ -399,6 +412,7 @@ class OpenAIChat(ToolChat):
                 res.raise_for_status()
                 for line in res.iter_lines():
                     # OpenRouter는 처리하는 동안 연결 유지 줄(": OPENROUTER PROCESSING")을 보내 읽기 타임아웃이 끝나지 않는다 → 줄마다 전체 시간을 본다
+                    self._check_cancel()  # 멈추면 생각·답을 받는 중이어도 다음 줄에서 끊는다
                     if not final and not text and self._wrap_at is not None and self.now() >= self._wrap_at:
                         raise _WrapUp()  # 아직 답을 쓰기 시작하지 않았다 (생각·도구 호출 중)
                     if self.now() >= self._ends_at:

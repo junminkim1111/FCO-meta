@@ -15,12 +15,13 @@ import time
 import uuid
 from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Iterable
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager, closing, contextmanager
 from datetime import datetime
 from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -29,7 +30,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from ..beta_keys import key_hash
-from ..chatbot.llm import LUNA_MODEL, RESET, Recheck, Thought, ToolCall, ToolResult, describe_error
+from ..chatbot.llm import LUNA_MODEL, RESET, Cancelled, Recheck, Thought, ToolCall, ToolResult, describe_error
 from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
@@ -328,6 +329,7 @@ class _TraceLog:
 
     def __init__(self) -> None:
         self.started, self.lines, self.answer = time.monotonic(), [], None
+        self.sent = ""  # 사용자에게 보낸 답 글 (끊긴 질문도 어디까지 썼는지 남긴다)
 
     def add(self, kind: str, **fields: Any) -> None:
         if kind == "thought" and self.lines and self.lines[-1]["kind"] == "thought":  # 생각은 조각으로 와서 한 줄로 잇는다
@@ -337,6 +339,54 @@ class _TraceLog:
 
     def detail(self) -> dict[str, Any]:
         return {"trace": self.lines, "answer": self.answer}
+
+
+SESSION_WAIT = 10.0  # 같은 대화의 앞 질문이 끝나기를 이만큼만 기다린다 (초)
+SESSION_BUSY = "앞 질문을 아직 처리하고 있어요. 잠시 후 다시 보내 주세요."
+_STREAM_END = object()
+
+
+class _SessionBusy(Exception):
+    """같은 대화의 앞 질문이 SESSION_WAIT 안에 끝나지 않았다."""
+
+
+@contextmanager
+def _held(lock: threading.Lock, timeout: float):
+    if not lock.acquire(timeout=timeout):
+        raise _SessionBusy
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+async def _close_on_disconnect(gen: Any, cancel: threading.Event):
+    """The answer generator for StreamingResponse, run a step at a time in a worker thread. When the client goes away
+    (멈춤·탭 닫기) Starlette stops reading and closes this: `cancel` tells the model loop to stop at its next line, then the
+    generator is closed once its running step returns — so its finally blocks run now (대화 잠금 해제, 기록), not at
+    some later garbage collection (2026-11-24: 잠금을 쥔 채 7시간 남아 같은 대화의 다음 질문이 멈췄다)."""
+    idle = threading.Event()
+    idle.set()
+
+    def step() -> Any:
+        idle.clear()
+        try:
+            return next(gen, _STREAM_END)
+        finally:
+            idle.set()
+
+    try:
+        while (chunk := await anyio.to_thread.run_sync(step, abandon_on_cancel=True)) is not _STREAM_END:
+            yield chunk
+    finally:
+        cancel.set()
+
+        def close() -> None:
+            idle.wait(timeout=LONG_DEADLINE + 60)  # 도는 중인 한 걸음이 끝나야 닫을 수 있다 (cancel로 곧 끝난다)
+            gen.close()
+
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(close)
 
 
 def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any):
@@ -351,6 +401,7 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             return stop.value
         line: dict[str, Any] | None = None  # trace 한 줄
         if piece is RESET:
+            keep.sent = ""
             yield _event(type="reset", **extra)
         elif isinstance(piece, ToolCall):
             keep.add("tool", name=piece.name, args=piece.args)
@@ -375,6 +426,7 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             if not started:
                 started = True
                 keep.add("first", text="답이 나오기 시작")
+            keep.sent += piece
             yield _event(type="delta", text=piece, **extra)
         if line:
             keep.add(**line)
@@ -744,6 +796,8 @@ def create_app(
         session_id = req.session_id or uuid.uuid4().hex
         session = session_for(session_id)
 
+        cancel = threading.Event()  # 연결이 끊기면 _close_on_disconnect가 켠다 → 모델 요청·도구가 다음 줄에서 멈춘다
+
         def events():
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
@@ -754,7 +808,15 @@ def create_app(
             keep = _TraceLog()  # 관리자 페이지의 답변 기록에서 줄을 누르면 보이는 trace·답변
             try:
                 yield from answer_events(entry, keep, ask, team)
+            except _SessionBusy:  # 같은 대화의 앞 질문이 아직 잠금을 쥐고 있다 (끝없이 기다리지 않는다)
+                entry.update(outcome="busy", error="같은 대화의 앞 질문을 처리 중")
+                keep.answer = SESSION_BUSY
+                yield _event(type="delta", text=SESSION_BUSY)
+                yield _event(type="done", tool_calls=[], error="session_busy")
             finally:
+                if entry["outcome"] == "cancelled":  # 끊긴 질문: 어디까지 썼는지 (생각만 하다 끊겼는지, 답을 쓰다 멈췄는지)
+                    entry["sent_chars"] = len(keep.sent)
+                    keep.answer = keep.answer or (keep.sent + " …(여기서 끊김)" if keep.sent else None)
                 if "billed" in entry:  # 모델을 부른 질문: 그 사이 이 세션의 모델들이 쓴 토큰 (실패·정지도 청구된다)
                     entry.update(_cost(_billed(e[0] for e in session.bots.values()) - entry.pop("billed")))
                 chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
@@ -763,7 +825,7 @@ def create_app(
             yield _event(type="start", session_id=session_id)
             # 모델을 기다리는 동안 DB 잠금을 잡지 않는다 (도구 실행 때만 locked_tools가 잡는다).
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
-            with session.lock:
+            with _held(session.lock, SESSION_WAIT):
                 first = not session.history  # 대화의 첫 질문만 캐시한다
                 route = _jev_route(req.message, session.last)
                 if route and route.blocked:  # 범위 밖·프롬프트 공격 → LLM 없이 거절 문구
@@ -813,12 +875,15 @@ def create_app(
                     key, options, why = req.mode, {"deadline": LONG_DEADLINE, "wrap_after": WRAP_UP_AFTER}, f"/model {name} → {label}"
                     entry["mode"] = req.mode
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
+                options["cancel"] = cancel
                 keep.add("route", text=why)
                 entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key, session))
                 stream = bot.ask_stream(ask, **options)
                 try:
                     turn = yield from _relay(stream, req.trace, keep)
+                except Cancelled:  # 사용자가 멈춤·연결 끊김: 기록은 cancelled 그대로, 보낼 곳이 없으니 더 쓰지 않는다
+                    return
                 except Exception as exc:  # 모델 실패 → 원인은 서버 로그에만, 사용자에게는 혼잡 안내만
                     log.exception("chat failed (%s): %s", key, describe_error(exc))
                     entry.update(outcome="busy", error=describe_error(exc), model=getattr(bot, "last_model", None))
@@ -851,7 +916,7 @@ def create_app(
                         squads.popitem(last=False)
             yield _event(type="done", tool_calls=[n for n, _ in turn.tool_calls], model=bot.last_model, id=entry["id"], squad=bool(squad))
 
-        return StreamingResponse(events(), media_type="application/x-ndjson")
+        return StreamingResponse(_close_on_disconnect(events(), cancel), media_type="application/x-ndjson")
 
     @app.post("/api/team")
     def attach_team(req: TeamRequest, request: Request) -> dict[str, Any]:
