@@ -266,21 +266,6 @@ const SCENES = {
     await t.wait(1500);
   },
 
-  async commands(t) {
-    t.stage.innerHTML = chat();
-    const form = t.q(".m-form"), txt = t.q(".m-input .txt");
-    await t.wait(400);
-    await t.type(txt, "/");
-    const items = [["/help", "명령어 안내 (새 탭)"]]; // /model·/trace는 그대로 되지만 가이드에서는 뺐다 (모델은 DeepSeek 고정)
-    let menu = t.put(form, `<ul class="m-menu">${items.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
-    const select = (i) => menu.querySelectorAll("li").forEach((li, j) => li.classList.toggle("on", i === j));
-    await t.wait(500);
-    select(0);
-    await t.wait(1500);
-    menu.remove(); txt.textContent = "";
-    await t.wait(500);
-  },
-
   async send(t) {
     t.stage.innerHTML = chat();
     const log = t.q(".m-log");

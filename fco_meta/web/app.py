@@ -42,7 +42,7 @@ from ..config import KST
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
-GUIDE_TOPICS = ("screen", "ask", "team", "feed", "commands", "send", "data")  # /guide/<주제> → static/guide-<주제>.html
+GUIDE_TOPICS = ("screen", "ask", "team", "feed", "send", "data")  # /guide/<주제> → static/guide-<주제>.html
 SITE = "https://fclm.kr"  # 검색엔진에 알리는 대표 주소 (fclm.onrender.com도 같은 앱이라 canonical은 이쪽으로)
 MAX_SESSIONS = 200
 MAX_CACHED = 500  # 캐시에 두는 첫 질문 답 수

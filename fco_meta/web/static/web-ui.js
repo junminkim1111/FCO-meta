@@ -405,8 +405,8 @@ const TOOL_STATUS = {
 };
 // 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침 전까지), /trace = 사고과정 표시 (한 번 더 치면 끔)
 let model = null, traceOn = true; // { key: "gpt" }, null이면 기본 (DeepSeek V4.1 Flash Eco). /trace는 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬)
-// 선택창의 모델: key → [서버 mode, 보이는 이름]. 이름은 모델명 대신 Main(DeepSeek V4.1 Flash Eco) · Other(GPT-6 Luna). 둘 다 생각 켬
-const MODELS = { deepseek: ["deep_r", "Main Model"], gpt: ["luna_r", "Other Model (experimental)"] }; // 선택창 순서
+// 선택창의 모델: key → [서버 mode, 보이는 이름]. 이름은 모델명 대신 Standard(DeepSeek V4.1 Flash Eco) · Preview(GPT-6 Luna). 둘 다 생각 켬
+const MODELS = { deepseek: ["deep_r", "Standard"], gpt: ["luna_r", "Preview"] }; // 선택창 순서
 const DEFAULT_MODEL = "deepseek"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
@@ -772,58 +772,7 @@ function rateRow(id) {
   }
   return row;
 }
-// "/"로 시작하면 쓸 수 있는 명령어를 입력창 위에 펼친다 (Claude Code처럼). 친 만큼 좁혀지고, 고르면 입력창에 채운다
-const COMMANDS = [
-  ["/model", "답할 모델 고르기 (새로고침 전까지)"],
-  ["/trace", "모델의 사고과정 표시 (기본 켬, 한 번 더 치면 끔)"],
-  ["/help", "명령어 안내 (새 탭)"],
-];
-let cmdShown = [], cmdIndex = 0;
-function closeCmdMenu() {
-  $("cmd-menu").hidden = true;
-  $("msg").removeAttribute("aria-activedescendant");
-}
-
-function updateCmdMenu() {
-  const v = $("msg").value;
-  cmdShown = /^\/[^\n]*$/.test(v) ? COMMANDS.filter(([c]) => c.startsWith(v.trimEnd()) || v.startsWith(c + " ")) : [];
-  cmdIndex = Math.min(cmdIndex, Math.max(cmdShown.length - 1, 0));
-  $("cmd-menu").hidden = !cmdShown.length;
-  if (cmdShown.length) $("msg").setAttribute("aria-activedescendant", `cmd-${cmdIndex}`);
-  else closeCmdMenu();
-  $("cmd-menu").replaceChildren(...cmdShown.map(([c, desc], i) => {
-    const li = el("li", { id: `cmd-${i}`, role: "option", ariaSelected: String(i === cmdIndex) }, el("b", { text: c }), el("span", { text: desc }));
-    li.addEventListener("pointerdown", (ev) => { ev.preventDefault(); pickCmd(c); }); // 입력창 포커스를 잃지 않게
-    return li;
-  }));
-}
-// 고르면 입력창에 채우기만 한다 (실행은 Enter로). /model은 바로 모델 선택창
-function pickCmd(c) {
-  $("msg").value = c + " "; cmdShown = []; closeCmdMenu();
-  $("msg").focus(); $("msg").setSelectionRange($("msg").value.length, $("msg").value.length);
-  if (c === "/model") { $("msg").value = ""; pickModel(); } // 모델 선택창
-}
-function cmdKeys(ev) {
-  if ($("cmd-menu").hidden || ev.isComposing) return false;
-  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-    const started = $("cmd-menu").classList.contains("kb"); // 처음 누른 ↓는 첫 줄부터
-    cmdIndex = started ? (cmdIndex + (ev.key === "ArrowDown" ? 1 : cmdShown.length - 1)) % cmdShown.length
-                       : ev.key === "ArrowDown" ? 0 : cmdShown.length - 1;
-    $("cmd-menu").classList.add("kb"); updateCmdMenu();
-  } else if (ev.key === "Enter" && !ev.shiftKey) {
-    const c = cmdShown[cmdIndex][0], v = $("msg").value.trim();
-    if (v === c || v.startsWith(c + " ")) { closeCmdMenu(); return false; } // 다 친 명령어는 그대로 실행
-    pickCmd(c);
-  } else if (ev.key === "Tab") pickCmd(cmdShown[cmdIndex][0]);
-  else if (ev.key === "Escape") closeCmdMenu();
-  else return false;
-  ev.preventDefault();
-  return true;
-}
-$("msg").addEventListener("input", () => { cmdIndex = 0; $("cmd-menu").classList.remove("kb"); updateCmdMenu(); });
-$("msg").addEventListener("blur", () => { closeCmdMenu(); });
 $("msg").addEventListener("keydown", (ev) => { // Enter는 보내기, Shift+Enter는 줄바꿈 (한글 조합 중인 Enter는 무시)
-  if (cmdKeys(ev)) return; // 명령어 목록이 열려 있으면 ↑↓·Enter·Tab·Esc는 목록이
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
     ev.preventDefault();
     $("chat-form").requestSubmit();
@@ -970,10 +919,10 @@ function command(text) {
     return note(traceOn ? "/trace 적용: 모델의 사고과정을 표시합니다." : "/trace 해제: 모델의 사고과정을 더 이상 표시하지 않습니다.");
   }
   if (cmd === "/model" && !flags.length) return pickModel(); // 모델 선택창
-  if (cmd === "/help" && !flags.length) { // 가이드의 명령어 페이지를 새 탭에 (Enter로 보낸 직후라 팝업 차단에 걸리지 않는다)
-    const tab = window.open("/guide/commands", "_blank");
-    if (tab) { tab.opener = null; return note("/help: 명령어 안내를 새 탭에서 열었습니다."); }
-    note("/help: 새 탭이 막혀 열지 못했습니다. ").append(el("a", { href: "/guide/commands", target: "_blank", rel: "noopener", text: "명령어 안내 열기" }));
+  if (cmd === "/help" && !flags.length) { // 가이드를 새 탭에 (Enter로 보낸 직후라 팝업 차단에 걸리지 않는다)
+    const tab = window.open("/guide", "_blank");
+    if (tab) { tab.opener = null; return note("/help: 가이드를 새 탭에서 열었습니다."); }
+    note("/help: 새 탭이 막혀 열지 못했습니다. ").append(el("a", { href: "/guide", target: "_blank", rel: "noopener", text: "가이드 열기" }));
     return;
   }
   $("log").append(el("div", { class: "msg bot note" }, el("em", { text: "invalid command." })));

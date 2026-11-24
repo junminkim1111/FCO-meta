@@ -446,22 +446,10 @@
   .msg.me .mention { color: #2563eb; font-weight: 600; }
   /* /를 치면 입력창 위에 펼쳐지는 명령어 목록 (↑↓ 고르기, Enter·클릭 실행, Tab 채우기, Esc 닫기).
      명령어만 보이고, 설명은 올린 줄(키보드로 고른 줄) 오른쪽에 작은 말풍선으로 */
-  #cmd-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 6; min-width: 150px; margin: 0; padding: 6px; list-style: none;
-              background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
-  #cmd-menu[hidden] { display: none; }
-  #cmd-menu li { position: relative; padding: 6px 10px; border-radius: 9px; cursor: pointer; font-size: 13px; }
-  #cmd-menu li b { color: var(--text); font-weight: 600; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
-  #cmd-menu li span { display: none; position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%); white-space: nowrap;
-                      font-size: 12px; color: var(--text); background: var(--tip-bg); border: 1px solid var(--line-strong); border-radius: 8px;
-                      padding: 3px 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; white-space: pre-wrap; line-height: 1.5;
-                      width: max-content; max-width: 240px; } /* 긴 설명은 줄을 바꿔 챗봇 칸 밖으로 나가지 않게 */
-  #cmd-menu li:hover span, #cmd-menu.kb li[aria-selected="true"] span { display: block; }
-  #cmd-menu li:hover, #cmd-menu.kb li[aria-selected="true"] { background: rgba(255, 255, 255, .08); }
-  #cmd-menu li:hover b, #cmd-menu.kb li[aria-selected="true"] b { color: var(--accent); }
-  #cmd-menu, #team-box, #jump { transform-origin: bottom left; transition: opacity .15s ease-out, transform .15s ease-out, display .15s allow-discrete; }
-  #cmd-menu[hidden], #team-box[hidden], #jump[hidden] { opacity: 0; transform: scale(.96) translateY(4px); }
-  @starting-style { #cmd-menu:not([hidden]), #team-box:not([hidden]), #jump:not([hidden]) { opacity: 0; transform: scale(.96) translateY(4px); } }
-  @media (prefers-reduced-motion: reduce) { #cmd-menu, #team-box, #jump, #model-dialog { transform: none !important; } }
+  #team-box, #jump { transform-origin: bottom left; transition: opacity .15s ease-out, transform .15s ease-out, display .15s allow-discrete; }
+  #team-box[hidden], #jump[hidden] { opacity: 0; transform: scale(.96) translateY(4px); }
+  @starting-style { #team-box:not([hidden]), #jump:not([hidden]) { opacity: 0; transform: scale(.96) translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) { #team-box, #jump, #model-dialog { transform: none !important; } }
   /* 위로 올려 읽는 동안 새 답이 오면 입력창 위 가운데에 '↓ 새 답' */
   #jump { position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 5; translate: -50% 0; transform-origin: bottom center;
           padding: 5px 12px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--tip-bg);
