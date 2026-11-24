@@ -169,7 +169,7 @@ class BetaGate:
         raise HTTPException(status_code=401, detail="베타 키가 맞지 않아요")
 
 
-VISIT_PATHS = {"/", "/guide", "/send", *(f"/guide/{t}" for t in GUIDE_TOPICS)}
+VISIT_PATHS = {"/", "/guide", "/send", "/changelog", *(f"/guide/{t}" for t in GUIDE_TOPICS)}
 VISIT_DEDUPE = 1800  # 초: 같은 방문자·페이지는 이만큼에 한 번만 기록
 MOBILE_UA = re.compile(r"Mobi|Android|iPhone|iPad", re.I)
 
@@ -991,6 +991,10 @@ def create_app(
         if topic not in GUIDE_TOPICS:
             raise HTTPException(status_code=404, detail="없는 가이드입니다.")
         return FileResponse(STATIC_DIR / f"guide-{topic}.html")
+
+    @app.get("/changelog", include_in_schema=False)
+    def changelog_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "changelog.html")  # 업데이트 내역 (가이드 '데이터 & 문의'에서 링크)
 
     @app.get("/send", include_in_schema=False)
     def send_page() -> FileResponse:

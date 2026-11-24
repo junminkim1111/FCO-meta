@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>업데이트 내역 | FCLM</title>
+<meta name="description" content="FCLM에 바뀐 점을 최신순으로 모았어요">
+<link rel="canonical" href="https://fclm.kr/changelog">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="FCLM">
+<meta property="og:title" content="업데이트 내역 | FCLM">
+<meta property="og:description" content="FCLM에 바뀐 점을 최신순으로 모았어요">
+<meta property="og:url" content="https://fclm.kr/changelog">
+<meta property="og:image" content="https://fclm.kr/static/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="/static/favicon.png?v=2">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=2">
+<meta name="theme-color" content="#101116">
+<link rel="stylesheet" href="/static/guide.css">
+<style>
+  main section[id] { scroll-margin-top: 24px; } /* 날짜 링크로 오면 그 줄이 화면 맨 위에 멈춘다 */
+  @media (max-width: 860px) { main section[id] { scroll-margin-top: 72px; } } /* 좁은 화면: 위에 붙은 목차만큼 */
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+  .cl-nav-title { display: block; font-size: 12px; opacity: .75; } /* 목차: 날짜(버전) 아래 제목 */
+  /* 목차 왼쪽 세로선, 누른 항목은 그 높이의 선 위에 점 */
+  .g-side nav.cl-nav { position: relative; padding-left: 14px; }
+  .g-side nav.cl-nav::before { content: ""; position: absolute; left: 3px; top: 4px; bottom: 4px; width: 1px; background: var(--line-strong); }
+  .cl-nav a { position: relative; }
+  .cl-nav a[aria-current="location"] { color: var(--text); }
+  .cl-nav a[aria-current="location"]::before { content: ""; position: absolute; left: -14.5px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px;
+                                               border-radius: 50%; background: var(--accent); }
+  @media (max-width: 860px) { /* 좁은 화면: 목차가 가로라 선·점 대신 테두리 */
+    .cl-nav-title { display: inline; margin-left: 6px; }
+    .g-side nav.cl-nav { padding-left: 14px; } .g-side nav.cl-nav::before, .cl-nav a[aria-current="location"]::before { display: none; }
+    .cl-nav a[aria-current="location"] { border-color: var(--accent); }
+  }
+  .cl-meta { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+  .g-block h2 { margin-top: 0; }
+  .g-block h3 { margin: 20px 0 8px; font-size: 14px; color: var(--muted); } /* 고친 점·개선 */
+</style>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1315876984941536"
+     crossorigin="anonymous"></script>
+</head>
+<body>
+<div class="g-layout">
+  <aside class="g-side"><div class="g-side-in">
+    <a class="g-logo" href="/" aria-label="FCLM 홈으로"><img src="/static/fclm-logo.png" alt="" width="132" height="28"></a>
+  <nav class="cl-nav" aria-label="업데이트 날짜"> <!-- 최신 날짜가 위. 누르면 그 날짜 줄로 간다 -->
+      <a href="#2026-11-19">2026-11-19 (V1.0.0)<span class="cl-nav-title">베타 테스트 시작</span></a>
+  </nav></div></aside>
+<main>
+  <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / <a href="/guide/data">데이터 & 문의</a> / 업데이트 내역</nav>
+
+  <h1>업데이트 내역</h1>
+  <p class="lead">FCLM에 바뀐 점을 최신순으로 모았어요.</p>
+  <!-- 새 버전은 이 줄 바로 아래(맨 위)에, 목차에도 맨 위에 한 줄. 모양:
+  <section class="g-block" id="날짜">
+    <p class="cl-meta"><time datetime="날짜">날짜</time> (V버전)</p>
+    <h2>한 줄 제목</h2>
+    <p>새 기능을 문장으로</p>
+    <h3>고친 점·개선</h3>  (없으면 h3·ul 둘 다 뺀다)
+    <ul><li>…</li></ul>
+  </section> -->
+  <section class="g-block" id="2026-11-19">
+    <p class="cl-meta"><time datetime="2026-11-19">2026-11-19</time> (V1.0.0)</p>
+    <h2>베타 테스트 시작</h2>
+    <p>FCLM 베타 테스트를 시작했어요.</p>
+  </section>
+  <p class="g-home"><a href="/guide/data">데이터 & 문의로</a><a href="/">FCLM 메인으로</a></p>
+</main>
+</div>
+<script type="module" src="/static/guide.js"></script>
+<script>
+  // 누른(주소의 #날짜) 목차 항목에 점
+  const mark = () => document.querySelectorAll(".cl-nav a").forEach((a) =>
+    a.getAttribute("href") === location.hash ? a.setAttribute("aria-current", "location") : a.removeAttribute("aria-current"));
+  addEventListener("hashchange", mark);
+  mark();
+</script>
+</body>
+</html>
