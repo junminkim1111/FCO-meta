@@ -405,8 +405,8 @@ const TOOL_STATUS = {
 };
 // 명령어 상태 (새로고침하면 처음으로): model = 모델 선택창에서 고른 것 (새로고침 전까지), /trace = 사고과정 표시 (한 번 더 치면 끔)
 let model = null, traceOn = true; // { key: "gpt" }, null이면 기본 (DeepSeek V4.1 Flash Eco). /trace는 기본으로 켬 (한 번 더 치면 끔, 새로고침하면 다시 켬)
-// 선택창의 모델: key → [서버 mode, 이름, 로고(static/vendor/lobehub-icons/)]. 둘 다 생각 켬 (2026-11-20 DeepSeek Eco도 켬으로: OpenGateway 할인가라 켬의 추가 비용이 작다)
-const MODELS = { deepseek: ["deep_r", "DeepSeek V4.1 Flash Eco", "deepseek"], gpt: ["luna_r", "GPT-6 Luna", "openai"] }; // 선택창 순서
+// 선택창의 모델: key → [서버 mode, 보이는 이름]. 이름은 모델명 대신 Main(DeepSeek V4.1 Flash Eco) · Other(GPT-6 Luna). 둘 다 생각 켬
+const MODELS = { deepseek: ["deep_r", "Main Model"], gpt: ["luna_r", "Other Model (experimental)"] }; // 선택창 순서
 const DEFAULT_MODEL = "deepseek"; // 서버 mode auto가 답하는 모델 (선택창에 '기본' 표시)
 const modelText = (m) => `model: ${MODELS[m.key][1]}`;
 const modeOf = (m) => (m ? MODELS[m.key][0] : "auto"); // 서버에 보낼 mode
@@ -946,9 +946,8 @@ $("model-cancel").addEventListener("click", () => $("model-dialog").close("no"))
 // /model이나 명령어 목록에서 /model을 고르면 뜨는 선택창. 지금 설정이 골라져 있다
 async function pickModel() {
   const dialog = $("model-dialog"), now = model || { key: DEFAULT_MODEL }; // 고르지 않았으면 기본 DeepSeek V4.1 Flash Eco
-  $("model-opts").replaceChildren(...Object.entries(MODELS).map(([key, [, name, logo]]) => el("label", { class: "opt" },
-    el("input", { type: "radio", name: "model", value: key, checked: key === now.key }),
-    el("img", { src: `/static/vendor/lobehub-icons/${logo}.svg`, alt: "", width: 20, height: 20 }), el("b", { text: name }),
+  $("model-opts").replaceChildren(...Object.entries(MODELS).map(([key, [, name]]) => el("label", { class: "opt" },
+    el("input", { type: "radio", name: "model", value: key, checked: key === now.key }), el("b", { text: name }),
     key === DEFAULT_MODEL ? el("span", { class: "tag", text: "기본" }) : null)));
   dialog.returnValue = "";
   dialog.showModal();

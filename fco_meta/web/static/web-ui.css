@@ -382,7 +382,6 @@
   #model-dialog .opt:has(:checked) { border-color: var(--accent); background: rgba(165, 180, 252, .08); }
   #model-dialog .opt:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
   #model-dialog .opt input { position: absolute; opacity: 0; pointer-events: none; } /* 동그라미는 숨기고 고른 줄을 테두리로 (키보드·화면 낭독은 그대로) */
-  #model-dialog .opt img { width: 20px; height: 20px; flex: none; }
   #model-dialog .opt b { font-size: 14px; font-weight: 600; }
   #model-dialog .opt .tag { margin-left: auto; padding: 1px 7px; border: 1px solid var(--line-strong); border-radius: 6px; font-size: 11px; color: var(--muted); }
   #chat-title { display: flex; align-items: baseline; gap: 8px; }

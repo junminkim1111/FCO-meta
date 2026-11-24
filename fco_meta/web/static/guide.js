@@ -271,19 +271,14 @@ const SCENES = {
     const form = t.q(".m-form"), txt = t.q(".m-input .txt");
     await t.wait(400);
     await t.type(txt, "/");
-    const items = [["/model", "답할 모델 고르기 (새로고침 전까지)"],
-                   ["/trace", "모델의 사고과정 표시 (기본 켬, 한 번 더 치면 끔)"], ["/help", "명령어 안내 (새 탭)"]];
+    const items = [["/help", "명령어 안내 (새 탭)"]]; // /model·/trace는 그대로 되지만 가이드에서는 뺐다 (모델은 DeepSeek 고정)
     let menu = t.put(form, `<ul class="m-menu">${items.map(([c, d]) => `<li>${c}<span>${d}</span></li>`).join("")}</ul>`, "m-pop");
     const select = (i) => menu.querySelectorAll("li").forEach((li, j) => li.classList.toggle("on", i === j));
     await t.wait(500);
-    for (const i of [0, 1, 2, 1, 0]) { select(i); await t.wait(650); }
-    menu.remove(); txt.textContent = "";
-    const models = ["DeepSeek V4.1 Flash Eco", "GPT-6 Luna"]; // 모델 선택창
-    menu = t.put(form, `<ul class="m-menu">${models.map((m) => `<li>${m}</li>`).join("")}</ul>`, "m-pop");
-    for (const i of [0, 1]) { select(i); await t.wait(i === 1 ? 900 : 500); } // 기본(DeepSeek)에서 GPT-6 Luna로 바꿔 고르는 모습
-    menu.remove();
-    t.put(t.q(".m-log"), `<p class="m-note">model: GPT-6 Luna</p>`);
+    select(0);
     await t.wait(1500);
+    menu.remove(); txt.textContent = "";
+    await t.wait(500);
   },
 
   async send(t) {
