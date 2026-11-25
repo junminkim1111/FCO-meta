@@ -137,7 +137,7 @@ class MatchPlayer:
 # 나중에 추가한 열 — 새 DB든 기존 DB든 ALTER TABLE로 붙인다 (API 응답을 JSON 그대로 보관)
 ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "match_player": {"stats": "TEXT"},  # 선발의 player.status (골·도움·슈팅·패스·드리블·태클·가로채기·공중볼 …), 교체는 NULL
-    "match_team": {"detail": "TEXT", "shots": "TEXT"},  # detail = 스코어({"shoot": {"goalTotal"}})만, shots는 쓰지 않아 NULL
+    "match_team": {"detail": "TEXT", "shots": "TEXT", "controller": "TEXT"},  # detail = 스코어({"shoot": {"goalTotal"}})만, shots는 쓰지 않아 NULL, controller = keyboard | gamepad | etc
 }
 
 
@@ -244,9 +244,9 @@ class PipelineStore:
             md = info.get("matchDetail") or {}
             score = {"shoot": {"goalTotal": (info.get("shoot") or {}).get("goalTotal")}}
             self.conn.execute(
-                "INSERT OR REPLACE INTO match_team (match_id, ouid, match_result, match_end_type, detail, shots)"
-                " VALUES (?, ?, ?, ?, ?, NULL)",
-                (match_id, ouid, md.get("matchResult"), md.get("matchEndType"), json.dumps(score)),
+                "INSERT OR REPLACE INTO match_team (match_id, ouid, match_result, match_end_type, detail, shots, controller)"
+                " VALUES (?, ?, ?, ?, ?, NULL, ?)",
+                (match_id, ouid, md.get("matchResult"), md.get("matchEndType"), json.dumps(score), md.get("controller")),
             )
             rows = []
             for p in info.get("player") or []:
