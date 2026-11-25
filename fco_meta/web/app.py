@@ -34,6 +34,7 @@ from ..chatbot.llm import LUNA_MODEL, RESET, Cancelled, Recheck, Thought, ToolCa
 from ..chatbot.router import REFUSAL, Route, classify, jev_ready
 from ..chatbot.rules import RuleBot
 from ..chatbot.tools import Toolbox
+from ..pipeline.formation import DEFAULT_TABLE_PATH
 from .chatlog import ChatLog
 from .squadfeed import FeedError, squad_link, squad_view
 from .team import Team, TeamNotFound, fetch_feed, fetch_team
@@ -417,6 +418,8 @@ def _relay(stream: Any, trace: bool, keep: _TraceLog | None = None, **extra: Any
             line = {"kind": "thought", "text": piece.text}
         elif isinstance(piece, ToolResult):
             line = {"kind": "result", "name": piece.name, "ok": piece.ok and (piece.result or {}).get("ok", True), "text": piece.preview}
+            if piece.run_ms is not None:
+                line.update(run_ms=piece.run_ms, db_wait_ms=piece.db_wait_ms, format_ms=piece.format_ms)
             if piece.ok and piece.name in SQUAD_TOOLS and piece.result and piece.result.get("ok", True):  # 짜는 중인 스쿼드도 왼쪽 칸에 바로 그린다
                 try:
                     yield _event(type="squad", **squad_view(piece.result), **extra)
@@ -506,9 +509,11 @@ class AnswerCache:
                 self.items.move_to_end(self.key(question))
             return answer
 
-    def put(self, question: str, answer: str) -> None:
+    def put(self, question: str, answer: str, *, expected_version: tuple[int, ...] | None = None) -> None:
         with self.lock:
             self._check_version()
+            if expected_version is not None and self.version != expected_version:
+                return
             self.items[self.key(question)] = answer
             self.items.move_to_end(self.key(question))
             if len(self.items) > self.size:
@@ -582,6 +587,7 @@ def create_app(
     answers = AnswerCache(db_path)
     # 화면 조회(포메이션·팀컬러 정보 등)도 DB가 바뀔 때까지 결과를 재사용한다 (Render 무료 CPU에선 한 번에 수 초)
     pages = AnswerCache(db_path, size=300)
+    pages.files.append(DEFAULT_TABLE_PATH)  # 포메이션 판정표가 갱신되면 상세 페이지도 다시 계산한다
     sessions: OrderedDict[str, _Session] = OrderedDict()
     team_limit = HourlyLimit(TEAM_PER_HOUR)
     feedback_limit = HourlyLimit(FEEDBACK_PER_HOUR)
@@ -662,11 +668,12 @@ def create_app(
     def tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         key = name + json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
         if (content := pages.get(key)) is None:
+            version = pages.version
             with lock:
                 content, is_error = toolbox.run(name, tool_input)
             if is_error:
                 raise HTTPException(status_code=400, detail=json.loads(content)["error"])
-            pages.put(key, content)
+            pages.put(key, content, expected_version=version)
         return json.loads(content)
 
     def warm() -> None:
@@ -1058,11 +1065,21 @@ class _SessionTools(_LockedTools):
     def __init__(self, inner: _LockedTools, session: _Session):
         super().__init__(inner.toolbox, inner.lock)
         self.session = session
+        self.last_db_wait_ms: float | None = None
+
+    @contextmanager
+    def _timed_db_lock(self):
+        started = time.perf_counter()
+        with self.lock:
+            self.last_db_wait_ms = round((time.perf_counter() - started) * 1000, 2)
+            yield
 
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        self.last_db_wait_ms = None
         if name == "analyze_playstyle":
             return self._playstyle()
-        content, is_error = super().run(name, tool_input)
+        with self._timed_db_lock():
+            content, is_error = self.toolbox.run(name, tool_input)
         if name == "squad_candidates" or name in SQUAD_TOOLS:
             self.session.turn_lineup = None
         if name == "recommend_squad":
@@ -1116,7 +1133,7 @@ class _SessionTools(_LockedTools):
             log.warning("playstyle analysis failed: %s", e)
             return json.dumps({"error": "넥슨 경기 기록을 가져오지 못함 (잠시 후 다시)"}, ensure_ascii=False), True
         sp_ids = {int(p["spId"]) for _, d in details for i in d.get("matchInfo") or [] if i.get("ouid") == team.ouid for p in i.get("player") or []}
-        with self.lock:
+        with self._timed_db_lock():
             names = player_names(self.toolbox.conn, sorted(sp_ids))
         result = {"owner": team.mark + team.nickname, **summarize(team.ouid, details, names),
                   "note": "넥슨 기록은 약 2시간 전 경기까지. 답에 분석한 경기 수·종류·기간을 밝힐 것"}  # fmt: skip

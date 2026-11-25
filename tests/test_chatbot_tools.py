@@ -37,6 +37,45 @@ def test_role_slots_from_matching_squads(db):  # noqa: F811
     assert role_slots(db.conn, "3-4-3") == ({}, 0)
 
 
+def test_matchups_share_scan_and_refresh_when_inputs_change(tmp_path, fixture_html, monkeypatch):
+    from fco_meta.pipeline.formation import FormationTable, signature
+    from test_pipeline import F4231
+
+    storage, _, _ = setup(tmp_path, fixture_html)
+    tb = Toolbox(storage.conn)
+    queries = []
+    storage.conn.set_trace_callback(queries.append)
+    first = run(tb, "get_formation_overview", {"formation": "4231"})["matchups"]
+    assert first["games"] > 0
+    assert run(tb, "get_formation_overview", {"formation": "442"})["matchups"]["games"] > 0
+    assert sum("SELECT match_id, ouid, sp_position FROM match_player" in q for q in queries) == 1
+
+    positions = signature(pos for pos, _ in F4231)
+    monkeypatch.setattr(FormationTable, "load", lambda: FormationTable({positions: "new"}))
+    assert not run(tb, "get_formation_overview", {"formation": "4231"})["matchups"]["games"]
+    assert tb._formation_matchups("new") == first
+    storage.conn.execute("DELETE FROM match_team")
+    assert tb._formation_matchups("new")["games"] == 0
+    storage.conn.rollback()
+    assert tb._formation_matchups("new") == first
+    with sqlite3.connect(tmp_path / "db.sqlite") as writer:
+        writer.execute("DELETE FROM match_team")
+    assert tb._formation_matchups("new")["games"] == 0
+
+
+def test_available_data_uses_latest_snapshot_per_team_and_mode(toolbox):
+    conn = toolbox.conn
+    conn.execute("DELETE FROM usage_sample")
+    conn.executemany(
+        "INSERT INTO usage_sample VALUES (?, ?, ?, '*', ?, 1, 1, 'now')",
+        [("old", "one", 0, 0), ("recent", "one", 0, 1), ("old", "two", 0, 0), ("old", "one", 1021, 0)],
+    )
+    combos = run(toolbox, "list_available_data", {})["combos"]
+    assert sorted((r["mode"], r["team_color"], r["data_as_of"]) for r in combos) == [
+        ("one", toolbox._scope_name(1021), "old"), ("two", toolbox._scope_name(0), "old")
+    ]
+
+
 def test_recommend_squad_fills_every_slot_once(toolbox):  # noqa: F811
     r = run(toolbox, "recommend_squad", {"team_color": "아스날", "formation": "4231"})
     assert r["formation"] == "4-2-3-1" and r["formation_source"] == "requested" and r["sample_size"] == 3
@@ -132,6 +171,24 @@ def test_player_detail_summary_in_scope(toolbox):  # noqa: F811
     # 범위 안에 데이터가 없으면 요약은 비지만 찾지 못했다고 하지는 않음
     r = run(toolbox, "get_player_detail", {"name": "볼란치R", "formation": "4-2-3-1"})
     assert r["players"] == [] and r["usage"]
+
+
+def test_player_detail_prices_use_latest_collection_for_each_grade(toolbox):
+    args = {"name": "볼란치R", "team_color": "아스널"}
+    spid = run(toolbox, "get_player_detail", args)["usage"][0]["sp_id"]
+    toolbox.conn.executemany(
+        "INSERT INTO card_price (spid, grade, price, fetched_at) VALUES (?, ?, ?, ?)",
+        [
+            (spid, 7, 100, "2026-10-01"),
+            (spid, 7, 200, "2026-10-02"),
+            (spid, 8, 300, "2026-10-01"),
+            (spid, 8, None, "2026-10-02"),
+        ],
+    )
+    prices = {p["grade"]: p["price_bp"] for p in run(toolbox, "get_player_detail", args)["prices"] if p["sp_id"] == spid}
+    assert prices[7] == 200 and 8 not in prices
+    assert toolbox._price(spid, 7)["fetched_at"] == "2026-10-02"
+    assert toolbox._price(spid, 8) is None
 
 
 def copy_snapshot(conn, as_of, older):
@@ -521,8 +578,10 @@ def test_team_color_rules(toolbox):  # noqa: F811
     from fco_meta.crawler.models import TeamColor
 
     # 클럽 팀컬러: 11명 모두 그 클럽 경력 카드 — 첼시 경력뿐인 볼란치L 카드는 아스널 스쿼드에 못 들어간다
+    args = {"team_color": "아스널", "formation": "4-2-3-1"}
+    assert "볼란치L" in [s["player"] for s in run(toolbox, "recommend_squad", args)["lineup"]]
     toolbox.conn.execute("UPDATE card_detail SET clubs = '[{\"club\": \"첼시\"}]' WHERE spid = 101000011")
-    r = run(toolbox, "recommend_squad", {"team_color": "아스널", "formation": "4-2-3-1"})
+    r = run(toolbox, "recommend_squad", args)
     assert "볼란치L" not in [s["player"] for s in r["lineup"]] and "11명 모두" in r["team_color_rule"]
 
     # 시즌 단일(스페셜) 팀컬러 = 그 시즌 카드: "Winning Streak" → WS, "TOTY" → 19 TOTY

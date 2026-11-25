@@ -118,6 +118,27 @@ def test_formation_overview(client):
     assert client.get("/api/formation", params={"name": ""}).status_code == 422
 
 
+def test_page_cache_skips_overview_if_formation_table_changes_during_query(db, tmp_path, monkeypatch):
+    from fco_meta.web import app as web_app
+
+    table = tmp_path / "formations.json"
+    monkeypatch.setattr(web_app, "DEFAULT_TABLE_PATH", table)
+    calls = []
+
+    def overview(self, formation):
+        loaded = table.exists()
+        calls.append(formation)
+        if not loaded:
+            table.write_text("{}")
+        return {"loaded": loaded}
+
+    monkeypatch.setattr(Toolbox, "get_formation_overview", overview)
+    with TestClient(create_app(tmp_path / "db.sqlite")) as client:
+        snapshots = [client.get("/api/formation?name=4231").json() for _ in range(3)]
+    assert snapshots == [{"loaded": False}, {"loaded": True}, {"loaded": True}]
+    assert calls == ["4231", "4231"]
+
+
 def test_chat_rules(client):
     answer, done = ask(client, "아스날 볼란치 1명 추천")
     assert done["tool_calls"] == ["recommend_players"] and "볼란치R" in answer
@@ -908,7 +929,7 @@ def test_user_trace_shows_thoughts_and_tool_names_and_admin_keeps_everything():
     def stream():
         yield Thought("아스널 DM을 찾자")
         yield ToolCall("recommend_squad", {"team_color": "아스널"})
-        yield ToolResult("recommend_squad", True, "라이스 …", {"lineup": []})
+        yield ToolResult("recommend_squad", True, "라이스 …", {"lineup": []}, run_ms=20, db_wait_ms=3, format_ms=1)
         yield "답"
         return Turn("답", [], "STOP")
 
@@ -920,6 +941,7 @@ def test_user_trace_shows_thoughts_and_tool_names_and_admin_keeps_everything():
     assert [(x["kind"], x.get("args") or x.get("text")) for x in keep.lines[:3]] == [
         ("thought", "아스널 DM을 찾자"), ("tool", {"team_color": "아스널"}), ("result", "라이스 …"),
     ]  # fmt: skip
+    assert [keep.lines[2][key] for key in ("run_ms", "db_wait_ms", "format_ms")] == [20, 3, 1]
 
 
 def test_admin_locks_for_an_hour_after_many_wrong_passwords_from_any_ip():

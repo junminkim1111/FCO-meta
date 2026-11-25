@@ -12,8 +12,10 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +33,6 @@ from ..analytics import (
     SquadQuery,
     UsageStore,
     best_eleven,
-    formation_matchups,
     player_roles,
     query_rankers,
     ranker_stats_summary,
@@ -44,6 +45,7 @@ from ..analytics import (
     top_ranker_squad,
     usage_history,
 )
+from ..analytics.formation_view import all_formation_matchups
 from ..analytics.query import _card_details, stat_value
 from ..crawler import teamcolor_info
 from ..crawler.models import TeamColor
@@ -51,7 +53,7 @@ from ..crawler.teamcolors import TeamColorCatalog
 from ..market.money import format_bp, parse_bp
 from ..market.roles import ROLES, resolve_roles
 from ..market.storage import SCHEMA as MARKET_SCHEMA
-from ..pipeline.formation import FORMATIONS
+from ..pipeline.formation import FORMATIONS, FormationTable
 from ..storage import latest_unfiltered_snapshot, unfiltered_coverage
 
 log = logging.getLogger(__name__)
@@ -1007,6 +1009,12 @@ def _typo_close(typed: str, name: str) -> bool:
     return row[-1] <= limit
 
 
+@lru_cache(maxsize=4096)
+def _club_keys(clubs: str) -> tuple[str, ...]:
+    # Keyed by the stored JSON so refreshed card details are read immediately.
+    return tuple("".join((c["club"] or "").split()).casefold() for c in json.loads(clubs))
+
+
 class Toolbox:
     def __init__(
         self,
@@ -1017,6 +1025,8 @@ class Toolbox:
         team_color_info: list[dict[str, Any]] | None = None,
     ):
         self.conn = conn
+        self._matchups_version = None
+        self._matchups: dict[str, dict[str, Any]] = {}
         self.min_sample = min_sample  # 이보다 표본이 적으면 팀컬러 전체 포메이션으로 폴백
         self.rng = random.Random()  # 팀컬러·포메이션을 말하지 않은 스쿼드: 사용률 비례로 뽑는다 (테스트는 시드를 고정)
         self.conn.row_factory = sqlite3.Row
@@ -1162,7 +1172,7 @@ class Toolbox:
             return lambda sp_id: sp_id // 1_000_000 in seasons
         if tc.category == "club":
             ok = {spid for spid, clubs in self.conn.execute("SELECT spid, clubs FROM card_detail")
-                  if any(key(c["club"]) == want for c in json.loads(clubs))}  # fmt: skip
+                  if want in _club_keys(clubs)}  # fmt: skip
         else:
             try:
                 ok = {spid for spid, nation in self.conn.execute("SELECT spid, nation FROM card_detail") if key(nation) == want}
@@ -1384,7 +1394,8 @@ class Toolbox:
 
     def _price(self, sp_id: int, grade: int) -> dict[str, Any] | None:
         row = self.conn.execute(
-            "SELECT price, fetched_at FROM card_price_latest WHERE spid = ? AND grade = ?", (sp_id, grade)
+            "SELECT price, fetched_at FROM card_price WHERE spid = ? AND grade = ? ORDER BY fetched_at DESC LIMIT 1",
+            (sp_id, grade),
         ).fetchone()
         if row is None or row["price"] is None:
             return None
@@ -1415,8 +1426,8 @@ class Toolbox:
         # 팀컬러별 가장 최근 스냅샷만, 표본 많은 순
         rows = self.conn.execute(
             "SELECT u.data_as_of, u.mode, u.team_color_id, u.formation, u.combo_rankers, u.squads FROM usage_sample u"
-            " WHERE u.strict = 0 AND u.data_as_of = (SELECT MAX(data_as_of) FROM usage_sample x"
-            "  WHERE x.team_color_id = u.team_color_id AND x.mode = u.mode)"
+            " WHERE u.strict = 0 AND (u.team_color_id, u.mode, u.data_as_of) IN"
+            " (SELECT team_color_id, mode, MAX(data_as_of) FROM usage_sample GROUP BY team_color_id, mode)"
             " ORDER BY (u.team_color_id = 0) DESC, u.squads DESC LIMIT ?",
             (MAX_LISTED_COMBOS,),
         ).fetchall()
@@ -3292,8 +3303,10 @@ class Toolbox:
         prices = [
             {"sp_id": p["spid"], "grade": p["grade"], "price_bp": p["price"], "price": format_bp(p["price"])}
             for p in self.conn.execute(
-                f"SELECT spid, grade, price FROM card_price_latest WHERE spid IN ({','.join('?' * len(sp_ids))})"
-                " AND price IS NOT NULL ORDER BY spid, grade",
+                "SELECT p.spid, p.grade, p.price FROM card_price p"
+                " JOIN (SELECT spid, grade, MAX(fetched_at) AS fetched_at FROM card_price"
+                f" WHERE spid IN ({','.join('?' * len(sp_ids))}) GROUP BY spid, grade) latest"
+                " USING (spid, grade, fetched_at) WHERE p.price IS NOT NULL ORDER BY p.spid, p.grade",
                 sp_ids,
             )
         ]
@@ -3722,6 +3735,17 @@ class Toolbox:
             **({"note": " / ".join(notes)} if notes else {}),
         }
 
+    def _formation_matchups(self, name: str) -> dict[str, Any]:
+        table = FormationTable.load()
+        if self.conn.in_transaction:
+            # A rollback can discard rows without changing total_changes.
+            return all_formation_matchups(self.conn, table).get(name, {"games": 0, "opponents": []})
+        version = (self.conn.total_changes, self.conn.execute("PRAGMA data_version").fetchone()[0], table.known)
+        if version != self._matchups_version:
+            self._matchups = all_formation_matchups(self.conn, table)
+            self._matchups_version = version
+        return deepcopy(self._matchups.get(name, {"games": 0, "opponents": []}))
+
     def get_formation_overview(self, formation: str) -> dict[str, Any]:
         name = normalize_formation(formation)
         if not name:
@@ -3759,7 +3783,7 @@ class Toolbox:
             out["rank_bands"] = self._rank_bands(everyone["covered"], formation=name)
         out["top_ranker_squad"] = top_ranker_squad(self.conn, name)
         out["best_eleven"] = best_eleven(self.conn, name)
-        out["matchups"] = formation_matchups(self.conn, name)
+        out["matchups"] = self._formation_matchups(name)
         out["definitions"] = {
             "ranking": "랭킹 상위 10,000명(웹) 기준. season_win_rate = 그 랭커들의 시즌 승/무/패 합산, usage_rank = 사용 랭커 수 순위",
             "top_ranker_squad": "스쿼드 수집 랭커 중 이 포메이션을 쓰는 가장 높은 순위 랭커의 스냅샷 직전 경기 선발 (닉네임 제외, squad_value = 선발 최신 시세 합, unpriced = 시세 몰라 뺀 선수 수)",

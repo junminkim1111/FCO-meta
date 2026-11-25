@@ -46,6 +46,7 @@
   <aside class="g-side"><div class="g-side-in">
     <a class="g-logo" href="/" aria-label="FCLM 홈으로"><img src="/static/fclm-logo.png" alt="" width="132" height="28"></a>
   <nav class="cl-nav" aria-label="업데이트 날짜"> <!-- 최신 날짜가 위. 누르면 그 날짜 줄로 간다 -->
+      <a href="#2026-11-25">2026-11-25 (V1.0.1)<span class="cl-nav-title">[성능 개선] tool calling 속도 최적화</span></a>
       <a href="#2026-11-19">2026-11-19 (V1.0.0)<span class="cl-nav-title">베타 테스트 시작</span></a>
   </nav></div></aside>
 <main>
@@ -61,6 +62,18 @@
     <h3>고친 점·개선</h3>  (없으면 h3·ul 둘 다 뺀다)
     <ul><li>…</li></ul>
   </section> -->
+  <section class="g-block" id="2026-11-25">
+    <p class="cl-meta"><time datetime="2026-11-25">2026-11-25</time> (V1.0.1)</p>
+    <h2>[성능 개선] tool calling 속도 최적화</h2>
+    <p>도구 호출이 느려지던 부분을 고쳐 답이 더 빨리 나오게 했어요.</p>
+    <h3>고친 점·개선</h3>
+    <ul>
+      <li>포메이션 상세의 상대 전적을 매번 다시 세지 않고, DB가 바뀔 때만 한 번 계산해 재사용해요.</li>
+      <li>선수 시세와 사용 데이터를 최신 수집분에서 읽도록 조회를 고쳤어요.</li>
+      <li>클럽 팀컬러 선수 판정 결과를 재사용해 스쿼드 추천이 빨라졌어요.</li>
+      <li>페이지 캐시가 포메이션 판정표가 바뀐 것도 알아채고 다시 계산해요.</li>
+    </ul>
+  </section>
   <section class="g-block" id="2026-11-19">
     <p class="cl-meta"><time datetime="2026-11-19">2026-11-19</time> (V1.0.0)</p>
     <h2>베타 테스트 시작</h2>

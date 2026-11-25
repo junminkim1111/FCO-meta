@@ -195,7 +195,12 @@ def formation_matchups(conn: sqlite3.Connection, formation: str, table: Formatio
     """Results of `formation` against each opponent formation, over every stored match where both
     starting line-ups are known (formations inferred from positions, both sides counted)."""
     UsageStore(conn)
-    table = table or FormationTable.load()
+    matchups = all_formation_matchups(conn, table or FormationTable.load())
+    return matchups.get(formation, {"games": 0, "opponents": []})
+
+
+def all_formation_matchups(conn: sqlite3.Connection, table: FormationTable) -> dict[str, dict[str, Any]]:
+    """Aggregate results for both sides in one pass over the match history."""
     positions: dict[tuple[str, str], list[int]] = defaultdict(list)
     for match_id, ouid, pos in conn.execute("SELECT match_id, ouid, sp_position FROM match_player WHERE sp_position != ?", (SUB,)):
         positions[(match_id, ouid)].append(pos)
@@ -204,18 +209,21 @@ def formation_matchups(conn: sqlite3.Connection, formation: str, table: Formatio
     for (match_id, ouid), pos in positions.items():
         if len(pos) == 11:
             sides[match_id].append((ouid, table.infer(pos)))
-    tally: dict[str, Counter[str]] = defaultdict(Counter)
+    tallies: dict[str, dict[str, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
     for match_id, pair in sides.items():
         if len(pair) != 2:
             continue
         for (me, mine), (_, theirs) in (pair, pair[::-1]):
             result = results.get((match_id, me))
-            if mine == formation and theirs and result in ("승", "무", "패"):
-                tally[theirs][result] += 1
-    rows = [
-        {"opponent": opp, "games": sum(c.values()), "wins": c["승"], "draws": c["무"], "losses": c["패"],
-         "win_rate": round(c["승"] / sum(c.values()), 4)}
-        for opp, c in tally.items()
-    ]  # fmt: skip
-    rows.sort(key=lambda r: (-r["games"], r["opponent"]))
-    return {"games": sum(r["games"] for r in rows), "opponents": rows}
+            if mine and theirs and result in ("승", "무", "패"):
+                tallies[mine][theirs][result] += 1
+    matchups = {}
+    for formation, tally in tallies.items():
+        rows = [
+            {"opponent": opp, "games": sum(c.values()), "wins": c["승"], "draws": c["무"], "losses": c["패"],
+             "win_rate": round(c["승"] / sum(c.values()), 4)}
+            for opp, c in tally.items()
+        ]  # fmt: skip
+        rows.sort(key=lambda r: (-r["games"], r["opponent"]))
+        matchups[formation] = {"games": sum(r["games"] for r in rows), "opponents": rows}
+    return matchups

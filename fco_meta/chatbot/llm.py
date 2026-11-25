@@ -87,14 +87,12 @@ class ToolResult:
     ok: bool
     preview: str
     result: dict[str, Any] | None = None  # 전체 결과 (스쿼드 도구면 화면 왼쪽 스쿼드 칸에 그린다)
+    run_ms: float | None = None  # Includes any DB lock wait.
+    db_wait_ms: float | None = None
+    format_ms: float | None = None
 
 
 TRACE_PREVIEW = 600  # ToolResult.preview 길이 (관리자 생각 표시용)
-
-
-def _preview(payload: Any) -> str:
-    text = json.dumps(payload, ensure_ascii=False)
-    return text if len(text) <= TRACE_PREVIEW else text[:TRACE_PREVIEW] + "…"
 
 
 # 답에 도구 결과에 없는 수치가 있을 때 한 번 다시 쓰게 하는 요청
@@ -296,15 +294,24 @@ class ToolChat:
                 seen.add(key)
                 calls.append((name, args))
                 yield ToolCall(name, args)
+                started = time.perf_counter()
                 content, is_error = self.toolbox.run(name, args)
+                finished = time.perf_counter()
                 result = json.loads(content)
                 pending_squad = unchecked_squad(pending_squad, name, result, is_error)
-                yield ToolResult(name, not is_error, _preview(result.get("error") if is_error else for_model(name, result)), result)
+                formatted = json.dumps(result.get("error") if is_error else for_model(name, result), ensure_ascii=False)
+                preview = formatted if len(formatted) <= TRACE_PREVIEW else formatted[:TRACE_PREVIEW] + "…"
+                yield ToolResult(
+                    name, not is_error, preview, result,
+                    run_ms=round((finished - started) * 1000, 2),
+                    db_wait_ms=getattr(self.toolbox, "last_db_wait_ms", None),
+                    format_ms=round((time.perf_counter() - finished) * 1000, 2),
+                )
                 if is_error:
                     out.append((call_id, result["error"], True))
                     continue
                 results.append(result)
-                out.append((call_id, json.dumps(for_model(name, result), ensure_ascii=False), False))
+                out.append((call_id, formatted, False))
                 line = self.toolbox.evidence(name, result)
                 if line and line not in evidence:
                     evidence.append(line)
