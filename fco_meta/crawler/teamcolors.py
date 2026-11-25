@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -10,6 +11,24 @@ DEFAULT_CATALOG_PATH = Path(__file__).resolve().parents[2] / "data" / "teamcolor
 
 # 같은 이름이 여러 분류에 있을 때 우선순위 (예: "잉글랜드" 클럽 목록 항목 vs 국가 항목)
 _CATEGORY_PRIORITY = {"club": 0, "nationality": 1, "special": 2}
+
+
+# Nexon lists WG under clubs, but its official eligibility is the card class.
+WG_TEAM_COLOR = TeamColor(id=40672, name="Warriors of Glory", category="special", group_id=40672)
+
+
+def season_matches(name: str, code: str, long_name: str) -> bool:
+    # Official season labels vary: "2024 Energetic Player", "23 K-League Best", "26 Heroes".
+    long_name = re.sub(r"^20(\d{2})(?=\s)", r"\1", long_name).replace("K-League", "K LEAGUE")
+    if name == "HEROES":
+        return bool(re.fullmatch(r"\d{2}HR", code, re.I))
+    if name == "25 ICONS MATCH":
+        return long_name.startswith("25 ICONS MATCH")
+    return _normalize(name) in (_normalize(code), _normalize(long_name)) or name.upper() in code.upper().split()
+
+
+def highest_stage_players(entry: dict) -> int:
+    return max(level["players"] for level in entry["levels"])
 
 
 def _normalize(name: str) -> str:

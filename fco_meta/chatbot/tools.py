@@ -49,7 +49,7 @@ from ..analytics.formation_view import all_formation_matchups
 from ..analytics.query import _card_details, stat_value
 from ..crawler import teamcolor_info
 from ..crawler.models import TeamColor
-from ..crawler.teamcolors import TeamColorCatalog
+from ..crawler.teamcolors import TeamColorCatalog, highest_stage_players, season_matches
 from ..market.money import format_bp, parse_bp
 from ..market.roles import ROLES, resolve_roles
 from ..market.storage import SCHEMA as MARKET_SCHEMA
@@ -273,9 +273,15 @@ def _choose(
     """
     reqs = reqs or {}
     chosen: list[dict[str, Any] | None] = []
+
+    priority = _score
+    if "season" in reqs:
+        def priority(option):
+            return ("season" in option["tags"], _score(option))
+
     for _, options in slot_options:
         used = {c["entry"]["pid"] for c in chosen if c}
-        chosen.append(next((o for o in sorted(options, key=_score, reverse=True) if o["entry"]["pid"] not in used), None))
+        chosen.append(next((o for o in sorted(options, key=priority, reverse=True) if o["entry"]["pid"] not in used), None))
     if not limits and not reqs and not salary_floor:
         return chosen
 
@@ -1103,8 +1109,13 @@ class Toolbox:
             alias = TEAM_COLOR_ALIASES.get("".join(text.split()).casefold())
             candidates = self.catalog.find(alias) if alias else []
         if not candidates:  # 시즌 약칭 → 시즌 단일 팀컬러 ("WS" → "WS (Winning Streak)" → Winning Streak)
-            row = self.conn.execute("SELECT class_name FROM meta_season WHERE class_name LIKE ?", (f"{text} (%",)).fetchone()
-            candidates = self.catalog.find(row[0].partition(" (")[2].rstrip(")")) if row else []
+            code = re.sub(r"\s*(?:단일\s*(?:팀)?|팀)$", "", text).strip()
+            for (cls,) in self.conn.execute("SELECT class_name FROM meta_season"):
+                short, _, long_name = cls.partition(" (")
+                if "".join(short.split()).casefold() == "".join(code.split()).casefold():
+                    candidates = [t for t in self.catalog.entries if t.category == "special"
+                                  and season_matches(t.name, short, long_name.rstrip(")"))]
+                    break
         if not candidates:
             # "롬바르디아" → "롬바르디아 FC": 이름 일부가 한 팀컬러 이름에만 들어 있으면 그 팀컬러
             key = "".join(text.split()).casefold()
@@ -1167,7 +1178,7 @@ class Toolbox:
             seasons = set()
             for season_id, cls in self.conn.execute("SELECT season_id, class_name FROM meta_season"):
                 code, _, long = cls.partition(" (")  # "WS (Winning Streak)", "19 TOTY (19 Team Of The Year)"
-                if want in (key(code), key(long.rstrip(")"))) or tc.name.upper() in code.upper().split():
+                if season_matches(tc.name, code, long.rstrip(")")):
                     seasons.add(season_id)
             return lambda sp_id: sp_id // 1_000_000 in seasons
         if tc.category == "club":
@@ -1181,9 +1192,11 @@ class Toolbox:
         return ok.__contains__
 
     def _special_need(self, name: str) -> int:
-        """Players needed for a special (시즌 단일) team color's top level, from the collected info (else 8)."""
+        """Players needed for a special (시즌 단일) team color's top level, from the official stages."""
         entry = next((e for e in self.team_color_info if e["type"] == "special" and e["name"] == name), None)
-        return max((lv["players"] for lv in entry["levels"]), default=8) if entry else 8
+        if not entry or not entry.get("levels"):
+            raise ToolError(f"{name} 시즌 팀컬러의 공식 발동 인원을 확인할 수 없습니다")
+        return highest_stage_players(entry)
 
     def _chemistry(self, name: str) -> dict[str, Any]:
         """관계(케미) 팀컬러 이름 → 수집한 정보 (이름이 정확히 같거나, 한 팀컬러 이름에만 들어 있으면)."""
@@ -2825,7 +2838,7 @@ class Toolbox:
         reqs = {"chem": min(lv["players"] for lv in chem["levels"])} if chem else {}  # 케미: 첫 단계 발동 인원
         reqs.update({f"include:{name}": 1 for name in must})  # 꼭 넣을 선수: 이름이 맞는 선수 한 명씩
         if season_rule:
-            reqs["season"] = sum(layout.values())
+            reqs["season"] = min(sum(layout.values()), self._special_need(tc.name))
         auto_cap = not slots and max_total_salary is None
         if auto_cap:  # 선발 11명은 사용자가 말하지 않으면 게임의 팀 급여 상한 (말하면 그 값을 따르고 결과에 경고)
             max_total_salary = SALARY_CAP
@@ -3109,7 +3122,7 @@ class Toolbox:
             out["season_rule"] = {"team_color": tc_name, "players": count, "target": reqs["season"], "need": least,
                                   "active": count >= least}  # fmt: skip
             if count < reqs["season"]:
-                notes.append(f"{tc_name} 카드로 {count}명 (전원은 못 채움 — 발동 인원 {least}명 {'충족' if count >= least else '미달'})")
+                notes.append(f"{tc_name} 카드로 {count}명 (발동 인원 {least}명 {'충족' if count >= least else '미달'})")
         if assumed := [c["entry"]["name"] for c in chosen if c and c.get("season_assumed")]:
             out["owned_season_assumed"] = {
                 "players": assumed,

@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from ..config import KST
+from ..crawler.teamcolors import highest_stage_players, season_matches
 from ..market.money import format_bp
 from ..market.roles import ROLES
 from ..openapi.errors import NotFoundError
@@ -159,9 +160,7 @@ def _key(text: str | None) -> str:
 
 
 def _team_colors(conn: sqlite3.Connection, catalog: Any, info: Iterable[dict[str, Any]], lineup: list[dict[str, Any]]) -> list[str]:
-    """The XI's team color — the club (career, loans too), nation or one season most of its players share
-    (TEAM_COLOR_MIN+ for a club or nation, the first level for a season) — then each relation (케미) team color
-    that reaches its first level."""
+    """Show top-stage season colors, the leading shared affiliation, and active relation colors."""
     names = {_key(t.name): t.name for t in (catalog.entries if catalog else []) if t.category != "special"}
     shared: Counter[str] = Counter()
     for p in lineup:
@@ -169,17 +168,22 @@ def _team_colors(conn: sqlite3.Connection, catalog: Any, info: Iterable[dict[str
         if row:  # 카드 상세가 없는 카드(랭커가 안 쓴 카드)는 셀 수 없다
             shared.update({_key(c["club"]) for c in json.loads(row[0] or "[]")} | {_key(row[1])})
     main = [(n, f"{names[k]} {n}명") for k, n in shared.items() if n >= TEAM_COLOR_MIN and k in names]
-    seasons = Counter(p["season_key"] for p in lineup)
+    seasons = Counter((p["season"], p["season_key"]) for p in lineup)
+    season_colors = []
     pids = {p["sp_id"] % 1_000_000 for p in lineup}
     chems = []
     for e in info:
         need = min((lv["players"] for lv in e.get("levels") or []), default=99)
-        if e["type"] == "special" and (n := seasons[_key(e["name"])]) >= need:
-            main.append((n, f"{e['name']} {n}명"))
+        if e["type"] == "special" and e.get("levels"):
+            n = sum(count for (code, long_name), count in seasons.items() if season_matches(e["name"], code, long_name))
+            if n >= highest_stage_players(e):
+                season_colors.append(f"{e['name']} 단일팀 {n}명")
+            elif n >= need:
+                main.append((n, f"{e['name']} {n}명"))
         elif e["type"] == "relation" and (n := len(pids & {m["pid"] for m in e.get("players") or []})) >= need:
             chems.append((n, f"{e['name']} 케미 {n}명"))
     top = [max(main, key=lambda m: m[0])[1]] if main else []  # 인원이 같으면 먼저 센 클럽·국적
-    return top + [text for _, text in sorted(chems, key=lambda c: -c[0])]
+    return season_colors + top + [text for _, text in sorted(chems, key=lambda c: -c[0])]
 
 
 def _ranker_squad(conn: sqlite3.Connection, ouid: str) -> tuple[datetime, str, str, list[tuple[int, int, int]]] | None:
@@ -203,7 +207,7 @@ def _card(conn: sqlite3.Connection, sp_id: int, position: int, grade: int) -> di
     price = conn.execute("SELECT price FROM card_price_latest WHERE spid = ? AND grade = ?", (sp_id, grade)).fetchone()
     price_bp = price[0] if price and price[0] is not None else None
     return {
-        "sp_id": sp_id, "season_key": _key(long_name),
+        "sp_id": sp_id, "season_key": long_name,
         "role": ROLE_OF.get(position, "?"), "player": name[0].strip() if name else str(sp_id),
         "season": (season[0] or "").split(" (")[0] if season else "?", "grade": grade,
         "salary": salary[0] if salary else None, "price_bp": price_bp, "price": format_bp(price_bp) if price_bp else None,

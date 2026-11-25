@@ -101,6 +101,18 @@ class RuleBot:
     def ask(self, text: str) -> Answer:
         q = self.parse(text)
         norm = _norm(text)
+        if m := re.fullmatch(r"([a-z0-9 -]+?)\s*(?:단일\s*(?:팀)?|팀)\s*(?:짜\s*줘|짜주세요)[.!?]*", text.strip(), re.I):
+            tc = self.toolbox._lookup_team_color(m[1].strip())
+            if tc and tc.category == "special":
+                args = {"team_color": tc.name}
+                result = self._call("recommend_squad", args)
+                rule = result.get("season_rule", {})
+                if result.get("problems") or not rule.get("active"):
+                    message = " · ".join(result.get("problems") or [result.get("error") or result.get("note") or "조건을 충족하는 스쿼드가 없습니다"])
+                else:
+                    rows = [f"{p['role']} {p['player']} ({p['season']})" for p in result["lineup"]]
+                    message = "\n".join([f"{tc.name} 단일팀 · 해당 시즌 {rule['players']}명", *rows])
+                return Answer(message, "recommend_squad", args)
         if q.role:
             # 팀컬러를 말하지 않으면 매일 수집하는 상위 랭커 전체 기준
             wanted = q.top_n or 5

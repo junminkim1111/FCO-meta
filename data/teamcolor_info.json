@@ -54792,5 +54792,150 @@
     ]
    }
   ]
+ },
+ {
+  "id": 40672,
+  "name": "Warriors of Glory",
+  "type": "special",
+  "description": "Warriors of Glory 클래스 선수들로 구성된 팀컬러입니다.",
+  "levels": [
+   {
+    "level": 1,
+    "players": 3,
+    "effects": [
+     "전체 능력치 +1"
+    ]
+   },
+   {
+    "level": 2,
+    "players": 6,
+    "effects": [
+     "전체 능력치 +2"
+    ]
+   },
+   {
+    "level": 3,
+    "players": 8,
+    "effects": [
+     "전체 능력치 +3"
+    ]
+   }
+  ]
+ },
+ {
+  "id": 40813,
+  "name": "26 Undroppable Player",
+  "type": "special",
+  "description": "26 Undroppable Player 클래스 선수들로 구성된 팀컬러입니다.",
+  "levels": [
+   {
+    "level": 1,
+    "players": 3,
+    "effects": [
+     "전체 능력치 +1"
+    ]
+   },
+   {
+    "level": 2,
+    "players": 6,
+    "effects": [
+     "전체 능력치 +2"
+    ]
+   },
+   {
+    "level": 3,
+    "players": 8,
+    "effects": [
+     "전체 능력치 +3"
+    ]
+   }
+  ]
+ },
+ {
+  "id": 40825,
+  "name": "EVO-Energetic Player",
+  "type": "special",
+  "description": "EVO-Energetic Player 클래스 선수들로 구성된 팀컬러입니다.",
+  "levels": [
+   {
+    "level": 1,
+    "players": 3,
+    "effects": [
+     "전체 능력치 +1"
+    ]
+   },
+   {
+    "level": 2,
+    "players": 6,
+    "effects": [
+     "전체 능력치 +2"
+    ]
+   },
+   {
+    "level": 3,
+    "players": 8,
+    "effects": [
+     "전체 능력치 +3"
+    ]
+   }
+  ]
+ },
+ {
+  "id": 40574,
+  "name": "24 Energetic Player",
+  "type": "special",
+  "description": "24 Energetic Player 클래스 선수들로 구성된 팀컬러입니다.",
+  "levels": [
+   {
+    "level": 1,
+    "players": 3,
+    "effects": [
+     "전체 능력치 +1"
+    ]
+   },
+   {
+    "level": 2,
+    "players": 6,
+    "effects": [
+     "전체 능력치 +2"
+    ]
+   },
+   {
+    "level": 3,
+    "players": 8,
+    "effects": [
+     "전체 능력치 +3"
+    ]
+   }
+  ]
+ },
+ {
+  "id": 40535,
+  "name": "Champions of Europe",
+  "type": "special",
+  "description": "Champions of Europe 클래스 선수들로 구성된 팀컬러입니다.",
+  "levels": [
+   {
+    "level": 1,
+    "players": 3,
+    "effects": [
+     "전체 능력치 +1"
+    ]
+   },
+   {
+    "level": 2,
+    "players": 6,
+    "effects": [
+     "전체 능력치 +2"
+    ]
+   },
+   {
+    "level": 3,
+    "players": 8,
+    "effects": [
+     "전체 능력치 +3"
+    ]
+   }
+  ]
  }
 ]

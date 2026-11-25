@@ -1457,3 +1457,23 @@ def test_player_detail_drops_mid_word_matches_when_a_whole_word_matches(toolbox)
     toolbox.conn.commit()
     assert json.loads(toolbox.run("get_player_detail", {"player": "테스트"})[0])["matched_names"] == ["데클런 테스트"]
     assert json.loads(toolbox.run("get_player_detail", {"player": "브테스트"})[0])["matched_names"] == ["브테스트 삼바"]  # 그 이름으로 찾으면 나온다
+
+
+@pytest.mark.parametrize(("code", "label", "sid", "name"), [
+    ("WG", "WG 단일 팀", 861, "Warriors of Glory"),
+    ("26UP", "26UP팀", 878, "26 Undroppable Player"),
+    ("WS", "WS단일", 848, "Winning Streak"),
+])
+def test_season_team_lookup_and_starting_eleven(code, label, sid, name):
+    from fco_meta.web.team import _team_colors
+
+    tb = Toolbox(sqlite3.connect(":memory:"))
+    tb.conn.execute("INSERT INTO meta_season (season_id, class_name) VALUES (?, ?)", (sid, f"{code} ({name})"))
+    tc = tb._team_color(label)
+    assert tc.name == name and tb._special_need(name) == 8
+    for n in (7, 8, 11):
+        xi = [{"sp_id": (sid if i < n else 100) * 1_000_000 + i,
+               "season": code if i < n else "other", "season_key": name if i < n else "other"} for i in range(11)]
+        assert sum(tb._team_color_cards(tc)(p["sp_id"]) for p in xi) == n
+        colors = _team_colors(tb.conn, tb.catalog, tb.team_color_info, xi)
+        assert (f"{name} 단일팀 {n}명" in colors) == (n >= 8)

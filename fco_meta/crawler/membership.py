@@ -41,6 +41,9 @@ def infer_team_colors(
         special = _pick(found, "special")
         club = crest_clubs.get(crest) if crest else None
         return [t for t in (special, club) if t]
+    if special := _pick(found, "special"):
+        if len(found) == 1:
+            return [special]
     if crest:
         club = _pick(found, "club")
         return [club] if club else []

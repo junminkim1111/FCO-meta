@@ -5226,6 +5226,18 @@
   "group_id": 40486
  },
  {
+  "id": 40535,
+  "name": "Champions of Europe",
+  "category": "special",
+  "group_id": 40535
+ },
+ {
+  "id": 40574,
+  "name": "24 Energetic Player",
+  "category": "special",
+  "group_id": 40574
+ },
+ {
   "id": 40585,
   "name": "Best Legends",
   "category": "special",
@@ -5316,6 +5328,12 @@
   "group_id": 40670
  },
  {
+  "id": 40672,
+  "name": "Warriors of Glory",
+  "category": "special",
+  "group_id": 40672
+ },
+ {
   "id": 40677,
   "name": "Path to Glory",
   "category": "special",
@@ -5338,5 +5356,17 @@
   "name": "Untouchable Champions",
   "category": "special",
   "group_id": 40773
+ },
+ {
+  "id": 40813,
+  "name": "26 Undroppable Player",
+  "category": "special",
+  "group_id": 40813
+ },
+ {
+  "id": 40825,
+  "name": "EVO-Energetic Player",
+  "category": "special",
+  "group_id": 40825
  }
 ]

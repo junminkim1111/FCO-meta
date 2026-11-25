@@ -24,6 +24,7 @@ from selectolax.parser import HTMLParser
 
 from ..market.roles import POSITION_GROUPS
 from .client import DatacenterClient
+from .teamcolors import WG_TEAM_COLOR
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ def collect(client: DatacenterClient, path: Path | None = None) -> list[dict[str
     done = {(e["type"], e["id"]) for e in out}
     for kind in TYPES:
         items = parse_list(client.get("/datacenter/teamcolor", {"strTeamColorType": f",{kind},"}))
+        if kind == "special":
+            items.append((WG_TEAM_COLOR.id, WG_TEAM_COLOR.name))
         log.info("%s: %d team colors", kind, len(items))
         for n, (tc_id, name) in enumerate(items, 1):
             if (kind, tc_id) in done:
@@ -103,6 +106,7 @@ def collect(client: DatacenterClient, path: Path | None = None) -> list[dict[str
             entry = {"id": tc_id, "name": name, "type": kind, **detail}
             if kind == "relation":
                 entry["players"], entry["players_complete"] = fetch_players(client, tc_id)
+            done.add((kind, tc_id))
             out.append(entry)
             if path:
                 save(out, path)

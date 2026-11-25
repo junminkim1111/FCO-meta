@@ -21,9 +21,10 @@ from ..storage import Storage
 from . import teamcolor_info
 from .client import DatacenterClient
 from .jobs import crawl_rankings
+from .models import TeamColor
 from .parser import parse_formation_options, parse_rank_summary, parse_team_color_catalog
 from .query import RankQuery
-from .teamcolors import DEFAULT_CATALOG_PATH, TeamColorCatalog
+from .teamcolors import DEFAULT_CATALOG_PATH, WG_TEAM_COLOR, TeamColorCatalog
 
 DEFAULT_DB = Path("data/fco_meta.sqlite")
 
@@ -58,7 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     with DatacenterClient(min_interval=args.interval, raw_dir=raw_dir) as client:
         if args.command == "catalog":
             shell = client.fetch_shell()
-            catalog = TeamColorCatalog(parse_team_color_catalog(shell))
+            entries = parse_team_color_catalog(shell)
+            specials = teamcolor_info.parse_list(client.get("/datacenter/teamcolor", {"strTeamColorType": ",special,"}))
+            seasons = {i: TeamColor(i, name, "special", i) for i, name in specials}
+            seasons[WG_TEAM_COLOR.id] = WG_TEAM_COLOR
+            catalog = TeamColorCatalog([t for t in entries if t.id not in seasons] + list(seasons.values()))
             catalog.save(args.out)
             print(f"{len(catalog.entries)} team colors → {args.out}")
             print(f"formations: {', '.join(parse_formation_options(shell))}")
