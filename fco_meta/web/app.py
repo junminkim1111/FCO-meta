@@ -1001,7 +1001,7 @@ def create_app(
 
     @app.get("/changelog", include_in_schema=False)
     def changelog_page() -> FileResponse:
-        return FileResponse(STATIC_DIR / "changelog.html")  # 업데이트 내역 (가이드 '데이터 & 문의'에서 링크)
+        return FileResponse(STATIC_DIR / "changelog.html")  # 업데이트 내역
 
     @app.get("/send", include_in_schema=False)
     def send_page() -> FileResponse:

@@ -18,22 +18,48 @@
 <meta name="theme-color" content="#101116">
 <link rel="stylesheet" href="/static/guide.css">
 <style>
-  main section[id] { scroll-margin-top: 24px; } /* 날짜 링크로 오면 그 줄이 화면 맨 위에 멈춘다 */
-  @media (max-width: 860px) { main section[id] { scroll-margin-top: 72px; } } /* 좁은 화면: 위에 붙은 목차만큼 */
-  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
-  .cl-nav-title { display: block; font-size: 12px; opacity: .75; } /* 목차: 날짜(버전) 아래 제목 */
-  /* 목차 왼쪽 세로선, 누른 항목은 그 높이의 선 위에 점 */
-  .g-side nav.cl-nav { position: relative; padding-left: 14px; }
-  .g-side nav.cl-nav::before { content: ""; position: absolute; left: 3px; top: 4px; bottom: 4px; width: 1px; background: var(--line-strong); }
-  .cl-nav a { position: relative; }
-  .cl-nav a[aria-current="location"] { color: var(--text); }
-  .cl-nav a[aria-current="location"]::before { content: ""; position: absolute; left: -14.5px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px;
-                                               border-radius: 50%; background: var(--accent); }
-  @media (max-width: 860px) { /* 좁은 화면: 목차가 가로라 선·점 대신 테두리 */
-    .cl-nav-title { display: inline; margin-left: 6px; }
-    .g-side nav.cl-nav { padding-left: 14px; } .g-side nav.cl-nav::before, .cl-nav a[aria-current="location"]::before { display: none; }
-    .cl-nav a[aria-current="location"] { border-color: var(--accent); }
+  .g-layout {
+    grid-template-columns: 200px minmax(0, 1fr) 200px;
+    grid-template-areas: "guide content updates" "home home home";
+    row-gap: 0;
   }
+  .g-side { grid-area: guide; }
+  main { grid-area: content; }
+  .g-layout > .g-home { grid-area: home; margin: 64px 0 40px; }
+  .cl-nav {
+    grid-area: updates;
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    margin-top: 164px; /* 본문 제목 아래 구분선과 여백 */
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+  }
+  .cl-nav h2 { margin: 0 0 12px; font-size: 14px; }
+  .cl-nav a {
+    display: block;
+    padding: 6px 12px;
+    border-inline-start: 1px solid var(--line-strong);
+    color: var(--muted);
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .cl-nav a:hover, .cl-nav a[aria-current="location"] { color: var(--text); }
+  .cl-nav a[aria-current="location"] { border-color: var(--accent); }
+  .cl-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .cl-nav-title { display: block; font-size: 12px; }
+  main section[id] { scroll-margin-top: 24px; }
+  @media (max-width: 1024px) {
+    .g-layout { grid-template-columns: 200px minmax(0, 1fr); grid-template-areas: "guide updates" "guide content" "home home"; }
+    .cl-nav { position: static; display: flex; align-items: center; gap: 8px; margin-top: 24px; }
+    .cl-nav h2 { flex: none; margin: 0 4px 0 0; }
+    .cl-nav a { flex: none; border: 1px solid var(--line); border-radius: 8px; }
+  }
+  @media (max-width: 860px) {
+    .g-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "guide" "updates" "content" "home"; }
+    main section[id] { scroll-margin-top: 72px; }
+  }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
   .cl-meta { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
   .g-block h2 { margin-top: 0; font-size: 17px; } /* 버전 제목 (가이드 h2보다 작게) */
   main section.g-block > p:not(.cl-meta) { color: #b4b4bd; } /* 설명 줄은 제목보다 살짝 회색 */
@@ -49,7 +75,18 @@
 <div class="g-layout">
   <aside class="g-side"><div class="g-side-in">
     <a class="g-logo" href="/" aria-label="FCLM 홈으로"><img src="/static/fclm-logo.png" alt="" width="132" height="28"></a>
-  <nav class="cl-nav" aria-label="업데이트 날짜"> <!-- 최신 날짜가 위. 누르면 그 날짜 줄로 간다 -->
+  <nav aria-label="가이드 목차">
+      <a href="/guide">가이드 홈</a>
+      <a href="/guide/screen">화면 둘러보기</a>
+      <a href="/guide/ask">질문하기</a>
+      <a href="/guide/team">@구단주명</a>
+      <a href="/guide/feed">#스쿼드 피드 ID</a>
+      <a href="/guide/send">스쿼드메이커로 내보내기</a>
+      <a href="/guide/data">데이터 & 문의</a>
+      <a href="/changelog" aria-current="page">업데이트 내역</a>
+  </nav></div></aside>
+  <nav class="cl-nav" aria-labelledby="cl-nav-heading">
+    <h2 id="cl-nav-heading">업데이트 목차</h2>
       <a href="#2026-11-25-3">2026-11-25 (V1.2.4)<span class="cl-nav-title">[기능개선] 랭커 데이터에 컨트롤러 정보 추가</span></a>
       <a href="#2026-11-25-2">2026-11-25 (V1.2.3)<span class="cl-nav-title">[버그수정] 시즌단일 미인식 문제 해결</span></a>
       <a href="#2026-11-25">2026-11-25 (V1.2.2)<span class="cl-nav-title">[기능개선] 답변 속도 개선</span></a>
@@ -57,9 +94,9 @@
       <a href="#2026-11-23">2026-11-23 (V1.2.0)<span class="cl-nav-title">[기능개선] 오래 걸리는 질문도 끝까지 답변</span></a>
       <a href="#2026-11-21">2026-11-21 (V1.1.0)<span class="cl-nav-title">[기능추가] @구단주 플레이스타일 분석</span></a>
       <a href="#2026-11-19">2026-11-19 (V1.0.0)<span class="cl-nav-title">[출시] 베타 테스트 시작</span></a>
-  </nav></div></aside>
+  </nav>
 <main>
-  <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / <a href="/guide/data">데이터 & 문의</a> / 업데이트 내역</nav>
+  <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / 업데이트 내역</nav>
 
   <h1>업데이트 내역</h1>
   <!-- 새 버전은 이 줄 바로 아래(맨 위)에, 목차에도 맨 위에 한 줄. 모양:
@@ -103,12 +140,11 @@
     <h2><span class="cl-cat">[출시]</span> 베타 테스트 시작</h2>
     <p>FCLM 베타 테스트를 시작했어요.</p>
   </section>
-  <p class="g-home"><a href="/guide/data">데이터 & 문의로</a><a href="/">FCLM 메인으로</a></p>
 </main>
+  <p class="g-home"><a href="/guide">가이드 홈으로</a><a href="/">FCLM 메인으로</a></p>
 </div>
 <script type="module" src="/static/guide.js"></script>
 <script>
-  // 누른(주소의 #날짜) 목차 항목에 점
   const mark = () => document.querySelectorAll(".cl-nav a").forEach((a) =>
     a.getAttribute("href") === location.hash ? a.setAttribute("aria-current", "location") : a.removeAttribute("aria-current"));
   addEventListener("hashchange", mark);

@@ -84,8 +84,9 @@ def test_guide_pages_and_their_files(client):
         assert page.status_code == 200 and (topic == "data" or 'data-scene="' in page.text)  # 사용법 페이지마다 움직이는 화면
         for src in re.findall(r'(?:src|href)="(/static/[^"]+)"', page.text):  # 그림·스타일·스크립트가 모두 있다
             assert client.get(src).status_code == 200, src
-    assert 'href="/changelog"' in client.get("/guide/data").text  # 데이터 & 문의 → 업데이트 내역
-    assert "업데이트 내역" in client.get("/changelog").text
+    for path in ("/guide", *(f"/guide/{topic}" for topic in GUIDE_TOPICS)):
+        assert 'href="/changelog">업데이트 내역</a>' in client.get(path).text
+    assert 'href="/changelog" aria-current="page">업데이트 내역</a>' in client.get("/changelog").text
     # 없는 페이지는 404 페이지(홈·가이드 버튼), API·정적 파일은 그대로 짧은 오류
     for path in ("/guide/nope", "/없는-주소"):
         page = client.get(path)
