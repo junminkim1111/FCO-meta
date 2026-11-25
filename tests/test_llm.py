@@ -353,7 +353,7 @@ def test_cancel_stops_the_model_loop(toolbox):  # noqa: F811
 
 
 @pytest.mark.parametrize("base_url", ["https://apis.opengateway.ai/v1", "https://openrouter.ai/api/v1"])
-def test_gateway_records_stream_cost_and_id_even_if_interrupted(toolbox, base_url):  # noqa: F811
+def test_gateway_records_ids_without_using_stream_cost(toolbox, base_url):  # noqa: F811
     from fco_meta.chatbot.llm import OpenAIChat
 
     replies = [
@@ -367,6 +367,28 @@ def test_gateway_records_stream_cost_and_id_even_if_interrupted(toolbox, base_ur
     stream.close()
     assert chat.cost_calls == [{"gateway": base_url, "id": "gen-interrupted", "cost": None}]
     chat.ask("다시 질문")
-    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-free", "cost": 0}]
+    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-free", "cost": None}]
     chat.ask("또 질문")
-    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-paid", "cost": 0.000012}]
+    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-paid", "cost": None}]
+
+
+@pytest.mark.parametrize("base_url", ["https://apis.opengateway.ai/v1", "https://openrouter.ai/api/v1"])
+def test_generation_cost_lookup_retries_a_pending_charge(toolbox, base_url):  # noqa: F811
+    import httpx
+
+    from fco_meta.chatbot.llm import OpenAIChat
+
+    requests = []
+
+    def response(request):
+        requests.append(request)
+        assert request.method == "GET" and str(request.url) == base_url + "/generation?id=gen-pending"
+        assert request.headers["Authorization"] == "Bearer test"
+        if len(requests) == 1:
+            return httpx.Response(404, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"data": {"total_cost": 0.001234}})
+
+    with httpx.Client(transport=httpx.MockTransport(response)) as http:
+        chat = OpenAIChat(http, toolbox, model="m", base_url=base_url, api_key="test")
+        assert chat.lookup_cost("gen-pending") == 0.001234
+    assert len(requests) == 2

@@ -15,6 +15,7 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, closing, contextmanager
 from datetime import datetime
 from urllib.parse import urlsplit
@@ -553,6 +554,7 @@ def create_app(
     beta = BetaGate(os.environ.get("BETA_KEY_HASHES", "").split(","), int(os.environ.get("BETA_PER_DAY", "30")), os.environ.get("BETA_CLOSED") == "1", admin_key=admin_key,
                     trial_per_day=int(os.environ.get("BETA_TRIAL_PER_DAY", "200")))  # 체험 질문 하루 합계 (방문자당 TRIAL_PER_VISITOR)
     chat_log = chat_log or ChatLog()
+    cost_workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat-cost")
     visits = VisitTracker(os.environ.get("VISIT_SALT") or admin_key, chat_log.now)
     admin = AdminGuard(admin_key)
     if not db_path.exists():
@@ -598,6 +600,7 @@ def create_app(
         yield
         # 서버가 꺼질 때(배포·Render가 잠재울 때) 남은 기록을 올린다. uvicorn.run이 끝난 뒤에 하면 uvicorn이 SIGTERM을
         # 다시 일으켜 프로세스가 먼저 끝나 버린다 (2026-11-15 배포 사이에 한 대화의 기록이 사라짐)
+        await anyio.to_thread.run_sync(cost_workers.shutdown)
         chat_log.flush()
 
     app = FastAPI(title="FCO 랭커 메타", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
@@ -783,6 +786,15 @@ def create_app(
 
         cancel = threading.Event()  # 연결이 끊기면 _close_on_disconnect가 켠다 → 모델 요청·도구가 다음 줄에서 멈춘다
 
+        def settle_cost(record: dict[str, Any], lookup_cost: Callable[[str], float | None]) -> None:
+            calls = [dict(call) for call in record["cost_calls"]]
+            try:
+                for call in calls:
+                    if generation_id := call.get("id"):
+                        call["cost"] = lookup_cost(generation_id)
+            finally:
+                chat_log.finish_cost(record, calls)
+
         def events():
             # 관리자 페이지용 기록: 끝까지 가지 못하고 닫히면(사용자가 정지·연결 끊김) cancelled로 남는다
             started = time.monotonic()
@@ -802,7 +814,13 @@ def create_app(
                 if entry["outcome"] == "cancelled":  # 끊긴 질문: 어디까지 썼는지 (생각만 하다 끊겼는지, 답을 쓰다 멈췄는지)
                     entry["sent_chars"] = len(keep.sent)
                     keep.answer = keep.answer or (keep.sent + " …(여기서 끊김)" if keep.sent else None)
-                chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
+                lookup_cost = entry.pop("_lookup_cost", None)
+                pending_cost = bool(lookup_cost and any(call.get("id") for call in entry.get("cost_calls", [])))
+                if pending_cost:
+                    entry["cost_pending"] = True
+                record = chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
+                if pending_cost:
+                    cost_workers.submit(settle_cost, record, lookup_cost)
 
         def answer_events(entry: dict[str, Any], keep: _TraceLog, ask: str, team: Team | None):
             yield _event(type="start", session_id=session_id)
@@ -882,10 +900,8 @@ def create_app(
                     if tokens:
                         entry["tokens"] = tokens
                     if cost_calls := getattr(bot, "cost_calls", None):
-                        entry["cost_calls"] = list(cost_calls)
-                        costs = [call["cost"] for call in cost_calls if call["cost"] is not None]
-                        if costs:
-                            entry["cost"] = sum(costs)
+                        entry["cost_calls"] = [{**call, "cost": None} for call in cost_calls]
+                        entry["_lookup_cost"] = getattr(bot, "lookup_cost", None)
                 session.answered(key, ask, turn.text, req.message, turn.tool_calls)  # 팀 블록째 남겨 이어지는 질문도 그 팀을 안다
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)

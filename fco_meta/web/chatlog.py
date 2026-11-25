@@ -32,7 +32,7 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(모델·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
 # · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
 # · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
-# 모델을 부른 질문은 tokens·cost 및 cost_calls(게이트웨이 응답 기준 USD), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified
+# 모델을 부른 질문은 tokens·cost 및 cost_calls(게이트웨이 조회 기준 USD), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified
 # 답 아래 👍/👎(가끔만 보임)는 feedback 기록(ref = 그 질문의 id, vote = up·down)으로 따로 남아 그 질문의 vote가 된다
 # visit(페이지 방문 — path·ref·device·v·key)와 beta_check(베타 키 입력 성공·실패 — ok)는 질문이 아니라서 OUTCOMES에 없고,
 # 질문 집계·Traces·키별 하루 제한에서 빼고 summary()["visits"]로만 센다 (NON_QUESTIONS)
@@ -135,7 +135,7 @@ class ChatLog:
         self.cleaned: str | None = None  # 지난 trace·답변을 마지막으로 지운 날
         self.lock = threading.Lock()
 
-    def record(self, detail: dict[str, Any] | None = None, **fields: Any) -> None:
+    def record(self, detail: dict[str, Any] | None = None, **fields: Any) -> dict[str, Any]:
         """One question. `detail` = {"trace": [...], "answer": "..."} — kept DETAIL_DAYS, reachable by the record's id."""
         entry = {"t": datetime.fromtimestamp(self.now(), KST).isoformat(timespec="seconds"), **fields}
         with self.lock:
@@ -146,6 +146,12 @@ class ChatLog:
             for pending in (self.pending, self.details_pending):
                 if self.store and len(pending) > MAX_PENDING:
                     del pending[: len(pending) - MAX_PENDING]
+        return entry
+
+    def finish_cost(self, entry: dict[str, Any], calls: list[dict[str, Any]]) -> None:
+        costs = [call["cost"] for call in calls if call["cost"] is not None]
+        with self.lock:
+            entry.update(cost_pending=False, cost_calls=calls, **({"cost": sum(costs)} if costs else {}))
 
     def flush(self) -> None:
         """Write what is pending to the store (kept for the next try if that fails); once a day, drop old details and
@@ -155,8 +161,10 @@ class ChatLog:
         now = datetime.fromtimestamp(self.now(), KST)
         for name, folder in (("pending", "logs"), ("details_pending", "details")):
             with self.lock:
-                batch = getattr(self, name)
-                setattr(self, name, [])
+                rows = getattr(self, name)
+                # 조회 중인 기록은 비용이 채워진 다음 한 번만 올린다.
+                batch = [r for r in rows if not r.get("cost_pending")]
+                setattr(self, name, [r for r in rows if r.get("cost_pending")])
             if not batch:
                 continue
             try:
@@ -268,7 +276,7 @@ class ChatLog:
         since = (datetime.fromtimestamp(self.now(), KST) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
         stored = self.store.read(since) if self.store else []
         with self.lock:
-            pending = list(self.pending)
+            pending = [dict(r) for r in self.pending]
         everything = sorted((r for r in stored + pending if r["t"][:10] >= since), key=lambda r: r["t"])
         raw, everything = everything, [r for r in everything if r["outcome"] not in NON_QUESTIONS]
         picks = {r["compare_id"]: r["pane"] for r in everything if r["outcome"] == "compare_pick"}
@@ -326,7 +334,8 @@ class ChatLog:
             "votes": dict(Counter(r["vote"] for r in records if r.get("vote"))),
             "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 8)} for d, c in sorted(by_day.items(), reverse=True)],
             "cost": round(sum(cost_by_day.values()), 8),
-            "cost_incomplete": sum(any(call["cost"] is None for call in r.get("cost_calls", [])) for r in records),
+            "cost_pending": sum(bool(r.get("cost_pending")) for r in records),
+            "cost_incomplete": sum(not r.get("cost_pending") and any(call["cost"] is None for call in r.get("cost_calls", [])) for r in records),
             "by_key": sorted(({**k, "cost": round(k["cost"], 8)} for k in by_key.values()), key=lambda k: (k["key"] == "admin", -k["questions"], k["key"])),
             "visits": self._visits(raw, records),
             "unverified": sum(1 for r in records if r.get("unverified")),

@@ -248,7 +248,7 @@
       <div class="card scroll" id="models"></div>
       <div class="card"><header><h2>베타 키별</h2></header><div class="scroll" id="by-key"></div></div>
       <div class="card"><header><h2>날짜별 게이트웨이 비용</h2></header><div class="scroll" id="cost-days"></div></div>
-      <p class="note">비용은 게이트웨이가 응답마다 알려준 USD 값의 합계입니다. 값을 주지 않은 호출은 '미확인'으로 표시하고, 비용 항목이 없는 옛 기록만 토큰 단가로 셈한 '(추정)' 값입니다. /compare 칸마다의 호출도 포함합니다.</p>
+      <p class="note">비용은 게이트웨이에 응답 ID로 조회한 USD 값의 합계입니다(조회가 끝나기 전에는 '조회 중'). 값을 주지 않은 호출은 '미확인'으로 표시하고, 비용 항목이 없는 옛 기록만 토큰 단가로 셈한 '(추정)' 값입니다. /compare 칸마다의 호출도 포함합니다.</p>
     </section>
 
 
@@ -286,6 +286,7 @@ const el = (tag, props = {}, ...kids) => {
 const api = (path, options = {}) => fetch(path, { ...options, headers: { "X-Admin-Key": adminKey } });
 const usd = (v) => "$" + (v || 0).toFixed(v >= 1 ? 2 : v > 0 && v < 0.0001 ? 8 : 4);
 const costLabel = (r) => {
+  if (r.cost_pending) return "조회 중";
   if (r.cost_calls?.some((call) => call.cost == null)) return r.cost == null ? "미확인" : usd(r.cost) + " (일부 미확인)";
   if (r.cost == null) return "";
   return usd(r.cost) + (r.cost_calls?.length ? "" : " (추정)");
@@ -464,6 +465,7 @@ function conversations(records) {
     ms: sum(turns, "ms"), tokens: sum(turns, "tokens"),
     cost: sum(turns.some((x) => x.cost_calls?.length) ? turns.filter((x) => x.cost_calls?.length) : turns, "cost"),
     cost_calls: turns.flatMap((x) => x.cost_calls || []),
+    cost_pending: turns.some((x) => x.cost_pending),
     error: turns.find((x) => x.error)?.error, unverified: turns.flatMap((x) => x.unverified || []).join(", ") ? turns.flatMap((x) => x.unverified || []) : undefined,
     vote: turns.some((x) => x.vote === "down") ? "down" : turns.some((x) => x.vote === "up") ? "up" : undefined,
   })).sort((a, b) => (a.t < b.t ? 1 : -1));
@@ -500,7 +502,10 @@ function renderVisits() {
 function renderModels() {
   const ms = data.by_model || [], calls = ms.reduce((s, m) => s + m.calls, 0), errs = ms.reduce((s, m) => s + m.errors, 0);
   $("model-kpis").replaceChildren(kpi("API 호출", num(calls)), kpi("오류율", pct(errs, calls), `${num(errs)}건`), kpi("토큰", num(data.tokens)),
-    kpi("게이트웨이 비용", usd(data.cost), data.cost_incomplete ? `비용 미확인 질문 ${num(data.cost_incomplete)}건` : ""));
+    kpi("게이트웨이 비용", usd(data.cost), [
+      data.cost_pending ? `조회 중 ${num(data.cost_pending)}건` : "",
+      data.cost_incomplete ? `미확인 ${num(data.cost_incomplete)}건` : "",
+    ].filter(Boolean).join(" · ")));
   $("models").replaceChildren(ms.length ? table(["모델", "호출", "오류", "토큰", "비용", "p50", "p95", "비중"], ms.map((m) =>
     el("tr", {}, el("td", { class: "mono", text: m.model }), el("td", { class: "n", text: num(m.calls) }),
       el("td", { class: "n" + (m.errors ? " error-o" : ""), text: m.errors ? `${num(m.errors)} (${pct(m.errors, m.calls)})` : "0" }),

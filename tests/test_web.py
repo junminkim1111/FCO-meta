@@ -669,33 +669,74 @@ def test_feedback_joins_the_question_on_the_admin_page(db, tmp_path, monkeypatch
 
 
 def test_each_question_logs_its_model_cost_and_unverified_numbers(db, tmp_path, monkeypatch):  # noqa: F811
+    import threading
     from collections import Counter
 
     import fco_meta.web.app as web_app
     from fco_meta.web.chatlog import ChatLog
 
-    class Billed(Recorder):  # 질문마다 토큰을 쓰고, 두 번째 답에는 확인 안 된 수치가 남는다
+    release_lookup = threading.Event()
+    looked_up = []
+
+    class Billed(Recorder):
         def ask_stream(self, message, **options):
             self.billed.setdefault("openai/gpt-6-luna", Counter()).update(input=1_000_000, output=100_000)
             second = "둘째" in message
-            self.cost_calls = [{"id": "gen-1", "cost": 0 if second else 0.012}, {"id": "gen-2", "cost": None if second else 0.008}]
+            self.cost_calls = [{"id": "gen-free" if second else "gen-1", "cost": 9},
+                               {"id": "gen-missing" if second else "gen-2", "cost": None}]
             self.unverified = ["99.9%"] if second else []
             return (yield from super().ask_stream(message, **options))
+
+        def lookup_cost(self, generation_id):
+            assert release_lookup.wait(3)
+            looked_up.append(generation_id)
+            return {"gen-1": 0.012, "gen-2": 0.008, "gen-free": 0}.get(generation_id)
 
     bot = Billed("luna", [])
     bot.billed, bot.unverified = {}, []
     monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: bot)
     log = ChatLog()
-    client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm", chat_log=log, admin_key="secret"))
-    _, done = ask(client, "첫째 질문")
-    ask(client, "둘째 질문", session_id=done["session_id"])
+    app = create_app(tmp_path / "db.sqlite", backend="llm", chat_log=log, admin_key="secret")
+    with TestClient(app) as client:
+        try:
+            _, done = ask(client, "첫째 질문")
+            ask(client, "둘째 질문", session_id=done["session_id"])
+            pending = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
+            assert pending["cost"] == 0 and pending["cost_pending"] == 2 and pending["cost_incomplete"] == 0
+        finally:
+            release_lookup.set()
+
     first, second = log.pending
+    assert sorted(looked_up) == ["gen-1", "gen-2", "gen-free", "gen-missing"]
     assert first["tokens"] == 1_100_000 and first["cost"] == 0.02
     assert second["cost"] == 0 and second["unverified"] == ["99.9%"] and "unverified" not in first
-    summary = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
+    summary = log.summary()
     assert summary["cost"] == 0.02 and summary["unverified"] == 1 and summary["by_day"][0]["cost"] == 0.02
-    assert summary["cost_incomplete"] == 1
-    assert second["cost_calls"][1] == {"id": "gen-2", "cost": None}
+    assert summary["cost_pending"] == 0 and summary["cost_incomplete"] == 1
+    assert second["cost_calls"][1] == {"id": "gen-missing", "cost": None}
+
+
+def test_cost_lookup_finishes_before_question_log_is_uploaded():
+    from fco_meta.web.chatlog import ChatLog
+
+    class Store:
+        def __init__(self):
+            self.records = []
+
+        def write(self, records, now, folder):
+            assert folder == "logs"
+            self.records.extend(dict(record) for record in records)
+
+    store = Store()
+    log = ChatLog(store, now=lambda: 0)
+    log.cleaned = "1970-01-01"
+    original = log.record(outcome="ok", cost_pending=True, cost_calls=[{"id": "gen-1", "cost": None}])
+    log.flush()
+    assert not store.records and log.pending == [original]
+    log.finish_cost(original, [{"id": "gen-1", "cost": 0}])
+    log.flush()
+    assert not log.pending and len(store.records) == 1
+    assert store.records[0]["cost"] == 0 and not store.records[0]["cost_pending"]
 
 
 def test_model_command_picks_the_model(db, tmp_path, monkeypatch):  # noqa: F811

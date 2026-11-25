@@ -170,7 +170,7 @@ class ToolChat:
         self.deadline = ANSWER_DEADLINE
         self.history: list[tuple[str, str]] = []  # (질문, 답)
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
-        self.cost_calls: list[dict[str, Any]] = []  # 이번 질문의 API 호출별 응답 ID와 USD 비용
+        self.cost_calls: list[dict[str, Any]] = []  # 이번 질문의 API 호출별 응답 ID
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치
         self._ends_at = float("inf")
@@ -401,6 +401,25 @@ class OpenAIChat(ToolChat):
         self.tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                         "parameters": t["input_schema"]}} for t in tools_for(self.judge)]  # fmt: skip
 
+    def lookup_cost(self, generation_id: str) -> float | None:
+        if self.base_url not in (self.DEFAULT_BASE_URL, "https://apis.opengateway.ai/v1"):
+            return None
+        try:
+            for attempt in range(2):
+                res = self.http.get(f"{self.base_url}/generation", params={"id": generation_id},
+                                    headers={"Authorization": f"Bearer {self.api_key}"}, timeout=2.0)
+                if res.status_code == 404 and attempt == 0:
+                    delay = float(res.headers.get("Retry-After", "2"))
+                    if 0 <= delay <= 2:
+                        time.sleep(delay)
+                        continue
+                res.raise_for_status()
+                cost = res.json()["data"]["total_cost"]
+                return cost if type(cost) in (int, float) and 0 <= cost < float("inf") else None
+        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+            return None
+        return None
+
     def _start(self, question: str) -> list[dict[str, Any]]:
         return [{"role": "system", "content": self.prompt}, *super()._start(question)]
 
@@ -455,11 +474,10 @@ class OpenAIChat(ToolChat):
         except httpx.TimeoutException:
             raise AnswerTimeout(f"{self.model} 응답 없음 (상한 {self._deadline:.0f}초)") from None
         finally:
-            cost = usage.get("cost")
             self.cost_calls.append({
                 "gateway": self.base_url,
                 "id": generation_id,
-                "cost": cost if type(cost) in (int, float) and 0 <= cost < float("inf") else None,
+                "cost": None,
             })
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
         self.billed.setdefault(self.model, Counter()).update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))
