@@ -35,8 +35,12 @@
     .cl-nav a[aria-current="location"] { border-color: var(--accent); }
   }
   .cl-meta { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
-  .g-block h2 { margin-top: 0; }
-  .g-block h3 { margin: 20px 0 8px; font-size: 14px; color: var(--muted); } /* 고친 점·개선 */
+  .g-block h2 { margin-top: 0; font-size: 17px; } /* 버전 제목 (가이드 h2보다 작게) */
+  main section.g-block > p:not(.cl-meta) { color: #b4b4bd; } /* 설명 줄은 제목보다 살짝 회색 */
+  .cl-cat { color: var(--accent); } /* [기능추가] 같은 분류 */
+  main h1 { padding-bottom: 24px; margin-bottom: 40px; border-bottom: 1px solid var(--line); } /* 제목과 첫 버전 사이 구분선 */
+  main section.g-block { padding: 0; margin: 0 0 40px; background: none; border: 0; border-radius: 0; } /* 네모칸 없이 */
+  main section.g-block > :not(.cl-meta, h2) { margin-left: 16px; } /* 제목 아래 세부내용은 들여쓰기 */
 </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1315876984941536"
      crossorigin="anonymous"></script>
@@ -46,30 +50,45 @@
   <aside class="g-side"><div class="g-side-in">
     <a class="g-logo" href="/" aria-label="FCLM 홈으로"><img src="/static/fclm-logo.png" alt="" width="132" height="28"></a>
   <nav class="cl-nav" aria-label="업데이트 날짜"> <!-- 최신 날짜가 위. 누르면 그 날짜 줄로 간다 -->
-      <a href="#2026-11-25">2026-11-25 (V1.0.1)<span class="cl-nav-title">[성능 개선] tool calling 속도 최적화</span></a>
-      <a href="#2026-11-19">2026-11-19 (V1.0.0)<span class="cl-nav-title">베타 테스트 시작</span></a>
+      <a href="#2026-11-25">2026-11-25 (V1.2.2)<span class="cl-nav-title">[기능개선] 답변 속도 개선</span></a>
+      <a href="#2026-11-24">2026-11-24 (V1.2.1)<span class="cl-nav-title">[버그수정] 답변 안정성 개선</span></a>
+      <a href="#2026-11-23">2026-11-23 (V1.2.0)<span class="cl-nav-title">[기능개선] 오래 걸리는 질문도 끝까지 답변</span></a>
+      <a href="#2026-11-21">2026-11-21 (V1.1.0)<span class="cl-nav-title">[기능추가] @구단주 플레이스타일 분석</span></a>
+      <a href="#2026-11-19">2026-11-19 (V1.0.0)<span class="cl-nav-title">[출시] 베타 테스트 시작</span></a>
   </nav></div></aside>
 <main>
   <nav class="crumb" aria-label="현재 위치"><a href="/">홈</a> / <a href="/guide">가이드</a> / <a href="/guide/data">데이터 & 문의</a> / 업데이트 내역</nav>
 
   <h1>업데이트 내역</h1>
-  <p class="lead">FCLM에 바뀐 점을 최신순으로 모았어요.</p>
   <!-- 새 버전은 이 줄 바로 아래(맨 위)에, 목차에도 맨 위에 한 줄. 모양:
   <section class="g-block" id="날짜">
     <p class="cl-meta"><time datetime="날짜">날짜</time> (V버전)</p>
-    <h2>한 줄 제목</h2>
-    <p>새 기능을 문장으로</p>
-    <h3>고친 점·개선</h3>  (없으면 h3·ul 둘 다 뺀다)
-    <ul><li>…</li></ul>
+    <h2><span class="cl-cat">[기능추가·기능개선·버그수정]</span> 한 줄 제목</h2>  (목차에도 [분류] 제목)
+    <p>바뀐 점 한 줄 (많으면 &lt;br&gt;로 두세 줄까지)</p>
   </section> -->
   <section class="g-block" id="2026-11-25">
-    <p class="cl-meta"><time datetime="2026-11-25">2026-11-25</time> (V1.0.1)</p>
-    <h2>[성능 개선] tool calling 속도 최적화</h2>
+    <p class="cl-meta"><time datetime="2026-11-25">2026-11-25</time> (V1.2.2)</p>
+    <h2><span class="cl-cat">[기능개선]</span> 답변 속도 개선</h2>
     <p>도구 호출이 느려지던 부분을 고쳐 답이 더 빨리 나오게 했어요.</p>
+  </section>
+  <section class="g-block" id="2026-11-24">
+    <p class="cl-meta"><time datetime="2026-11-24">2026-11-24</time> (V1.2.1)</p>
+    <h2><span class="cl-cat">[버그수정]</span> 답변 안정성 개선</h2>
+    <p>답변을 멈추거나 화면을 떠나도 다음 질문이 막히지 않아요.<br>답변 과정의 생각 시간도 단계마다 제대로 표시돼요.</p>
+  </section>
+  <section class="g-block" id="2026-11-23">
+    <p class="cl-meta"><time datetime="2026-11-23">2026-11-23</time> (V1.2.0)</p>
+    <h2><span class="cl-cat">[기능개선]</span> 오래 걸리는 질문도 끝까지 답변</h2>
+    <p>5분이 지나면 그때까지 찾은 내용으로 답을 마무리해요.<br>'백금 팀' 기준을 정리하고, 일부 선수 질문에서 나던 오류를 고쳤어요.</p>
+  </section>
+  <section class="g-block" id="2026-11-21">
+    <p class="cl-meta"><time datetime="2026-11-21">2026-11-21</time> (V1.1.0)</p>
+    <h2><span class="cl-cat">[기능추가]</span> @구단주 플레이스타일 분석</h2>
+    <p>@구단주명으로 불러온 팀의 최근 20경기를 분석해요.<br>스쿼드 화면에 신규특성 아이콘과 카드 가격이 보이고, 키 없이도 하루 10개까지 질문할 수 있어요.</p>
   </section>
   <section class="g-block" id="2026-11-19">
     <p class="cl-meta"><time datetime="2026-11-19">2026-11-19</time> (V1.0.0)</p>
-    <h2>베타 테스트 시작</h2>
+    <h2><span class="cl-cat">[출시]</span> 베타 테스트 시작</h2>
     <p>FCLM 베타 테스트를 시작했어요.</p>
   </section>
   <p class="g-home"><a href="/guide/data">데이터 & 문의로</a><a href="/">FCLM 메인으로</a></p>
