@@ -677,7 +677,9 @@ def test_each_question_logs_its_model_cost_and_unverified_numbers(db, tmp_path, 
     class Billed(Recorder):  # 질문마다 토큰을 쓰고, 두 번째 답에는 확인 안 된 수치가 남는다
         def ask_stream(self, message, **options):
             self.billed.setdefault("openai/gpt-6-luna", Counter()).update(input=1_000_000, output=100_000)
-            self.unverified = ["99.9%"] if "둘째" in message else []
+            second = "둘째" in message
+            self.cost_calls = [{"id": "gen-1", "cost": 0 if second else 0.012}, {"id": "gen-2", "cost": None if second else 0.008}]
+            self.unverified = ["99.9%"] if second else []
             return (yield from super().ask_stream(message, **options))
 
     bot = Billed("luna", [])
@@ -688,19 +690,12 @@ def test_each_question_logs_its_model_cost_and_unverified_numbers(db, tmp_path, 
     _, done = ask(client, "첫째 질문")
     ask(client, "둘째 질문", session_id=done["session_id"])
     first, second = log.pending
-    assert first["tokens"] == 1_100_000 and first["cost"] == 0.15  # 이 질문 몫만 (100만×0.1달러 + 10만×0.5달러)
-    assert second["cost"] == 0.15 and second["unverified"] == ["99.9%"] and "unverified" not in first
+    assert first["tokens"] == 1_100_000 and first["cost"] == 0.02
+    assert second["cost"] == 0 and second["unverified"] == ["99.9%"] and "unverified" not in first
     summary = client.get("/api/admin/logs", headers={"X-Admin-Key": "secret"}).json()
-    assert summary["cost"] == 0.3 and summary["unverified"] == 1 and summary["by_day"][0]["cost"] == 0.3
-
-
-def test_prices_are_picked_by_model_name():
-    from collections import Counter
-
-    import fco_meta.web.app as web_app
-
-    billed = Counter({("openai/gpt-6-luna", "input"): 1_000_000, ("deepseek/deepseek-v4.1-flash-eco", "output"): 1_000_000, ("unknown", "input"): 5})
-    assert web_app._cost(billed) == {"tokens": 2_000_005, "cost": 0.22}  # 0.10 + 0.12 (OpenGateway 할인가), 단가 모르는 모델은 토큰만
+    assert summary["cost"] == 0.02 and summary["unverified"] == 1 and summary["by_day"][0]["cost"] == 0.02
+    assert summary["cost_incomplete"] == 1
+    assert second["cost_calls"][1] == {"id": "gen-2", "cost": None}
 
 
 def test_model_command_picks_the_model(db, tmp_path, monkeypatch):  # noqa: F811

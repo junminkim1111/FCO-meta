@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import uuid
-from collections import Counter, OrderedDict, deque
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable
 from contextlib import asynccontextmanager, closing, contextmanager
 from datetime import datetime
@@ -54,10 +54,6 @@ DEEPSEEK_BASE_URL = "https://apis.opengateway.ai/v1"
 LONG_DEADLINE = 360.0  # 모델로 답하는 질문의 대기 상한(초)
 WRAP_UP_AFTER = 300.0  # 이만큼 지나면 더 부르지 않고 생각도 끈 채 지금까지의 결과로 답을 쓴다
 WARM_FORMATIONS, WARM_TEAM_COLORS = 15, 20  # 서버가 켜질 때 미리 계산할 상세 (화면의 더보기 범위와 같게)
-# 100만 토큰당 달러 (입력, 출력 — 생각 포함). 모델 이름에 들어 있는 것으로 찾는다.
-# deepseek: OpenGateway 상시 할인가 (2026-11-20, 정가 0.30/1.20, 별도 공지로 끝날 수 있음)
-# ponytail: 캐시 할인은 빼고 셈 (실제보다 조금 비싸게 나옴)
-PRICES = {"deepseek": (0.03, 0.12), "luna": (0.10, 0.50)}
 FEEDBACK_PER_HOUR = 60  # 👍/👎: 한 사람이 1시간에
 VISIT_PER_HOUR = 120  # 방문 기록: 한 IP가 1시간에 (UA를 바꿔 가며 기록을 늘리는 것을 막는다)
 TEAM_PER_HOUR = 20  # @닉네임 팀 불러오기: 한 사람이 1시간에 (넥슨 API 4~5회씩)
@@ -456,24 +452,6 @@ def _visitor(request: Request) -> str:
     return request.headers.get("cf-connecting-ip") or forwarded or (request.client.host if request.client else "?")
 
 
-def _billed(bots: Iterable[Any]) -> Counter[tuple[str, str]]:
-    """Tokens billed so far by these chats, keyed (model, input|output)."""
-    total: Counter[tuple[str, str]] = Counter()
-    for bot in bots:
-        for model, used in getattr(bot, "billed", {}).items():
-            total.update({(model, kind): n for kind, n in used.items()})
-    return total
-
-
-def _cost(billed: Counter[tuple[str, str]]) -> dict[str, Any]:
-    """{'tokens': 입력+출력, 'cost': 달러 추정} for log records (models without a known price count tokens only)."""
-    usd = 0.0
-    for (model, kind), n in billed.items():
-        price = next((p for name, p in PRICES.items() if name in model), None)
-        usd += n * price[kind == "output"] / 1e6 if price else 0
-    return {"tokens": sum(billed.values()), "cost": round(usd, 5)} if billed else {}
-
-
 def _event(**fields: Any) -> str:
     """One line of the /api/chat stream (NDJSON)."""
     return json.dumps(fields, ensure_ascii=False) + "\n"
@@ -824,8 +802,6 @@ def create_app(
                 if entry["outcome"] == "cancelled":  # 끊긴 질문: 어디까지 썼는지 (생각만 하다 끊겼는지, 답을 쓰다 멈췄는지)
                     entry["sent_chars"] = len(keep.sent)
                     keep.answer = keep.answer or (keep.sent + " …(여기서 끊김)" if keep.sent else None)
-                if "billed" in entry:  # 모델을 부른 질문: 그 사이 이 세션의 모델들이 쓴 토큰 (실패·정지도 청구된다)
-                    entry.update(_cost(_billed(e[0] for e in session.bots.values()) - entry.pop("billed")))
                 chat_log.record(**entry, ms=round((time.monotonic() - started) * 1000), detail=keep.detail())
 
         def answer_events(entry: dict[str, Any], keep: _TraceLog, ask: str, team: Team | None):
@@ -884,8 +860,8 @@ def create_app(
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
                 options["cancel"] = cancel
                 keep.add("route", text=why)
-                entry["billed"] = _billed(e[0] for e in session.bots.values())  # 잠금 안에서: 같은 대화의 앞 질문은 끝난 뒤
                 bot = session.bot(key, make_bot(key, session))
+                tokens_before = sum(sum(used.values()) for used in getattr(bot, "billed", {}).values())
                 stream = bot.ask_stream(ask, **options)
                 try:
                     turn = yield from _relay(stream, req.trace, keep)
@@ -902,6 +878,14 @@ def create_app(
                     return
                 finally:  # 정지로 끊겨도 잠금을 풀기 전에 닫아, 그 질문을 기록에서 빼는 일이 다음 질문보다 먼저 끝나게 한다
                     stream.close()
+                    tokens = sum(sum(used.values()) for used in getattr(bot, "billed", {}).values()) - tokens_before
+                    if tokens:
+                        entry["tokens"] = tokens
+                    if cost_calls := getattr(bot, "cost_calls", None):
+                        entry["cost_calls"] = list(cost_calls)
+                        costs = [call["cost"] for call in cost_calls if call["cost"] is not None]
+                        if costs:
+                            entry["cost"] = sum(costs)
                 session.answered(key, ask, turn.text, req.message, turn.tool_calls)  # 팀 블록째 남겨 이어지는 질문도 그 팀을 안다
             # 근거 줄과 대체 모델은 서버 로그에만 남기고 사용자 답에는 넣지 않는다
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)

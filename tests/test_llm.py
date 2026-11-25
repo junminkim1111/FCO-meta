@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace as NS
 
+import pytest
+
 from test_analytics import db  # noqa: F401
 from test_chatbot import toolbox  # noqa: F401
 
@@ -348,3 +350,23 @@ def test_cancel_stops_the_model_loop(toolbox):  # noqa: F811
     with pytest.raises(Cancelled):
         _drain(chat.ask_stream("질문", cancel=cancel))
     assert http.requests == []  # 요청을 보내기 전에 멈춘다
+
+
+@pytest.mark.parametrize("base_url", ["https://apis.opengateway.ai/v1", "https://openrouter.ai/api/v1"])
+def test_gateway_records_stream_cost_and_id_even_if_interrupted(toolbox, base_url):  # noqa: F811
+    from fco_meta.chatbot.llm import OpenAIChat
+
+    replies = [
+        ['data: {"id":"gen-interrupted","choices":[{"delta":{"content":"답"}}]}'],
+        ['data: {"id":"gen-free","usage":{"prompt_tokens":2,"completion_tokens":1,"cost":0},"choices":[]}'],
+        ['data: {"id":"gen-paid","usage":{"prompt_tokens":2,"completion_tokens":1,"cost":0.000012},"choices":[]}'],
+    ]
+    chat = OpenAIChat(FakeHttp(replies), toolbox, model="m", base_url=base_url, api_key="test")
+    stream = chat.ask_stream("질문")
+    assert next(stream) == "답"
+    stream.close()
+    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-interrupted", "cost": None}]
+    chat.ask("다시 질문")
+    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-free", "cost": 0}]
+    chat.ask("또 질문")
+    assert chat.cost_calls == [{"gateway": base_url, "id": "gen-paid", "cost": 0.000012}]

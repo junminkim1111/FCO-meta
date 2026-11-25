@@ -247,7 +247,7 @@
       <div class="kpis" id="model-kpis"></div>
       <div class="card scroll" id="models"></div>
       <div class="card"><header><h2>베타 키별</h2></header><div class="scroll" id="by-key"></div></div>
-      <div class="card"><header><h2>날짜별 비용 (추정)</h2></header><div class="scroll" id="cost-days"></div></div>
+      <div class="card"><header><h2>날짜별 게이트웨이 비용</h2></header><div class="scroll" id="cost-days"></div></div>
       <p class="note">비용은 유료 등급 단가로 셈한 추정치입니다 (캐시 할인 제외). /compare 칸마다의 호출도 포함합니다.</p>
     </section>
 
@@ -284,7 +284,12 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 const api = (path, options = {}) => fetch(path, { ...options, headers: { "X-Admin-Key": adminKey } });
-const usd = (v) => "$" + (v || 0).toFixed(v >= 1 ? 2 : 4); // 유료 등급 기준 추정 (무료 등급이라 실제 청구는 없음)
+const usd = (v) => "$" + (v || 0).toFixed(v >= 1 ? 2 : v > 0 && v < 0.0001 ? 8 : 4);
+const costLabel = (r) => {
+  if (r.cost_calls?.some((call) => call.cost == null)) return r.cost == null ? "미확인" : usd(r.cost) + " (일부 미확인)";
+  if (r.cost == null) return "";
+  return usd(r.cost) + (r.cost_calls?.length ? "" : " (추정)");
+};
 const sec = (ms) => (ms == null ? "" : (ms / 1000).toFixed(1) + "s");
 const when = (t) => t.slice(5, 16).replace("T", " ");
 const num = (n) => (n || 0).toLocaleString();
@@ -355,7 +360,7 @@ function renderOverview() {
     kpi("정상 응답률", pct((o.ok || 0) + (o.cached || 0), total), `혼잡 ${num(o.busy)} · 차단 ${num(o.blocked)}`),
     kpi("만족도", pct(up, up + down), `👍 ${num(up)} · 👎 ${num(down)}`),
     kpi("응답 시간 p50", lat.length ? sec(lat[lat.length >> 1]) : "–", lat.length ? `p95 ${sec(lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.95))])}` : "", "최근 300건 중 정상 답 기준"),
-    kpi("모델 비용 (추정)", usd(data.cost), `토큰 ${num(data.tokens)}`, "유료 등급 단가 추정. 무료 등급이라 실제 청구는 없음"),
+    kpi("게이트웨이 비용", usd(data.cost), `토큰 ${num(data.tokens)}`, "게이트웨이에서 받은 USD 비용의 합계"),
     kpi("수치 미확인", num(data.unverified), "도구 결과에 없는 수치가 남은 답"),
   );
   $("legend").replaceChildren(...Object.keys(LABEL).map((k) => el("span", { class: k }, el("i"), el("span", { class: "muted", text: LABEL[k] }))));
@@ -413,7 +418,7 @@ function traceTable(records, compact = false) {
       r.unverified ? el("div", { class: "sub", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null);
     const cells = compact ? [el("td", { class: "t", text: when(r.t) }), q, el("td", { class: "model", text: modelOf(r) })]
       : [el("td", { class: "t", text: when(r.t) }), el("td", {}, status(r.outcome)), q, el("td", { class: "model", text: modelOf(r) }),
-         el("td", { class: "mono", text: r.key || "" }), el("td", { class: "n", text: sec(r.ms) }), el("td", { class: "n", text: r.tokens ? num(r.tokens) : "" }), el("td", { class: "n", text: r.cost != null ? usd(r.cost) : "" }),
+         el("td", { class: "mono", text: r.key || "" }), el("td", { class: "n", text: sec(r.ms) }), el("td", { class: "n", text: r.tokens ? num(r.tokens) : "" }), el("td", { class: "n", text: costLabel(r) }),
          el("td", { class: "n" }, r.vote ? el("span", { class: "vote-" + r.vote, text: VOTE[r.vote], title: r.vote === "up" ? "좋아요" : "싫어요" }) : null,
            (r.turns || [r]).every((x) => saved.has(x.id)) ? el("span", { class: "faint", text: " 저장됨" }) : null)];
     const tr = el("tr", {}, ...cells);
@@ -456,7 +461,9 @@ function conversations(records) {
   return [...groups.values()].map((turns) => (turns.length === 1 ? turns[0] : {
     ...turns[turns.length - 1], t: turns[0].t, q: turns[0].q, turns,
     model: [...new Set(turns.map((x) => x.model).filter(Boolean))].join(", "),
-    ms: sum(turns, "ms"), tokens: sum(turns, "tokens"), cost: sum(turns, "cost"),
+    ms: sum(turns, "ms"), tokens: sum(turns, "tokens"),
+    cost: sum(turns.some((x) => x.cost_calls?.length) ? turns.filter((x) => x.cost_calls?.length) : turns, "cost"),
+    cost_calls: turns.flatMap((x) => x.cost_calls || []),
     error: turns.find((x) => x.error)?.error, unverified: turns.flatMap((x) => x.unverified || []).join(", ") ? turns.flatMap((x) => x.unverified || []) : undefined,
     vote: turns.some((x) => x.vote === "down") ? "down" : turns.some((x) => x.vote === "up") ? "up" : undefined,
   })).sort((a, b) => (a.t < b.t ? 1 : -1));
@@ -493,7 +500,7 @@ function renderVisits() {
 function renderModels() {
   const ms = data.by_model || [], calls = ms.reduce((s, m) => s + m.calls, 0), errs = ms.reduce((s, m) => s + m.errors, 0);
   $("model-kpis").replaceChildren(kpi("API 호출", num(calls)), kpi("오류율", pct(errs, calls), `${num(errs)}건`), kpi("토큰", num(data.tokens)),
-    kpi("비용 (추정)", usd(data.cost), data.by_outcome?.ok ? `정상 답 1개당 ${usd(data.cost / data.by_outcome.ok)}` : ""));
+    kpi("게이트웨이 비용", usd(data.cost), data.cost_incomplete ? `비용 미확인 질문 ${num(data.cost_incomplete)}건` : ""));
   $("models").replaceChildren(ms.length ? table(["모델", "호출", "오류", "토큰", "비용", "p50", "p95", "비중"], ms.map((m) =>
     el("tr", {}, el("td", { class: "mono", text: m.model }), el("td", { class: "n", text: num(m.calls) }),
       el("td", { class: "n" + (m.errors ? " error-o" : ""), text: m.errors ? `${num(m.errors)} (${pct(m.errors, m.calls)})` : "0" }),
@@ -580,7 +587,7 @@ function turnBlock(r, d, n, mdBox, buttons) {
     n ? el("div", { class: "turn-head" }, el("h3", { class: "turn-no", text: `${n}번째 질문 · ${when(r.t)}` }), ...buttons) : null,
     el("p", { class: "dr-q", text: r.q }),
     el("div", { class: "chips" }, chip("상태", LABEL[r.outcome] || r.outcome, r.outcome), chip("모델", modelOf(r)), chip("모드", MODE[r.mode] || r.mode), chip("경로", r.route),
-      chip("시간", sec(r.ms)), chip("토큰", r.tokens && num(r.tokens)), chip("비용", r.cost != null && usd(r.cost)), chip("도구", r.tools?.join(", ")),
+      chip("시간", sec(r.ms)), chip("토큰", r.tokens && num(r.tokens)), chip("비용", costLabel(r)), chip("도구", r.tools?.join(", ")),
       chip("피드백", r.vote && VOTE[r.vote]), chip("팀", r.team), chip("세션", !n && r.session)),
     r.error ? el("p", { class: "note warn", text: "오류: " + r.error }) : null,
     r.unverified ? el("p", { class: "note warn", text: "확인 안 된 수치: " + r.unverified.join(", ") }) : null,

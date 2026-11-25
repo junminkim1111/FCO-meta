@@ -170,6 +170,7 @@ class ToolChat:
         self.deadline = ANSWER_DEADLINE
         self.history: list[tuple[str, str]] = []  # (질문, 답)
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
+        self.cost_calls: list[dict[str, Any]] = []  # 이번 질문의 API 호출별 응답 ID와 USD 비용
         self.billed: dict[str, Counter[str]] = {}  # 모델별 청구 토큰 (input·output) — 웹의 질문당 비용
         self.unverified: list[str] = []  # 이번 답에 끝내 도구 결과로 확인되지 않은 수치
         self._ends_at = float("inf")
@@ -212,6 +213,7 @@ class ToolChat:
         self._ends_at = started + self._deadline
         self._wrap_at = started + wrap_after if wrap_after else None
         self._no_think = False
+        self.cost_calls.clear()
         self.thoughts, self.unverified = thoughts, []
         try:
             turn = yield from self._ask(question)  # 실패·정지면 기록에 남기지 않는다
@@ -411,6 +413,7 @@ class OpenAIChat(ToolChat):
         text, finish = "", None
         calls: dict[int, dict[str, Any]] = {}  # 도구 호출은 조각으로 온다: index → 모은 호출
         usage: dict[str, Any] = {}
+        generation_id = None
         try:
             with self.http.stream("POST", f"{self.base_url}/chat/completions", headers={"Authorization": f"Bearer {self.api_key}"},
                                   timeout=left, json=body) as res:  # fmt: skip
@@ -427,6 +430,7 @@ class OpenAIChat(ToolChat):
                     if not line.startswith("data:") or (payload := line[5:].strip()) == "[DONE]":
                         continue
                     data = json.loads(payload)
+                    generation_id = generation_id or data.get("id")
                     if "error" in data:  # 200으로 시작한 뒤에도 error를 담아 보내기도 한다
                         raise RuntimeError(f"{self.model}: {data['error']}")
                     self.last_model = data.get("model") or self.last_model or self.model
@@ -450,6 +454,13 @@ class OpenAIChat(ToolChat):
                             yield piece  # 도구를 부르기 전에 쓴 글이면 _ask가 RESET으로 지운다
         except httpx.TimeoutException:
             raise AnswerTimeout(f"{self.model} 응답 없음 (상한 {self._deadline:.0f}초)") from None
+        finally:
+            cost = usage.get("cost")
+            self.cost_calls.append({
+                "gateway": self.base_url,
+                "id": generation_id,
+                "cost": cost if type(cost) in (int, float) and 0 <= cost < float("inf") else None,
+            })
         self.tokens.update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))  # 출력에 생각 포함
         self.billed.setdefault(self.model, Counter()).update(input=usage.get("prompt_tokens", 0), output=usage.get("completion_tokens", 0))
         if thought := (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"):

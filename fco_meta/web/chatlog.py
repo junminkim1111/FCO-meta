@@ -32,7 +32,7 @@ DETAIL_DAYS = 7  # 질문마다의 trace·답변을 이만큼만 둔다 (지난 
 # 결과 종류: ok 답함 · cached 캐시된 답 · busy 혼잡 안내(모델·서버 오류) · limited 질문 수 제한 · cancelled 사용자가 정지
 # · compare /compare (칸별 모델·시간·도구·답은 panes). 비교에서 고른 답은 compare_pick 기록으로 따로 남아 그 비교의 chosen이 된다
 # · blocked 범위 밖·프롬프트 공격이라 모델 없이 거절 (Jev 판단, route에 이유)
-# 모델을 부른 질문은 tokens·cost(유료 등급 기준 달러 추정), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified
+# 모델을 부른 질문은 tokens·cost 및 cost_calls(게이트웨이 응답 기준 USD), 다시 쓰기 뒤에도 확인되지 않은 수치가 남은 답은 unverified
 # 답 아래 👍/👎(가끔만 보임)는 feedback 기록(ref = 그 질문의 id, vote = up·down)으로 따로 남아 그 질문의 vote가 된다
 # visit(페이지 방문 — path·ref·device·v·key)와 beta_check(베타 키 입력 성공·실패 — ok)는 질문이 아니라서 OUTCOMES에 없고,
 # 질문 집계·Traces·키별 하루 제한에서 빼고 summary()["visits"]로만 센다 (NON_QUESTIONS)
@@ -277,6 +277,9 @@ class ChatLog:
                    else {**r, "vote": votes[r["id"]]} if r.get("id") in votes else r
                    for r in everything if r["outcome"] not in ("compare_pick", "feedback")]  # fmt: skip
         compares = [r for r in records if r["outcome"] == "compare"]
+
+        def gateway_cost(record: dict[str, Any]) -> float:
+            return record.get("cost", 0) if record.get("cost_calls") else 0
         today = datetime.fromtimestamp(self.now(), KST).strftime("%Y-%m-%d")
         by_key: dict[str, dict[str, Any]] = {}  # 베타 키별 (키 해시 앞 12자): 질문(제한에 걸린 것 빼고)·오늘·비용·👍👎·마지막
         for r in records:
@@ -285,7 +288,7 @@ class ChatLog:
                 k = by_key.setdefault(label, {"key": label, "questions": 0, "today": 0, "cost": 0.0, "up": 0, "down": 0, "last": r["t"]})
                 k["questions"] += 1
                 k["today"] += r["t"][:10] == today
-                k["cost"] += r.get("cost", 0)
+                k["cost"] += gateway_cost(r)
                 k["last"] = max(k["last"], r["t"])
                 if r.get("vote"):
                     k[r["vote"]] += 1
@@ -294,7 +297,7 @@ class ChatLog:
         cost_by_day: Counter[str] = Counter()
         for r in records:
             by_day.setdefault(r["t"][:10], Counter())[r["outcome"]] += 1
-            cost_by_day[r["t"][:10]] += r.get("cost", 0)
+            cost_by_day[r["t"][:10]] += gateway_cost(r)
             if r.get("error"):
                 e = errors.setdefault(r["error"], {"error": r["error"], "count": 0, "last": r["t"]})
                 e["count"] += 1
@@ -307,12 +310,12 @@ class ChatLog:
             m["calls"] += 1
             m["errors"] += bool(c.get("error"))
             m["tokens"] += c.get("tokens", 0)
-            m["cost"] += c.get("cost", 0)
+            m["cost"] += gateway_cost(c)
             if c.get("ms") is not None:
                 m["ms"].append(c["ms"])
         for m in by_model.values():
             ms = sorted(m.pop("ms"))
-            m["cost"] = round(m["cost"], 4)
+            m["cost"] = round(m["cost"], 8)
             m["p50_ms"] = ms[len(ms) // 2] if ms else None
             m["p95_ms"] = ms[min(len(ms) - 1, int(len(ms) * 0.95))] if ms else None
         return {
@@ -321,9 +324,10 @@ class ChatLog:
             "tokens": sum(m["tokens"] for m in by_model.values()), "total": len(records), "pending": len(pending) if self.store else 0,
             "by_outcome": {o: sum(1 for r in records if r["outcome"] == o) for o in OUTCOMES},
             "votes": dict(Counter(r["vote"] for r in records if r.get("vote"))),
-            "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 4)} for d, c in sorted(by_day.items(), reverse=True)],
-            "cost": round(sum(cost_by_day.values()), 4),
-            "by_key": sorted(({**k, "cost": round(k["cost"], 4)} for k in by_key.values()), key=lambda k: (k["key"] == "admin", -k["questions"], k["key"])),
+            "by_day": [{"date": d, **{o: c[o] for o in OUTCOMES}, "cost": round(cost_by_day[d], 8)} for d, c in sorted(by_day.items(), reverse=True)],
+            "cost": round(sum(cost_by_day.values()), 8),
+            "cost_incomplete": sum(any(call["cost"] is None for call in r.get("cost_calls", [])) for r in records),
+            "by_key": sorted(({**k, "cost": round(k["cost"], 8)} for k in by_key.values()), key=lambda k: (k["key"] == "admin", -k["questions"], k["key"])),
             "visits": self._visits(raw, records),
             "unverified": sum(1 for r in records if r.get("unverified")),
             "errors": sorted(errors.values(), key=lambda e: (-e["count"], e["error"])),
