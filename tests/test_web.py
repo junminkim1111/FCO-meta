@@ -553,7 +553,8 @@ def test_thinking_is_off_only_for_a_first_plain_lookup_without_a_team(db, tmp_pa
     from fco_meta.web.team import Team
 
     asked = []
-    jev = FakeJev({"WS 호나우두 급여 얼마야": "fco light", "UC 마네 시세": "fco light", "안녕": "greeting light", "아스널 짜줘": "fco"})
+    jev = FakeJev({"WS 호나우두 급여 얼마야": "fco light", "UC 마네 시세": "fco light", "안녕": "greeting light", "아스널 짜줘": "fco",
+                   "패드유저야?": "fco"})
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
     monkeypatch.setattr(web_app, "_http", lambda: jev)
     monkeypatch.setattr(web_app, "_luna_chat", lambda tools, reasoning: Recorder(f"luna{reasoning}", asked))
@@ -569,6 +570,9 @@ def test_thinking_is_off_only_for_a_first_plain_lookup_without_a_team(db, tmp_pa
     sid = client.post("/api/team", json={"nickname": "레몬"}).json()["session_id"]
     ask(client, "안녕", session_id=sid)  # 팀(@·#)을 붙인 첫 질문은 생각 켬
     assert [n for n, _, _ in asked] == ["lunaFalse", "lunaTrue", "lunaTrue", "lunaTrue"]
+    assert jev.states[-1].startswith("붙은 팀: @레몬")  # 분류기도 붙은 팀을 안다 (주어 없는 짧은 질문이 막히지 않게)
+    ask(client, "패드유저야?", session_id=sid)
+    assert jev.states[-1].startswith("붙은 팀: @레몬") and jev.states[-1].endswith("현재 질문: 패드유저야?")
     client.post("/api/chat", json={"message": "안녕", "mode": "luna_r"})  # /model로 고른 모델은 그대로
     assert asked[-1][0] == "lunaTrue"
 

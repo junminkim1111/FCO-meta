@@ -828,7 +828,7 @@ def create_app(
             # 같은 대화의 질문은 차례로. 사용자가 정지하면 이 생성기가 닫히고 그 질문은 기록에서 빠진다
             with _held(session.lock, SESSION_WAIT):
                 first = not session.history  # 대화의 첫 질문만 캐시한다
-                route = _jev_route(req.message, session.last)
+                route = _jev_route(req.message, session.last, session.attached)
                 if route and route.blocked:  # 범위 밖·프롬프트 공격 → LLM 없이 거절 문구
                     session.answered(None, req.message, REFUSAL)
                     entry.update(outcome="blocked", route=f"{route.scope} ({route.describe()})")
@@ -1179,12 +1179,12 @@ def _http() -> Any:
     return _HTTP
 
 
-def _jev_route(question: str, previous: str | None) -> Route | None:
+def _jev_route(question: str, previous: str | None, team: Team | None = None) -> Route | None:
     """Jev's routing for this question, or None (no OPENROUTER_API_KEY, error or timeout → nothing is blocked)."""
     if not jev_ready():
         return None
     try:
-        return classify(_http(), question, previous)
+        return classify(_http(), question, previous, team=team.mark + team.nickname if team else None)
     except Exception as exc:
         log.warning("jev routing failed, using keywords: %s", exc)
         return None
