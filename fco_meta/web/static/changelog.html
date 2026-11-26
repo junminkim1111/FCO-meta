@@ -64,25 +64,33 @@
   .cl-cat { color: var(--accent); } /* [기능추가] 같은 분류 */
   main h1 { padding-bottom: 24px; margin-bottom: 40px; border-bottom: 1px solid var(--line); } /* 제목과 첫 버전 사이 구분선 */
   main section.g-block { padding: 0; margin: 0 0 40px; background: none; border: 0; border-radius: 0; } /* 네모칸 없이 */
-  /* 변경 줄: 누르면 세부 내용이 아래로 열린다 */
-  .cl-item { border-top: 1px solid var(--line); }
+  /* 변경 줄: 누르면 세부 내용이 아래로 열린다 (챗봇 생각 단계와 같은 모션 — trace.css) */
+  .cl-item { --cl-ease: cubic-bezier(.23, 1, .32, 1); border-top: 1px solid var(--line); }
   .cl-item:first-of-type { border-top: 0; }
-  .cl-item > summary {
+  .cl-row {
     display: flex;
     align-items: baseline;
     gap: 6px;
+    width: 100%;
     padding: 12px 0;
-    cursor: pointer;
-    list-style: none;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: inherit;
+    text-align: left;
+    font: inherit;
     font-size: 15px;
     line-height: 1.5;
+    cursor: pointer;
   }
-  .cl-item > summary::-webkit-details-marker { display: none; }
-  .cl-item > summary::after { content: "+"; margin-left: auto; padding-left: 12px; color: var(--muted); }
-  .cl-item[open] > summary::after { content: "−"; }
-  .cl-item > summary:hover::after { color: var(--text); }
-  .cl-item > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-  .cl-item > p { margin: 0 0 16px; padding-left: 16px; color: #b4b4bd; font-size: 14px; } /* 세부 내용 */
+  .cl-row::after { content: "+"; margin-left: auto; padding-left: 12px; color: var(--muted); }
+  .cl-row[aria-expanded="true"]::after { content: "−"; }
+  .cl-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cl-fold { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows .25s var(--cl-ease), opacity .25s var(--cl-ease); }
+  .cl-row[aria-expanded="false"] + .cl-fold { grid-template-rows: 0fr; opacity: 0; visibility: hidden;
+                                             transition: grid-template-rows .25s var(--cl-ease), opacity .25s var(--cl-ease), visibility .25s; }
+  .cl-fold > * { min-height: 0; overflow: hidden; }
+  .cl-fold p { margin: 0; padding: 0 0 16px 16px; color: #b4b4bd; font-size: 14px; } /* 세부 내용 */
 </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1315876984941536"
      crossorigin="anonymous"></script>
@@ -116,54 +124,54 @@
   <!-- 새 버전은 이 줄 바로 아래(맨 위)에, 목차에도 맨 위에 한 줄. 같은 날짜는 section 하나에 모은다. 모양:
   <section class="g-block" id="날짜">
     <p class="cl-meta"><time datetime="날짜">날짜</time> (V버전 — 그날 마지막 버전)</p>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[기능추가·기능개선·버그수정]</span> 한 줄 제목</summary>  (목차에도 그날 첫 제목)
-      <p>바뀐 점 한 줄 (많으면 &lt;br&gt;로 두세 줄까지)</p>
-    </details>
-    <details class="cl-item">…그날의 다음 변경 (최신이 위)</details>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-날짜-1"><span class="cl-cat">[기능추가·기능개선·버그수정]</span> 한 줄 제목</button>
+      <div class="cl-fold" id="cl-날짜-1"><div><p>바뀐 점 한 줄 (많으면 &lt;br&gt;로 두세 줄까지)</p></div></div>
+    </div>
+    <div class="cl-item">…그날의 다음 변경 (최신이 위)</div>
   </section> -->
   <section class="g-block" id="2026-11-25">
     <p class="cl-meta"><time datetime="2026-11-25">2026-11-25</time> (V1.2.4)</p>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[기능개선]</span> 랭커 데이터에 컨트롤러 정보 추가</summary>
-      <p>경기 기록에 컨트롤러 정보를 함께 저장해, 해당 랭커가 키보드로 플레이하는지 패드로 플레이하는지 확인할 수 있어요.</p>
-    </details>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[버그수정]</span> 시즌단일 미인식 문제 해결</summary>
-      <p>모델이 시즌 단일 팀컬러를 인식하지 못하던 문제를 수정했어요.</p>
-    </details>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[기능개선]</span> 답변 속도 개선</summary>
-      <p>도구 호출이 느려지던 부분을 고쳐 답이 더 빨리 나오게 했어요.</p>
-    </details>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-25-1"><span class="cl-cat">[기능개선]</span> 랭커 데이터에 컨트롤러 정보 추가</button>
+      <div class="cl-fold" id="cl-2026-11-25-1"><div><p>경기 기록에 컨트롤러 정보를 함께 저장해, 해당 랭커가 키보드로 플레이하는지 패드로 플레이하는지 확인할 수 있어요.</p></div></div>
+    </div>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-25-2"><span class="cl-cat">[버그수정]</span> 시즌단일 미인식 문제 해결</button>
+      <div class="cl-fold" id="cl-2026-11-25-2"><div><p>모델이 시즌 단일 팀컬러를 인식하지 못하던 문제를 수정했어요.</p></div></div>
+    </div>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-25-3"><span class="cl-cat">[기능개선]</span> 답변 속도 개선</button>
+      <div class="cl-fold" id="cl-2026-11-25-3"><div><p>도구 호출이 느려지던 부분을 고쳐 답이 더 빨리 나오게 했어요.</p></div></div>
+    </div>
   </section>
   <section class="g-block" id="2026-11-24">
     <p class="cl-meta"><time datetime="2026-11-24">2026-11-24</time> (V1.2.1)</p>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[버그수정]</span> 답변 안정성 개선</summary>
-      <p>답변을 멈추거나 화면을 떠나도 다음 질문이 막히지 않아요.<br>답변 과정의 생각 시간도 단계마다 제대로 표시돼요.</p>
-    </details>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-24-1"><span class="cl-cat">[버그수정]</span> 답변 안정성 개선</button>
+      <div class="cl-fold" id="cl-2026-11-24-1"><div><p>답변을 멈추거나 화면을 떠나도 다음 질문이 막히지 않아요.<br>답변 과정의 생각 시간도 단계마다 제대로 표시돼요.</p></div></div>
+    </div>
   </section>
   <section class="g-block" id="2026-11-23">
     <p class="cl-meta"><time datetime="2026-11-23">2026-11-23</time> (V1.2.0)</p>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[기능개선]</span> 오래 걸리는 질문도 끝까지 답변</summary>
-      <p>5분이 지나면 그때까지 찾은 내용으로 답을 마무리해요.<br>'백금 팀' 기준을 정리하고, 일부 선수 질문에서 나던 오류를 고쳤어요.</p>
-    </details>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-23-1"><span class="cl-cat">[기능개선]</span> 오래 걸리는 질문도 끝까지 답변</button>
+      <div class="cl-fold" id="cl-2026-11-23-1"><div><p>5분이 지나면 그때까지 찾은 내용으로 답을 마무리해요.<br>'백금 팀' 기준을 정리하고, 일부 선수 질문에서 나던 오류를 고쳤어요.</p></div></div>
+    </div>
   </section>
   <section class="g-block" id="2026-11-21">
     <p class="cl-meta"><time datetime="2026-11-21">2026-11-21</time> (V1.1.0)</p>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[기능추가]</span> @구단주 플레이스타일 분석</summary>
-      <p>@구단주명으로 불러온 팀의 최근 20경기를 분석해요.<br>스쿼드 화면에 신규특성 아이콘과 카드 가격이 보이고, 키 없이도 하루 10개까지 질문할 수 있어요.</p>
-    </details>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-21-1"><span class="cl-cat">[기능추가]</span> @구단주 플레이스타일 분석</button>
+      <div class="cl-fold" id="cl-2026-11-21-1"><div><p>@구단주명으로 불러온 팀의 최근 20경기를 분석해요.<br>스쿼드 화면에 신규특성 아이콘과 카드 가격이 보이고, 키 없이도 하루 10개까지 질문할 수 있어요.</p></div></div>
+    </div>
   </section>
   <section class="g-block" id="2026-11-19">
     <p class="cl-meta"><time datetime="2026-11-19">2026-11-19</time> (V1.0.0)</p>
-    <details class="cl-item">
-      <summary><span class="cl-cat">[출시]</span> 베타 테스트 시작</summary>
-      <p>FCLM 베타 테스트를 시작했어요.</p>
-    </details>
+    <div class="cl-item">
+      <button class="cl-row" type="button" aria-expanded="false" aria-controls="cl-2026-11-19-1"><span class="cl-cat">[출시]</span> 베타 테스트 시작</button>
+      <div class="cl-fold" id="cl-2026-11-19-1"><div><p>FCLM 베타 테스트를 시작했어요.</p></div></div>
+    </div>
   </section>
 </main>
   <p class="g-home"><a href="/guide">가이드 홈으로</a><a href="/">FCLM 메인으로</a></p>
@@ -174,6 +182,16 @@
     a.getAttribute("href") === location.hash ? a.setAttribute("aria-current", "location") : a.removeAttribute("aria-current"));
   addEventListener("hashchange", mark);
   mark();
+  // 변경 줄 접기·펼치기: 챗봇 생각 단계(trace.js disclosure)와 같은 방식
+  document.querySelectorAll(".cl-row").forEach((row) => {
+    const fold = row.nextElementSibling;
+    const open = (value) => {
+      row.setAttribute("aria-expanded", String(value));
+      fold.inert = !value;
+    };
+    open(false);
+    row.addEventListener("click", () => open(row.getAttribute("aria-expanded") !== "true"));
+  });
 </script>
 </body>
 </html>
