@@ -196,7 +196,11 @@
   .band .v { color: var(--muted); font-variant-numeric: tabular-nums; }
 
   #tip { position: fixed; pointer-events: none; background: var(--tip-bg); color: var(--text); border: 1px solid var(--line-strong); font-size: 12px;
-         padding: 6px 9px; border-radius: 8px; white-space: pre; z-index: 10; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+         padding: 6px 9px; border-radius: 8px; white-space: pre-wrap; z-index: 10; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+  #tip .pos-fw { color: #f87171; font-weight: 600; }
+  #tip .pos-mf { color: #4ade80; font-weight: 600; }
+  #tip .pos-df { color: #60a5fa; font-weight: 600; }
+  #tip .pos-gk { color: #facc15; font-weight: 600; }
 
   /* chat */
   .side { display: flex; flex-direction: column; min-width: 0; }

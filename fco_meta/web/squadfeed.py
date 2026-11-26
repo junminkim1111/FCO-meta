@@ -31,6 +31,7 @@ def lineup_of(result: dict[str, Any]) -> list[dict[str, Any]]:
         {"role": p["role"], "player": p["player"].replace("★", "").strip(), "season": (p["card"].get("season") or "").split(" (")[0], "sp_id": p["card"]["sp_id"],
          "pid": p.get("pid"), "season_img": p["card"].get("season_img"), "ovr": p.get("ovr"), "new_traits": p["card"].get("new_traits") or [],
          "price": (p["card"].get("price_at_most_used_grade") or {}).get("price"), "owned": bool(p.get("owned")),
+         "salary": (p.get("card") or {}).get("salary"), "rating": p.get("rating"),
          "grade": (p["card"].get("price_at_most_used_grade") or {}).get("grade") or p["card"].get("most_used_grade") or 1}
         for p in result["lineup"]
     ]  # fmt: skip
@@ -53,7 +54,9 @@ def place(lineup: list[dict[str, Any]], formation: str | None) -> list[dict[str,
     if left or None in taken:  # 남는 선수가 있거나 빈 자리가 있으면 (slots로 두세 자리만 짠 스쿼드 등) 그리지도 보내지도 않는다
         raise FeedError("스쿼드의 자리가 스쿼드메이커 포메이션과 맞지 않아 보낼 수 없어요.")
     return [{"position": slot["role"], "code": POSITION_CODE[slot["role"]], "x": slot["x"], "y": slot["y"],
-             **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")}, "new_traits": p.get("new_traits") or [], "price": p.get("price"), "owned": p.get("owned", False)}
+             **{k: p[k] for k in ("player", "season", "sp_id", "grade", "pid", "season_img", "ovr")},
+             "salary": p.get("salary"), "rating": p.get("rating"),
+             "new_traits": p.get("new_traits") or [], "price": p.get("price"), "owned": p.get("owned", False)}
             for slot, p in zip(slots, taken)]
 
 

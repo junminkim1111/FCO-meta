@@ -38,8 +38,10 @@ async function api(path, options) {
 
 // --- tooltip ---
 const tip = $("tip");
-function showTip(ev, text) {
-  tip.textContent = text;
+function showTip(ev, content) {
+  if (typeof content === "string") tip.textContent = content;
+  else if (content instanceof Node) tip.replaceChildren(content);
+  else if (Array.isArray(content)) tip.replaceChildren(...content);
   tip.hidden = false;
   const r = tip.getBoundingClientRect();
   const x = Math.min(ev.clientX + 12, window.innerWidth - r.width - 8);
@@ -51,15 +53,16 @@ const hideTip = () => { tip.hidden = true; };
 const hover = (node, text) => {
   node.tabIndex = 0;
   node.setAttribute("aria-describedby", "tip");
-  const show = () => {
+  const show = (ev) => {
     const r = node.getBoundingClientRect();
-    showTip({ clientX: r.left, clientY: r.bottom + 24 }, text);
+    const val = typeof text === "function" ? text() : text;
+    showTip(ev && ev.clientX != null ? ev : { clientX: r.left, clientY: r.bottom + 24 }, val);
   };
   node.addEventListener("focus", show);
   node.addEventListener("blur", hideTip);
   node.addEventListener("click", show);
   node.addEventListener("keydown", (ev) => { if (ev.key === "Escape") hideTip(); });
-  node.addEventListener("mousemove", (ev) => showTip(ev, text));
+  node.addEventListener("mousemove", (ev) => show(ev));
   node.addEventListener("mouseleave", hideTip);
   return node;
 };
@@ -190,6 +193,60 @@ const POS = {
 };
 const POS_NAME = ["GK", "SW", "RWB", "RB", "RCB", "CB", "LCB", "LB", "LWB", "RDM", "CDM", "LDM", "RM", "RCM", "CM", "LCM", "LM",
   "RAM", "CAM", "LAM", "RF", "CF", "LF", "RW", "RS", "ST", "LS", "LW"];
+const POS_LINE = {
+  GK: "gk",
+  SW: "df", RWB: "df", RB: "df", RCB: "df", CB: "df", LCB: "df", LB: "df", LWB: "df",
+  RDM: "mf", CDM: "mf", LDM: "mf", DM: "mf",
+  RM: "mf", RCM: "mf", CM: "mf", LCM: "mf", LM: "mf",
+  RAM: "mf", CAM: "mf", LAM: "mf",
+  RF: "fw", CF: "fw", LF: "fw",
+  RW: "fw", RS: "fw", ST: "fw", LS: "fw", LW: "fw",
+};
+
+function playerTip(p, detailOf) {
+  const pos = (typeof p.position === "number" ? POS_NAME[p.position] : (p.position ? String(p.position).toUpperCase() : "")) || "";
+  const ss = p.season ? season(p.season) : "";
+  const nm = (p.name || p.player || "").trim();
+  const gr = p.grade ? `+${p.grade}` : "";
+  const rest = [ss, nm, gr].filter(Boolean).join(" ");
+
+  const posLine = typeof p.position === "number"
+    ? (p.position === 0 ? "gk" : p.position <= 8 ? "df" : p.position <= 19 ? "mf" : "fw")
+    : (POS_LINE[pos] || "");
+
+  const doc = document.createDocumentFragment();
+  const line1 = el("div");
+  if (pos) {
+    line1.append(el("span", { class: posLine ? `pos-${posLine}` : "", text: pos }));
+    if (rest) line1.append(" " + rest);
+  } else if (rest) {
+    line1.append(rest);
+  }
+  doc.append(line1);
+
+  if (p.owned) {
+    doc.append(el("div", { text: "보유 카드" }));
+  } else if (p.price) {
+    doc.append(el("div", { text: toMan(p.price).replace(/,/g, "") }));
+  }
+
+  if (p.salary != null && p.salary !== "") {
+    doc.append(el("div", { text: `급여 ${p.salary}` }));
+  }
+
+  let rating = p.rating;
+  if (rating == null && detailOf) {
+    const d = detailOf(p);
+    const m = typeof d === "string" && d.match(/평점\s*([\d.]+)/);
+    if (m) rating = m[1];
+  }
+  if (rating != null && rating !== "") {
+    const r = Number(rating);
+    doc.append(el("div", { text: `평점 ${!isNaN(r) ? r.toFixed(1) : rating}` }));
+  }
+
+  return doc;
+}
 
 function pitch(players, emptyText, detailOf) {
   const box = el("div", { class: "pitch" }, el("div", { class: "mid" }), el("div", { class: "circle" }),
@@ -203,8 +260,7 @@ function pitch(players, emptyText, detailOf) {
     const short = (p.name || "?").trim().split(" ").pop(); // DB 이름 끝에 공백이 붙은 선수가 있다 ("A. 우에다 ")
     const icon = p.season_img ? el("img", { src: p.season_img, alt: "", loading: "lazy", onerror() { this.remove(); } }) : null;
     const node = el("div", { class: "pp", style: `left:${x}%;top:${y}%` }, photo(p), el("div", { class: "nm" }, icon, short));
-    const price = p.owned ? "\n보유 카드" : p.price ? `\n${toMan(p.price)}` : ""; // 그 강화의 시세 (신규특성은 사진 위 육각형으로)
-    hover(node, `${POS_NAME[p.position] || ""} ${p.name || "?"}\n${season(p.season)}${p.grade ? ` · ${p.grade}강` : ""}${detailOf(p)}${price}`);
+    hover(node, () => playerTip(p, detailOf));
     box.append(node);
   }
   return box;

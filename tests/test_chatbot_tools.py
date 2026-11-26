@@ -1477,3 +1477,22 @@ def test_season_team_lookup_and_starting_eleven(code, label, sid, name):
         assert sum(tb._team_color_cards(tc)(p["sp_id"]) for p in xi) == n
         colors = _team_colors(tb.conn, tb.catalog, tb.team_color_info, xi)
         assert (f"{name} 단일팀 {n}명" in colors) == (n >= 8)
+
+
+def test_query_by_controller(toolbox):  # noqa: F811
+    """패드·키보드: 랭커마다 기준 경기의 controller로 거르고(controller) 묶는다(group_by controller). 모르는 랭커는 unknown."""
+    squads = toolbox.conn.execute("SELECT rank, match_id, ouid FROM ranker_squad WHERE match_order = 0 ORDER BY rank").fetchall()
+    pads = {1: "gamepad", 2: "gamepad", 3: "keyboard"}  # 4위는 모름
+    for rank, match_id, ouid in squads:
+        toolbox.conn.execute(
+            "INSERT INTO match_team (match_id, ouid, controller) VALUES (?, ?, ?)"
+            " ON CONFLICT (match_id, ouid) DO UPDATE SET controller = excluded.controller", (match_id, ouid, pads.get(rank)),
+        )  # fmt: skip
+    toolbox.conn.commit()
+    r = run(toolbox, "query_squads", {"group_by": "controller"})
+    assert {x["controller"]: x["rankers"] for x in r["rows"]} == {"gamepad": 2, "keyboard": 1, "unknown": 1}
+    assert "아는 스쿼드 3개 (75%)" in r["note"]
+    r = run(toolbox, "query_squads", {"group_by": "formation", "controller": "패드"})
+    assert r["squads"] == 2 and "패드 랭커만" in r["scope"]["description"]
+    content, is_error = toolbox.run("query_squads", {"group_by": "controller", "controller": "마우스"})
+    assert is_error and "gamepad" in json.loads(content)["error"]

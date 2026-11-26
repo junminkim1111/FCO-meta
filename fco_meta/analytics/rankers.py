@@ -13,7 +13,8 @@ from typing import Any
 from ..storage import latest_unfiltered_snapshot, unfiltered_coverage
 from .usage import ALL_RANKERS
 
-RANKER_GROUP_BY = ("team_color", "formation", "rank_band")
+RANKER_GROUP_BY = ("team_color", "formation", "rank_band", "controller")
+CONTROLLERS = ("gamepad", "keyboard")  # 넥슨 match-detail controller 값 (랭커마다 기준 경기 1경기)
 RANKER_SORT_BY = ("rankers", "season_win_rate", "avg_elo", "avg_squad_value")
 
 
@@ -31,9 +32,12 @@ def query_rankers(
     min_rankers: int = 1,
     limit: int = 10,
     mode: str = "1vs1",
+    controller: str | None = None,
 ) -> dict[str, Any]:
-    """Returns {"data_as_of", "covered", "rankers" (in scope), "total_groups", "rows"}; each row:
-    key, rankers, share, season_win_rate (pooled W/D/L), season_games, avg_elo, avg_squad_value."""
+    """Returns {"data_as_of", "covered", "rankers" (in scope), "controller_known", "total_groups", "rows"}; each row:
+    key, rankers, share, season_win_rate (pooled W/D/L), season_games, avg_elo, avg_squad_value,
+    and with `controller` also controller_share (that controller among the group's rankers whose controller is known).
+    A ranker's controller is the one of their collected base match (None when unknown)."""
     if group_by not in RANKER_GROUP_BY:
         raise ValueError(f"group_by must be one of {RANKER_GROUP_BY}")
     if sort_by not in RANKER_SORT_BY:
@@ -47,8 +51,12 @@ def query_rankers(
         "rank_min": rank_min, "rank_max": rank_max, "elo_min": elo_min,
     }  # fmt: skip
     rows = conn.execute(
-        "SELECT s.rank, s.elo, s.wins, s.draws, s.losses, s.squad_value, s.formation"
-        " FROM ranker_snapshot s WHERE s.data_as_of = :as_of AND s.mode = :mode AND s.rank <= :covered"
+        "SELECT s.rank, s.elo, s.wins, s.draws, s.losses, s.squad_value, s.formation, t.controller"
+        " FROM ranker_snapshot s"
+        " LEFT JOIN ranker_squad q ON q.data_as_of = s.data_as_of AND q.mode = s.mode AND q.rank = s.rank"
+        "      AND q.match_order = 0 AND q.accepted = 1"
+        " LEFT JOIN match_team t ON t.match_id = q.match_id AND t.ouid = q.ouid"
+        " WHERE s.data_as_of = :as_of AND s.mode = :mode AND s.rank <= :covered"
         " AND (:tc = 0 OR EXISTS (SELECT 1 FROM ranker_team_color m WHERE m.data_as_of = s.data_as_of"
         "      AND m.mode = s.mode AND m.rank = s.rank AND m.team_color_id = :tc))"
         " AND (:formation IS NULL OR s.formation = :formation)"
@@ -64,17 +72,26 @@ def query_rankers(
             teams[rank].add(tc)
 
     groups: dict[Any, list] = defaultdict(list)
+    known: dict[Any, int] = defaultdict(int)  # 묶음마다 컨트롤러를 아는 랭커 수 (controller_share의 분모)
     for r in rows:
         rank = r[0]
         if group_by == "team_color":
             keys = teams.get(rank, ())
         elif group_by == "formation":
             keys = [r[6]]
+        elif group_by == "controller":
+            keys = [r[7] or "unknown"]
         else:
             keys = [(rank - 1) // band * band + 1]
         for key in keys:
-            if key is not None:
+            if key is None:
+                continue
+            known[key] += r[7] is not None
+            if controller is None or r[7] == controller:
                 groups[key].append(r)
+    scope_known = sum(r[7] is not None for r in rows)
+    if controller is not None:
+        rows = [r for r in rows if r[7] == controller]
 
     out_rows = []
     for key, rs in groups.items():
@@ -90,6 +107,7 @@ def query_rankers(
             "season_games": games,
             "avg_elo": round(sum(elos) / len(elos), 1) if elos else None,
             "avg_squad_value": round(sum(values) / len(values), -6) if values else None,  # 평균이라 백만 단위로
+            **({"controller_share": round(len(rs) / known[key], 4) if known[key] else None} if controller else {}),
         })  # fmt: skip
     total = len(out_rows)
     out_rows = [r for r in out_rows if r["rankers"] >= min_rankers]
@@ -97,4 +115,5 @@ def query_rankers(
         out_rows.sort(key=lambda r: r["key"])  # 순위 구간은 위에서부터
     else:
         out_rows.sort(key=lambda r: (r[sort_by] is None, -(r[sort_by] or 0), -r["rankers"]))
-    return {"data_as_of": as_of, "covered": covered, "rankers": len(rows), "total_groups": total, "rows": out_rows[:limit]}
+    return {"data_as_of": as_of, "covered": covered, "rankers": len(rows), "controller_known": scope_known,
+            "total_groups": total, "rows": out_rows[:limit]}

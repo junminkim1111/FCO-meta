@@ -94,9 +94,16 @@ def top_ranker_squad(
     if r is None:
         return None
     players = _with_new_traits(conn, [_player(p) for p in cur.execute(_PLAYERS, (r["match_id"], r["ouid"]))])
-    prices, _ = _card_values(conn, {p["sp_id"] for p in players})
+    prices, salaries = _card_values(conn, {p["sp_id"] for p in players})
     priced = [prices[(p["sp_id"], p["grade"])] for p in players if (p["sp_id"], p["grade"]) in prices]
-    players = [{**p, "price": format_bp(prices[(p["sp_id"], p["grade"])])} if (p["sp_id"], p["grade"]) in prices else p for p in players]  # 툴팁의 시세
+    players = [
+        {
+            **p,
+            "salary": salaries.get(p["sp_id"]),
+            **({"price": format_bp(prices[(p["sp_id"], p["grade"])])} if (p["sp_id"], p["grade"]) in prices else {}),
+        }
+        for p in players
+    ]  # 툴팁의 시세·급여
     return {
         "rank": r["rank"], "elo": r["elo"], "wins": r["wins"], "draws": r["draws"], "losses": r["losses"],
         "team_color": r["team_color_name"], "played_formation": r["inferred_formation"],
@@ -176,6 +183,8 @@ def best_eleven(
             "season": p["class_name"] if p else None, "season_img": (p["season_img"] or None) if p else None,
             "rankers": at[pos][sp_id],
         })  # fmt: skip
+    _, salaries = _card_values(conn, {p["sp_id"] for p in players})
+    players = [{**p, "salary": salaries.get(p["sp_id"])} for p in players]
     return {"squads": len(squads), "layout": list(layout), "layout_squads": layouts[layout], "data_as_of": as_of,
             "players": _with_new_traits(conn, players)}
 

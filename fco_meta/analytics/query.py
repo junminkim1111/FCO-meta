@@ -17,7 +17,7 @@ from typing import Any
 from ..storage import unfiltered_coverage
 from .usage import _POSITION_ROLE, ALL_RANKERS, UsageStore
 
-GROUP_BY = ("player", "card", "season", "grade", "team_color", "formation", "role")
+GROUP_BY = ("player", "card", "season", "grade", "team_color", "formation", "role", "controller")
 SORT_BY = (
     "rankers", "avg_rating", "season_win_rate", "win_rate", "avg_grade", "avg_elo", "avg_price", "avg_salary", "price", "stat",
     "match_stat",
@@ -70,7 +70,7 @@ PRICED_GROUPS = ("player", "card")
 
 _STARTERS = """
 WITH base AS (
-  SELECT q.rank, q.ouid, q.match_id, s.elo, s.formation, s.wins, s.draws, s.losses, t.match_result
+  SELECT q.rank, q.ouid, q.match_id, s.elo, s.formation, s.wins, s.draws, s.losses, t.match_result, t.controller
   FROM ranker_squad q
   JOIN ranker_snapshot s USING (data_as_of, mode, rank)
   LEFT JOIN match_team t ON t.match_id = q.match_id AND t.ouid = q.ouid
@@ -84,7 +84,7 @@ WITH base AS (
     AND (:elo_min IS NULL OR s.elo >= :elo_min)
     AND (:strict = 0 OR q.formation_match = 1)
 )
-SELECT b.rank, b.elo, b.formation, b.wins, b.draws, b.losses, b.match_result,
+SELECT b.rank, b.elo, b.formation, b.wins, b.draws, b.losses, b.match_result, b.controller,
        p.sp_id, p.pid, p.season_id, p.sp_position, p.sp_grade, p.sp_rating,
        CASE WHEN :need_stats THEN p.stats END AS stats  -- 경기 스탯 JSON은 우리 랭커 경기 스탯을 물을 때만 (10,000명이면 수십 MB)
 FROM base b
@@ -106,6 +106,7 @@ class SquadQuery:
     match_stat: str | None = None  # 경기 기록 값 (MATCH_STATS)
     match_stat_source: str = "top10000"  # top10000: 랭커 스탯(TOP 10,000 20경기 평균), rankers: 우리 랭커의 기준 경기 1경기
     roles: tuple[str, ...] | None = None  # 이 역할(들)로 선발 출전한 선수만 센다
+    controller: str | None = None  # gamepad | keyboard: 기준 경기를 그 컨트롤러로 한 랭커만
     data_as_of: str | None = None  # None = 가장 최근 스냅샷
     mode: str = "1vs1"
 
@@ -136,7 +137,8 @@ def query_squads(
 ) -> dict[str, Any]:
     """Group the starters of the base squads in scope.
 
-    Returns {"data_as_of", "covered", "squads" (= usage_rate denominator), "total_groups", "rows"}.
+    Returns {"data_as_of", "covered", "squads" (= usage_rate denominator), "controller_known" (squads in scope whose
+    controller is known, counted before the controller filter), "total_groups", "rows"}.
     Each row: key fields, rankers (squads with a match), usage_rate, avg_rating / avg_grade /
     avg_price / avg_salary (per appearance, with coverage), season_win_rate (pooled W/D/L of the
     rankers from the ranking page), win_rate (their one base match) / avg_elo, and for player/card
@@ -187,12 +189,15 @@ def query_squads(
 
     match_fields = [f for f in MATCH_STATS[q.match_stat] if f] if q.match_stat and q.match_stat_source == "rankers" else []
     groups: dict[Any, dict[str, Any]] = {}
-    squads = 0
+    squads = known = 0
     cur = conn.cursor()
     cur.row_factory = sqlite3.Row
     for rank, squad in groupby(cur.execute(_STARTERS + "ORDER BY b.rank", params), key=lambda r: r["rank"]):
         rows = list(squad)
         if q.with_pid is not None and not any(r["pid"] == q.with_pid for r in rows):
+            continue
+        known += rows[0]["controller"] is not None
+        if q.controller is not None and rows[0]["controller"] != q.controller:
             continue
         squads += 1
         first = rows[0]  # 랭커 정보 (그룹마다 이 dict 하나를 같이 가리킨다)
@@ -209,6 +214,7 @@ def query_squads(
             keys = {
                 "player": [r["pid"]], "card": [r["sp_id"]], "season": [r["season_id"]], "grade": [r["sp_grade"]],
                 "role": [role], "formation": [r["formation"]], "team_color": sorted(teams.get(rank, ())),
+                "controller": [r["controller"] or "unknown"],
             }[group_by]  # fmt: skip
             for key in keys:
                 if key is None:
@@ -281,7 +287,7 @@ def query_squads(
     else:
         # 값이 없는 행은 뒤로, 같으면 사용 랭커 수가 많은 순
         rows_out.sort(key=lambda r: (r[sort_by] is None, -(r[sort_by] or 0), -r["rankers"], r["key"]))
-    return {**out, "squads": squads, "total_groups": total, "rows": rows_out[:limit]}
+    return {**out, "squads": squads, "controller_known": known, "total_groups": total, "rows": rows_out[:limit]}
 
 
 def _combine(stats: list[dict[str, Any]], field: str, per: str | None) -> float | None:

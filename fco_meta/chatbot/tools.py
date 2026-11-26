@@ -757,13 +757,14 @@ TOOLS: list[dict[str, Any]] = [
             "group_by로 묶어 사용 수·사용률·경기 평점·승률·평균 강화·사용 랭커 평균 ELO·시세를 준다. 예: "
             "평점 높은 볼란치 = roles ['DM'], group_by player, sort_by avg_rating / 상위 100위가 쓰는 공미 = rank_max 100, roles ['CAM'], group_by player / "
             "라이스와 같이 쓰는 볼란치 = with_player 라이스, roles ['DM'], group_by player / 볼란치 강화 분포 = roles ['DM'], group_by grade / "
-            "4-2-2-1-1 랭커들의 팀컬러 = formation 4-2-2-1-1, group_by team_color / 라이스를 쓰는 포메이션 = with_player 라이스, group_by formation"
+            "4-2-2-1-1 랭커들의 팀컬러 = formation 4-2-2-1-1, group_by team_color / 라이스를 쓰는 포메이션 = with_player 라이스, group_by formation / "
+            "패드 랭커가 많이 쓰는 선수 = controller gamepad, group_by player / 라이스 쓰는 랭커의 패드·키보드 비율 = with_player 라이스, group_by controller"
         ),
         "input_schema": _schema(
             {
                 "group_by": {
                     "type": "string", "enum": list(GROUP_BY),
-                    "description": "묶는 기준: player(선수, 시즌 합산), card(시즌 카드), season(시즌), grade(강화), team_color, formation, role",
+                    "description": "묶는 기준: player(선수, 시즌 합산), card(시즌 카드), season(시즌), grade(강화), team_color, formation, role, controller(패드·키보드)",
                 },
                 "sort_by": {
                     "type": "string", "enum": list(SORT_BY),
@@ -776,6 +777,10 @@ TOOLS: list[dict[str, Any]] = [
                 "formation": {"type": "string", "description": "이 포메이션 랭커만"},
                 "roles": {"type": "array", "items": {"type": "string"}, "description": "이 역할로 선발 출전한 선수만 센다 (예: ['DM'], ['RW', 'LW'])"},
                 "with_player": {"type": "string", "description": "이 선수(이름 일부 가능)를 선발로 쓴 랭커만. 그 선수 자신은 player·card 결과에서 빠짐"},
+                "controller": {
+                    "type": "string", "enum": ["gamepad", "keyboard"],
+                    "description": "패드(gamepad)·키보드(keyboard) 랭커만. 랭커마다 기준 경기 1경기의 컨트롤러 (모르는 랭커는 빠짐)",
+                },
                 "rank_min": {"type": "integer", "description": "랭킹 이 순위부터"},
                 "rank_max": {"type": "integer", "description": "랭킹 이 순위까지 (예: 상위 100위 = 100)"},
                 "elo_min": {"type": "number", "description": "랭킹 점수(ELO) 이상인 랭커만"},
@@ -821,13 +826,14 @@ TOOLS: list[dict[str, Any]] = [
             "팀컬러·포메이션·순위 구간으로 묶어 랭커 수·비율·시즌 승률(승/무/패 합산)·평균 ELO·평균 구단가치를 준다. "
             "선수 정보는 없음(선수는 상위 수백 명 스쿼드 기준인 다른 도구). 예: 10,000명 중 많이 쓰는 팀컬러 = group_by team_color / "
             "승률 높은 포메이션 = group_by formation, sort_by season_win_rate / 1,000~2,000위 포메이션 = rank_min 1000, rank_max 2000 / "
-            "순위 구간별 4-2-3-1 비율 = formation 4-2-3-1, group_by rank_band"
+            "순위 구간별 4-2-3-1 비율 = formation 4-2-3-1, group_by rank_band / "
+            "패드·키보드 랭커 수와 승률 = group_by controller / 포메이션별(팀컬러별·순위 구간별) 패드 비율 = controller gamepad, group_by formation → controller_share"
         ),
         "input_schema": _schema(
             {
                 "group_by": {
                     "type": "string", "enum": list(RANKER_GROUP_BY),
-                    "description": "team_color, formation, rank_band(순위 구간, band명 단위)",
+                    "description": "team_color, formation, rank_band(순위 구간, band명 단위), controller(패드·키보드, 모르면 unknown)",
                 },
                 "sort_by": {
                     "type": "string", "enum": list(RANKER_SORT_BY),
@@ -838,6 +844,10 @@ TOOLS: list[dict[str, Any]] = [
                 "rank_min": {"type": "integer", "description": "이 순위부터"},
                 "rank_max": {"type": "integer", "description": "이 순위까지"},
                 "elo_min": {"type": "number", "description": "랭킹 점수 이상"},
+                "controller": {
+                    "type": "string", "enum": ["gamepad", "keyboard"],
+                    "description": "패드(gamepad)·키보드(keyboard) 랭커만. 랭커마다 기준 경기 1경기의 컨트롤러 (모르는 랭커는 빠짐)",
+                },
                 "band": {"type": "integer", "description": "rank_band 구간 크기 (기본 1000)"},
                 "min_rankers": {"type": "integer", "description": f"랭커가 이보다 적은 묶음은 뺀다 (기본: rankers 정렬 1, 그 밖의 정렬 {RANKERS_MIN_FOR_SORT})"},
                 "limit": {"type": "integer", "description": "결과 행 수 (기본 10, 최대 30)"},
@@ -1019,6 +1029,28 @@ def _typo_close(typed: str, name: str) -> bool:
 def _club_keys(clubs: str) -> tuple[str, ...]:
     # Keyed by the stored JSON so refreshed card details are read immediately.
     return tuple("".join((c["club"] or "").split()).casefold() for c in json.loads(clubs))
+
+
+CONTROLLER_NAMES = {"gamepad": "패드", "keyboard": "키보드"}
+_CONTROLLER_ALIASES = {"gamepad": "gamepad", "pad": "gamepad", "패드": "gamepad", "keyboard": "keyboard", "키보드": "keyboard"}
+
+
+def _controller(value: str | None) -> str | None:
+    if not value:
+        return None
+    found = _CONTROLLER_ALIASES.get(str(value).strip().lower())
+    if found is None:
+        raise ToolError(f"controller는 gamepad(패드) 또는 keyboard(키보드): {value}")
+    return found
+
+
+def _controller_note(known: int, total: int | None, unit: str) -> str:
+    """컨트롤러는 랭커마다 기준 경기 1경기 값이고, 저장 전에 받은 경기는 모른다 — 답에 함께 알린다."""
+    count = "명" if unit == "랭커" else "개"
+    base = f"컨트롤러는 랭커마다 기준 경기 1경기의 값(그날 다른 기기를 썼을 수 있음). 범위 안 {unit} 중 컨트롤러를 아는 {unit} {known}{count}"
+    if total:
+        base += f" ({known / total:.0%})"
+    return base + " — 모르는 것은 unknown이거나 빠짐. 비율을 말할 때 이 범위를 함께 알린다"
 
 
 class Toolbox:
@@ -3054,6 +3086,7 @@ class Toolbox:
                 **({"preferred_stat": c["preferred_stat"]} if "preferred_stat" in c else {}),
                 "role": role, "player": e["name"], "pid": e["pid"], "season": card["season"], "rankers": card["rankers"], "usage_rate": _card_usage(c),
                 "ovr": self._ovr(card["sp_id"], role, _grade(card)),
+                "rating": round(e["avg_rating_in_match"], 1) if e.get("avg_rating_in_match") is not None else None,
                 "card": {k: card[k] for k in ("sp_id", "season", "season_img", "rankers", "most_used_grade",
                                               "price_at_most_used_grade", "salary", "new_traits", "addable_trait") if k in card},
             })  # fmt: skip
@@ -3570,8 +3603,10 @@ class Toolbox:
         stat_min: float | None = None,
         match_stat: str | None = None,
         match_stat_source: str | None = None,
+        controller: str | None = None,
     ) -> dict[str, Any]:
         sort_by = sort_by or "rankers"
+        controller = _controller(controller)
         if group_by not in GROUP_BY:
             raise ToolError(f"group_by는 {', '.join(GROUP_BY)} 중 하나: {group_by}")
         if sort_by not in SORT_BY:
@@ -3607,7 +3642,7 @@ class Toolbox:
             team_color_id=tc_id, formation=formation, rank_min=rank_min, rank_max=rank_max,
             elo_min=float(elo_min) if elo_min is not None else None, strict=bool(strict), with_pid=pid,
             roles=role_codes, data_as_of=as_of, stat=stat_name, stat_min=float(stat_min) if stat_min is not None else None,
-            match_stat=match_stat, match_stat_source=source,
+            match_stat=match_stat, match_stat_source=source, controller=controller,
         )  # fmt: skip
         res = aggregate_squads(self.conn, query, group_by, sort_by=sort_by, min_rankers=min_rankers, limit=limit)
 
@@ -3629,9 +3664,13 @@ class Toolbox:
             parts.append(f"{'+'.join(role_codes)} 자리만")
         if stat_min is not None:
             parts.append(f"{stat_name} {stat_min:g} 이상 카드만")
+        if controller:
+            parts.append(f"{CONTROLLER_NAMES[controller]} 랭커만")
 
         rows = [self._query_row(group_by, r) for r in res["rows"]]
         notes = []
+        if controller or group_by == "controller":
+            notes.append(_controller_note(res["controller_known"], res["squads"] if not controller else None, "스쿼드"))
         if not res["squads"]:
             notes.append("조건에 맞는 스쿼드가 없음 — 조건을 완화하거나 사용자에게 그대로 알린다")
         elif res["squads"] < 30:
@@ -3684,8 +3723,10 @@ class Toolbox:
         band: int = 1000,
         min_rankers: int | None = None,
         limit: int = 10,
+        controller: str | None = None,
     ) -> dict[str, Any]:
         sort_by = sort_by or "rankers"
+        controller = _controller(controller)
         if group_by not in RANKER_GROUP_BY:
             raise ToolError(f"group_by는 {', '.join(RANKER_GROUP_BY)} 중 하나: {group_by}")
         if sort_by not in RANKER_SORT_BY:
@@ -3698,7 +3739,7 @@ class Toolbox:
             self.conn, group_by, team_color_id=tc_id, formation=formation,
             rank_min=int(rank_min) if rank_min is not None else None, rank_max=int(rank_max) if rank_max is not None else None,
             elo_min=float(elo_min) if elo_min is not None else None, band=band, sort_by=sort_by, min_rankers=min_rankers,
-            limit=max(1, min(int(limit or 10), QUERY_MAX_ROWS)),
+            limit=max(1, min(int(limit or 10), QUERY_MAX_ROWS)), controller=controller,
         )  # fmt: skip
         if res["data_as_of"] is None:
             return {"rows": [], "note": "필터 없이 수집한 랭킹이 없음 (매일 수집을 먼저 실행)"}
@@ -3711,6 +3752,8 @@ class Toolbox:
             parts.append(f"순위 {rank_min or 1}~{rank_max or res['covered']}위")
         if elo_min is not None:
             parts.append(f"ELO {elo_min:g} 이상")
+        if controller:
+            parts.append(f"{CONTROLLER_NAMES[controller]} 랭커만")
         rows = []
         for r in res["rows"]:
             key = r["key"]
@@ -3718,16 +3761,20 @@ class Toolbox:
                 "team_color": lambda: {"team_color": self._scope_name(key)},
                 "formation": lambda: {"formation": key},
                 "rank_band": lambda: {"rank_band": f"{key}~{key + band - 1}위"},
+                "controller": lambda: {"controller": key},
             }[group_by]()
             value = r["avg_squad_value"]
             rows.append({**label, **{k: r[k] for k in ("rankers", "share", "season_win_rate", "season_games", "avg_elo")},
-                         "avg_squad_value": format_bp(int(value)) if value is not None else None})  # fmt: skip
+                         "avg_squad_value": format_bp(int(value)) if value is not None else None,
+                         **({"controller_share": r["controller_share"]} if "controller_share" in r else {})})  # fmt: skip
             if group_by == "rank_band":  # 그 구간(순위 범위로 잘린 만큼) 랭커 중 조건에 맞는 비율
                 last = min(key + band - 1, res["covered"], int(rank_max) if rank_max else res["covered"])
                 rows[-1]["share_of_band"] = round(r["rankers"] / max(last - max(key, int(rank_min or 1)) + 1, 1), 4)
         notes = []
         if res["total_groups"] > len(rows) and min_rankers > 1:
             notes.append(f"랭커 {min_rankers}명 미만 묶음은 뺌 (전체 {res['total_groups']}개)")
+        if controller or group_by == "controller":
+            notes.append(_controller_note(res["controller_known"], None if controller else res["rankers"], "랭커"))
         if group_by == "team_color" or tc_id != ALL_RANKERS:
             notes.append("팀컬러는 랭킹 화면에 표시된 팀컬러·엠블럼으로 추정한 소속 (특수 팀컬러가 표시되면 원래 클럽을 엠블럼으로 추정)")
         return {
@@ -3743,6 +3790,7 @@ class Toolbox:
                    if group_by == "rank_band" else {}),
                 "season_win_rate": "그 랭커들의 이번 시즌 전적(승/무/패)을 합친 승률, season_games = 경기 수 합",
                 "avg_squad_value": "랭킹 화면의 구단가치 평균",
+                **({"controller_share": "그 묶음에서 컨트롤러를 아는 랭커 중 이 컨트롤러 비율 — '포메이션별 패드 비율'은 이 값"} if controller else {}),
                 "note": "선수·스쿼드 정보는 없음 — 선수 질문은 스쿼드 기반 도구(상위 수백 명)",
             },
             **({"note": " / ".join(notes)} if notes else {}),
