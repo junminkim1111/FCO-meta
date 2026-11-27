@@ -444,6 +444,7 @@ const TOOL_STATUS = {
   resolve_terms: () => "팀컬러·포지션 이름을 확인하고 있어요...",
   list_available_data: () => "수집된 데이터 범위를 확인하고 있어요...",
   list_formations: (a) => `${tc(a)}포메이션 사용률을 세고 있어요...`,
+  search_players: () => "데이터센터에서 조건에 맞는 선수를 찾고 있어요...",
   recommend_players: (a) => `${tc(a)}랭커들이 쓰는 선수를 추리고 있어요...`,
   recommend_squad: (a) => `${tc(a)}예산에 맞춰 스쿼드를 짜고 있어요...`,
   squad_candidates: (a) => `${tc(a)}자리별 후보와 기록을 모으고 있어요...`,

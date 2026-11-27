@@ -50,6 +50,7 @@ from ..analytics.query import _card_details, stat_value
 from ..crawler import teamcolor_info
 from ..crawler.models import TeamColor
 from ..crawler.teamcolors import TeamColorCatalog, highest_stage_players, season_matches
+from . import player_search
 from ..market.money import format_bp, parse_bp
 from ..market.roles import ROLES, resolve_roles
 from ..market.storage import SCHEMA as MARKET_SCHEMA
@@ -557,12 +558,36 @@ def _brief_player_detail(result: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _name_hit(query: str, name: str | None) -> bool:
+    """이름 검색이 맞았는지: 한 단어 안에 있거나, 단어 첫머리에서 시작해 이어지는 부분이면 맞다 ('테리' → '존 테리', '판페르시' →
+    '로빈 판 페르시'). 공백을 지우고 찾으면 '테리'가 '비셴테 리자라쥐'(비셴테리자라쥐)에도 걸리므로 단어 경계를 넘어 중간에서 시작하면 뺀다."""
+    q = "".join(query.split())
+    words = (name or "").split()
+    joined = "".join(words)
+    if not q or any(q in w for w in words):
+        return bool(q)
+    starts = [sum(len(w) for w in words[:i]) for i in range(len(words))]
+    return any(joined.startswith(q, i) for i in starts)
+
+
+def _name_exact(query: str, name: str | None) -> bool:
+    """질문한 이름이 그 선수 이름 전체이거나 이름의 한 단어 ('테리' = '존 테리', '존테리' = '존 테리')."""
+    q = "".join(query.split())
+    return q == "".join((name or "").split()) or q in (name or "").split()
+
+
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     """Plain JSON Schema (LLM 제공자와 무관). 선택 항목은 required에서 뺀다."""
     return {"type": "object", "properties": properties, "required": required}
 
 
 TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "search_players",
+        "description": "넥슨 데이터센터 전체 시즌 카드 조건 검색. 랭커 사용률과 무관. 오른발 4는 preferred_foot=왼발, weak_foot=4. "
+                       "시즌·선수명·기준가(price)를 반환. 지정한 grade의 가격이며 grade를 생략하면 가격은 null. possibly_truncated면 최대 200장 제한.",
+        "input_schema": _schema(player_search.PROPERTIES, []),
+    },
     {
         "name": "resolve_terms",
         "description": (
@@ -1073,6 +1098,7 @@ class Toolbox:
         self.catalog = catalog or TeamColorCatalog.load()
         self.team_color_info = teamcolor_info.load() if team_color_info is None else team_color_info
         self._handlers: dict[str, Callable[..., dict[str, Any]]] = {
+            "search_players": self.search_players,
             "resolve_terms": self.resolve_terms,
             "list_available_data": self.list_available_data,
             "list_formations": self.list_formations,
@@ -1098,7 +1124,7 @@ class Toolbox:
         if handler is None:
             return json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False), True
         # 모델이 인자 이름에 표기 찌꺼기를 붙여 보낼 때가 있다 ("top_n`", "team_color」 string=", "Role") → 이름 부분만
-        known = inspect.signature(handler).parameters
+        known = player_search.PROPERTIES if name == "search_players" else inspect.signature(handler).parameters
         aliases = {"roles": "role"} if name in ("recommend_players", "query_squads", "resolve_terms") else {}
         if name == "get_player_detail":
             aliases["player"] = "name"
@@ -1125,6 +1151,13 @@ class Toolbox:
             return json.dumps({"error": error}, ensure_ascii=False), True
 
     # --- helpers -----------------------------------------------------------
+
+    def search_players(self, **args):
+        for key in ("team_color", "club"):
+            if key in args:
+                value = args[key]
+                args[key] = TEAM_COLOR_ALIASES.get("".join(str(value).split()).casefold(), value)
+        return player_search.search_players(**args)
 
     def _lookup_team_color(self, value: str | int):
         """Name / id / alias → TeamColor. "대한민국"처럼 클럽·국가에 같은 이름이 있으면
@@ -3263,7 +3296,7 @@ class Toolbox:
         key = norm(season)
         rows = [r for r in self.conn.execute(
             "SELECT spid, name, season_code, main_position, ovr, salary FROM card WHERE REPLACE(name, ' ', '') LIKE ?",
-            (f"%{''.join(name.split())}%",)) if norm(r["season_code"]) == key]  # fmt: skip
+            (f"%{''.join(name.split())}%",)) if norm(r["season_code"]) == key and _name_hit(name, r["name"])]  # fmt: skip
         if not rows:
             return {"season": season, "note": f"'{name}' 선수의 {season} 카드를 찾지 못함"}
         r = rows[0]
@@ -3275,7 +3308,18 @@ class Toolbox:
                           season: str | None = None, _typo_retry: bool = False) -> dict[str, Any]:
         out = self._player_detail(name, team_color, formation, _typo_retry)
         if season:  # 랭커가 쓰지 않은 카드의 급여 ("GR 돈나룸마 쓰고 싶은데 급여를 어디서")
-            out["season_card"] = self._season_card(out.get("players", [{}])[0].get("name", name) if out.get("players") else name, season)
+            # 이름이 여럿에 걸리면 그 시즌 카드가 있는 선수를 고른다 (없으면 첫 선수 기준으로 '못 찾음')
+            candidates = [p["name"] for p in out.get("players") or []] or [name]
+            cards = [self._season_card(n, season) for n in candidates]
+            out["season_card"] = next((c for c in cards if "player" in c), None) or (
+                cards[0] if len(candidates) == 1 else {"season": season, "note": f"{', '.join(candidates)} 중 {season} 카드를 찾지 못함"})
+        names = out.get("matched_names") or []
+        if names and "typo" not in out and not any(_name_exact(name, n) for n in names):
+            out["name_check"] = (f"'{name}'과(와) 이름이 정확히 같은 선수가 없어 {', '.join(names)}(으)로 찾음 — 다른 선수일 수 있음. "
+                                 f"사용자가 말한 선수가 맞는지 모르면 답하지 말고 되묻는다. 답한다면 첫 줄에 어느 선수 기준인지 밝힌다")
+        elif len(names) > 1 and not any("".join(name.split()) == "".join(n.split()) for n in names):
+            out["name_check"] = (f"'{name}'이(가) 여러 선수에 걸림: {', '.join(names)}. 질문·대화로 누군지 정해지지 않으면 "
+                                 f"답하지 말고 되묻는다 (랭커가 훨씬 많이 쓰는 선수가 하나면 그 선수로 답하고 첫 줄에 밝힌다)")
         out.setdefault("definitions", {}).update({
             "season_card": "데이터센터의 카드 자체 정보. 급여·능력치·시세는 랭커 사용률이나 특정 팀·포메이션의 표본이 아님",
             "players_scope": "players 각 선수의 scope가 그 선수의 roles 통계 범위",
@@ -3309,14 +3353,20 @@ class Toolbox:
             " ORDER BY u.ranker_count DESC LIMIT 40",
             args,
         ).fetchall()
-        players = self._player_summaries(like, tc_id, tc_name, formation)
-        if not players:
-            collected = self.conn.execute(
+        rows = [r for r in rows if _name_hit(name, r["name"])]
+        players = [p for p in self._player_summaries(like, tc_id, tc_name, formation) if _name_hit(name, p["name"])]
+        if not players:  # 랭커가 쓰지 않은 선수: 수집된 카드, 그다음 넥슨 선수 이름 목록 전체에서
+            collected = [(pid, n) for pid, n in self.conn.execute(
                 "SELECT pid, MIN(name) FROM card WHERE REPLACE(name, ' ', '') LIKE ?"
-                " GROUP BY pid ORDER BY MIN(LENGTH(name)), MIN(name), pid LIMIT 5", (like,),
-            )
-            players = [{"name": player_name, "pid": pid, "roles": [], "season_cards": self._season_cards(pid)}
-                       for pid, player_name in collected]
+                " GROUP BY pid ORDER BY MIN(LENGTH(name)), MIN(name), pid", (like,),
+            ) if _name_hit(name, n)][:5]  # fmt: skip
+            if not collected and not rows:
+                collected = [(pid, n) for pid, n in self.conn.execute(
+                    "SELECT sp_id % 1000000, MIN(name) FROM meta_spid WHERE REPLACE(name, ' ', '') LIKE ?"
+                    " GROUP BY sp_id % 1000000 ORDER BY MIN(LENGTH(name)), MIN(name)", (like,),
+                ) if _name_hit(name, n)][:5]  # fmt: skip
+            players = [{"name": player_name, "pid": pid, "roles": [], "season_cards": self._season_cards(pid),
+                        **({} if rows else {"note": "랭커 사용 기록 없음 (수집된 랭커 스쿼드에 없음)"})} for pid, player_name in collected]
         # '라이스'가 '브라이스 삼바'에도 걸린다: 이름의 한 단어(또는 전체)와 정확히 맞는 선수가 있으면 단어 중간에만 걸린 선수는 뺀다
         query = name.replace(" ", "")
         exact = lambda n: (n or "").replace(" ", "") == query or query in (n or "").split()  # noqa: E731

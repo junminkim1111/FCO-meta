@@ -1496,3 +1496,69 @@ def test_query_by_controller(toolbox):  # noqa: F811
     assert r["squads"] == 2 and "패드 랭커만" in r["scope"]["description"]
     content, is_error = toolbox.run("query_squads", {"group_by": "controller", "controller": "마우스"})
     assert is_error and "gamepad" in json.loads(content)["error"]
+
+
+def test_search_players_through_toolbox(toolbox, monkeypatch):
+    from fco_meta.chatbot import player_search
+    import httpx
+
+    choices = {"teamcolorid": {"밀라노fc": "1025"}, "strPosition": {"fw": "24,25,26"},
+               "preferredfoot": {"왼발": "2"}, "strAbility1": {"속력": "sprintspeed"}}
+    monkeypatch.setattr(player_search, "_form", lambda day: ({}, choices, {"strPosition": {"24,25,26": "FW"}}))
+    sent = {}
+
+    def post(url, *, data, timeout):
+        sent.update(data)
+        return httpx.Response(200, request=httpx.Request("POST", url), text='<div class="tr empty"></div>')
+
+    monkeypatch.setattr(player_search.httpx, "post", post)
+    result = run(toolbox, "search_players", {"team_color": "밀란", "roles": ["FW"], "preferred_foot": "왼발",
+                                             "weak_foot": 4, "max_price": "5억",
+                                             "abilities": [{"name": "속력", "min": 100}]})
+    assert result == {"players": [], "possibly_truncated": False}
+    assert (sent["teamcolorid"], sent["strPosition"], sent["preferredfoot"], sent["n1FootAblity"],
+            sent["n8PlayerGrade1Max"]) == ("1025", ",24,25,26,", "2", "4", 500000)
+    assert (sent["n1Ability1Min"], sent["n1Ability1Max"]) == (100, 200)
+    error, failed = toolbox.run("search_players", {"roles": ["공격수"]})
+    assert failed and "허용값: FW" in error
+
+@pytest.mark.parametrize("typed,official", [("EVO EP", "evo_ep"),
+                                           ("EVO-EP", "evo_ep"), ("EVO-CU", "evo_cu")])
+def test_datacenter_evo_season_spellings(typed, official):
+    from fco_meta.chatbot.player_search import _key
+
+    assert _key(typed, "strSeason") == _key(official, "strSeason")
+
+
+def test_player_name_match_stays_inside_words():
+    """'테리'가 공백을 지운 '비셴테리자라쥐'에 걸려 리자라쥐가 나오던 문제: 단어 중간에서 시작해 경계를 넘는 일치는 뺀다."""
+    from fco_meta.chatbot.tools import _name_exact, _name_hit
+
+    assert not _name_hit("테리", "비셴테 리자라쥐")
+    assert _name_hit("테리", "존 테리") and _name_hit("판페르시", "로빈 판 페르시") and _name_hit("라이스", "브라이스 삼바")
+    assert _name_exact("테리", "존 테리") and _name_exact("존테리", "존 테리") and not _name_exact("바페", "킬리안 음바페")
+
+
+def test_player_detail_flags_names_it_is_not_sure_of(toolbox):  # noqa: F811
+    r = run(toolbox, "get_player_detail", {"name": "볼란"})  # 볼란치R·볼란치L 둘 다 이름의 일부
+    assert "name_check" in r and "볼란치R" in r["name_check"]
+    r = run(toolbox, "get_player_detail", {"name": "볼란치R"})
+    assert "name_check" not in r
+
+
+def test_search_season_catalog_refreshes_on_next_day(monkeypatch):
+    import httpx
+    from fco_meta.chatbot import player_search
+
+    seasons = ["AA"]
+
+    def get(url, **kwargs):
+        options = "".join(f'<input class="season_check" id="season_{s}" data-no="{i}">'
+                          for i, s in enumerate(seasons, 101))
+        return httpx.Response(200, request=httpx.Request("GET", url), text=f'<form id="form1">{options}</form>')
+
+    monkeypatch.setattr(player_search.httpx, "get", get)
+    assert "bb" not in player_search._form(-2)[1]["strSeason"]
+    seasons.append("BB")
+    assert "bb" not in player_search._form(-2)[1]["strSeason"]
+    assert player_search._form(-1)[1]["strSeason"]["bb"] == "102"
