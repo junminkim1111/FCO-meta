@@ -392,3 +392,23 @@ def test_generation_cost_lookup_retries_a_pending_charge(toolbox, base_url):  # 
         chat = OpenAIChat(http, toolbox, model="m", base_url=base_url, api_key="test")
         assert chat.lookup_cost("gen-pending") == 0.001234
     assert len(requests) == 2
+
+
+def test_unlimited_turn_can_repeat_tools_past_time_round_and_batch_limits(toolbox):
+    from fco_meta.chatbot.llm import MAX_TOOL_CALLS, MAX_TOOL_ROUNDS, OpenAIChat
+
+    clock = [0.0]
+    call = {"id": "c", "type": "function", "function": {"name": "list_formations", "arguments": "{}"}}
+    batch = completion(tool_calls=[call], finish="tool_calls")
+    http = FakeHttp([batch] * (MAX_TOOL_CALLS + 1) + [completion("완료")])
+    chat = OpenAIChat(http, toolbox, model="m", base_url="https://example.test", api_key="k", now=lambda: clock[0])
+    for i in range(12):
+        chat.remember(f"질문{i}", "답")
+    gen = chat.ask_stream("계속", deadline=360, wrap_after=300, unlimited=True)
+    next(gen)
+    clock[0] = 720
+    turn = _drain(gen)
+    assert MAX_TOOL_ROUNDS < MAX_TOOL_CALLS == 30
+    assert len(turn.tool_calls) == 31 and turn.text == "완료"
+    assert any(m.get("content") == "질문0" for m in http.requests[0]["messages"])
+    assert not chat.unlimited

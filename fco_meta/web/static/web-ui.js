@@ -970,6 +970,7 @@ function command(text) {
   const [name, ...flags] = text.split(/\s+/);
   const cmd = name.toLowerCase();
   const only = (allowed) => new Set(flags).size === flags.length && flags.every((f) => allowed.includes(f));
+  if (cmd === "/unmlimit" && !flags.length) return send(cmd);
   if (cmd === "/admin" && !flags.length) return adminPrompt();
   if (cmd === "/trace" && !flags.length) {
     traceOn = !traceOn; // 기본으로 켬. 한 번 더 치면 끈다 (새로고침하면 다시 켬)

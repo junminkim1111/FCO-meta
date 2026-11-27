@@ -18,6 +18,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
+from itertools import count
 from typing import Any
 
 import httpx
@@ -30,7 +31,7 @@ log = logging.getLogger(__name__)
 
 MAX_HISTORY_TURNS = 10  # 이전 질문·답은 최근 이만큼만 모델에 다시 보낸다 (긴 대화의 토큰과 흐려지는 맥락을 막는다)
 MAX_TOOL_ROUNDS = 10  # 이만큼 도구를 부른 뒤에는 도구를 끄고 지금까지의 결과로 답하게 한다
-MAX_TOOL_CALLS = 25  # 한 질문에서 실행하는 도구 호출 상한 (한 번에 여러 개를 부르면 ROUNDS로는 못 막는다. 2026-11-22 운영 최대 23번)
+MAX_TOOL_CALLS = 30  # 한 질문에서 실행하는 도구 호출 상한 (한 번에 여러 개를 부르면 ROUNDS로는 못 막는다. 2026-11-22 운영 최대 23번)
 MAX_EVIDENCE = 4  # Turn.evidence 줄 수
 # 한 질문의 전체 대기 상한(초): 도구 단계를 모두 합쳐. 넘으면 그 질문은 실패(화면에는 혼잡 안내).
 # 요청마다 남은 시간을 타임아웃으로 걸어, 응답이 늦은 요청도 이 안에서 끊는다
@@ -167,6 +168,7 @@ class ToolChat:
         self.prompt = JUDGE_PROMPT if self.judge else SYSTEM_PROMPT
         self.last_model: str | None = None
         self.last_provider: str | None = None  # OpenRouter가 고른 제공사 (DeepInfra 등) — 제공사별 품질 차이를 찾으려고
+        self.unlimited = False
         self.deadline = ANSWER_DEADLINE
         self.history: list[tuple[str, str]] = []  # (질문, 답)
         self.tokens: Counter[str] = Counter()  # 입력·출력 토큰 합 (비용 비교용)
@@ -195,7 +197,8 @@ class ToolChat:
     @property
     def contents(self) -> list[dict[str, Any]]:
         """Earlier turns as messages (the web checks it to tell a conversation's first question)."""
-        return [m for q, a in self.history[-MAX_HISTORY_TURNS:] for m in ({"role": "user", "content": q}, {"role": "assistant", "content": a})]
+        turns = self.history if self.unlimited else self.history[-MAX_HISTORY_TURNS:]
+        return [m for q, a in turns for m in ({"role": "user", "content": q}, {"role": "assistant", "content": a})]
 
     def remember(self, question: str, answer: str) -> None:
         self.history.append((question, answer))
@@ -205,13 +208,14 @@ class ToolChat:
 
     def ask_stream(
         self, question: str, *, thoughts: bool = False, deadline: float | None = None, wrap_after: float | None = None,
-        cancel: Any = None,
+        cancel: Any = None, unlimited: bool = False,
     ) -> Generator[str | Reset | ToolCall | Recheck, None, Turn]:
+        self.unlimited = unlimited
         self._cancel = cancel
         started = self.now()
         self._deadline = deadline or self.deadline
-        self._ends_at = started + self._deadline
-        self._wrap_at = started + wrap_after if wrap_after else None
+        self._ends_at = float("inf") if unlimited else started + self._deadline
+        self._wrap_at = started + wrap_after if wrap_after and not unlimited else None
         self._no_think = False
         self.cost_calls.clear()
         self.thoughts, self.unverified = thoughts, []
@@ -219,6 +223,7 @@ class ToolChat:
             turn = yield from self._ask(question)  # 실패·정지면 기록에 남기지 않는다
         finally:
             self.thoughts = False
+            self.unlimited = False
         self.history.append((question, turn.text))
         return turn
 
@@ -227,6 +232,8 @@ class ToolChat:
             raise Cancelled(f"{self.model} 사용자가 멈춤·연결 끊김")
 
     def _left(self) -> float:
+        if self.unlimited:
+            return self._deadline  # socket inactivity timeout; active streams have no wall-clock deadline
         left = self._ends_at - self.now()
         if left < MIN_REQUEST_TIMEOUT:
             raise AnswerTimeout(f"{self.model} 요청 전 (상한 {self._deadline:.0f}초)")
@@ -241,11 +248,11 @@ class ToolChat:
         pending_squad = False
         nudged = False  # 검사 없이 답한 스쿼드를 이미 돌려보냈는가
         capped = False  # 도구 호출 상한에 닿으면 다음 번은 도구 없이 답만
-        for round_no in range(MAX_TOOL_ROUNDS + 1):
+        for round_no in count():
             self._check_cancel()
             if self._wrap_at is not None and self.now() >= self._wrap_at:
                 self._no_think = True  # 마무리 시각이 지났다: 도구도 생각도 없이 지금까지 결과로 답만
-            final = round_no == MAX_TOOL_ROUNDS or capped or self._no_think
+            final = (not self.unlimited and round_no >= MAX_TOOL_ROUNDS) or capped or self._no_think
             try:
                 reply = yield from self._round(messages, final)
             except _WrapUp:  # 생각만 하다 마무리 시각을 넘겼다 → 그 요청은 버리고 바로 답만
@@ -284,11 +291,10 @@ class ToolChat:
             out: list[tuple[str, str, bool]] = []
             for call_id, name, args in reply.uses:
                 key = json.dumps([name, args], sort_keys=True, ensure_ascii=False)
-                if key in seen:  # 같은 호출 반복 → 실행하지 않는다
+                if not self.unlimited and key in seen:  # 같은 호출 반복 → 실행하지 않는다
                     out.append((call_id, "같은 도구를 같은 인자로 이미 호출했습니다. 앞서 받은 결과로 답하세요.", False))
                     continue
-                if len(calls) >= MAX_TOOL_CALLS:  # 거의 끝없이 부르는 경우만 막는다 → 지금까지의 결과로 답하게
-                    capped = True
+                if not self.unlimited and len(calls) >= MAX_TOOL_CALLS:  # 거의 끝없이 부르는 경우만 막는다 → 지금까지의 결과로 답하게
                     out.append((call_id, f"도구 호출 한도({MAX_TOOL_CALLS}번)에 닿았습니다. 더 부르지 말고 지금까지 받은 결과로 답하세요"
                                          " (확인하지 못한 범위는 답에 밝힐 것).", True))
                     continue
@@ -317,8 +323,8 @@ class ToolChat:
                 line = self.toolbox.evidence(name, result)
                 if line and line not in evidence:
                     evidence.append(line)
+            capped = not self.unlimited and len(calls) >= MAX_TOOL_CALLS
             messages += self._tool_results(out)  # 병렬 호출 결과는 한 번에
-        raise AssertionError("unreachable")
 
     def _checked(self, messages: list[dict[str, Any]], question: str, text: str, known: list[Any]) -> Generator[Any, None, str]:
         """Figures no tool result backs up → one rewrite without tools (appended, never edited in place)."""

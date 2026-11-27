@@ -271,6 +271,7 @@ class _Session:
     turns gets them as text (remember) before its next question, so follow-ups keep the context across models."""
 
     def __init__(self) -> None:
+        self.unlimited = False
         self.lock = threading.Lock()  # 같은 대화의 질문은 차례로
         self.history: list[tuple[str, str]] = []
         self.bots: dict[str, list[Any]] = {}  # key → [chat, history 중 이 chat이 아는 개수]
@@ -768,6 +769,19 @@ def create_app(
         if kid:
             restore_counts()
         trial = bool(kid) and kid.startswith("trial-")
+        if req.message.strip().lower() == "/unmlimit" and backend == "llm":
+            session_id = req.session_id or uuid.uuid4().hex
+            session = session_for(session_id)
+            try:
+                with _held(session.lock, SESSION_WAIT):
+                    session.unlimited = not session.unlimited
+                    text = ("이 대화에서 도구 호출·라운드·답변 시간 제한을 해제했습니다."
+                            if session.unlimited else "이 대화에 기본 제한을 다시 적용했습니다.")
+            except _SessionBusy:
+                text = SESSION_BUSY
+            lines = [_event(type="start", session_id=session_id), _event(type="delta", text=text),
+                     _event(type="done", tool_calls=[])]
+            return StreamingResponse(iter(lines), media_type="application/x-ndjson")
         if refused := limit.check(who, kid, TRIAL_PER_VISITOR if trial else sys.maxsize if kid == "admin" else beta.per_day, beta.trial_per_day):  # 관리자는 키별 하루 제한 없음
             chat_log.record(q=req.message, outcome="limited", error=refused, **who_key)
             if refused == TRIAL_USED:  # 체험을 다 썼다 → 프론트가 401이면 키 입력창을 띄운다
@@ -840,7 +854,7 @@ def create_app(
                     yield _event(type="done", tool_calls=[], blocked=True)
                     return
                 if req.mode == "auto":  # 기본: DeepSeek V4.1 Flash Eco (OpenGateway). 그 키가 없는 서버만 GPT-6 Luna (OpenRouter)
-                    cached = answers.get(req.message) if first and not team else None
+                    cached = answers.get(req.message) if first and not team and not session.unlimited else None
                     if cached is not None:
                         session.answered(None, req.message, cached)  # 이어지는 질문이 이 답을 맥락으로 쓰도록
                         entry.update(outcome="cached", chars=len(cached))
@@ -875,6 +889,9 @@ def create_app(
                     name = "deepseek" if deep else "gpt"
                     key, options, why = req.mode, {"deadline": LONG_DEADLINE, "wrap_after": WRAP_UP_AFTER}, f"/model {name} → {label}"
                     entry["mode"] = req.mode
+                if session.unlimited:
+                    options["unlimited"] = True
+                    entry["unlimited"] = True
                 options["thoughts"] = True  # 관리자 페이지에 남기려고 /trace를 안 켜도 생각을 받는다
                 options["cancel"] = cancel
                 keep.add("route", text=why)
@@ -907,7 +924,7 @@ def create_app(
             log.info("answered with %s; evidence: %s", bot.last_model, turn.evidence)
             drawn = any(n == "recommend_squad" and not a.get("slots") and not (a.get("team_color") and a.get("formation")) for n, a in turn.tool_calls)
             # 잘리거나 도구 한도에 걸린 답, 팀컬러·포메이션을 무작위로 뽑은 스쿼드는 캐시하지 않는다 (같은 질문에 늘 같은 팀이 나오지 않게)
-            if first and req.mode == "auto" and not entry.get("team") and turn.finish_reason == "STOP" and not drawn:
+            if first and req.mode == "auto" and not entry.get("unlimited") and not entry.get("team") and turn.finish_reason == "STOP" and not drawn:
                 answers.put(req.message, turn.text)
             entry.update(outcome="unverified_squad" if turn.finish_reason == "unverified_squad" else "ok", model=bot.last_model, provider=getattr(bot, "last_provider", None), tools=[n for n, _ in turn.tool_calls],
                          finish=turn.finish_reason, chars=len(turn.text))  # fmt: skip
