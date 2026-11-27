@@ -1559,3 +1559,24 @@ def test_unmlimit_toggles_only_the_requested_conversation(db, tmp_path, monkeypa
     ask(client, "/unmlimit", sid)
     ask(client, "다음 질문", sid)
     assert [options.get("unlimited", False) for _, _, options in asked] == [True, False, False]
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+def test_search_players_runs_while_db_lock_is_held(with_session):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import Mock
+    from fco_meta.web.app import _LockedTools, _Session, _SessionTools
+
+    lock = threading.Lock()
+    box = Mock()
+    box.run.return_value = ('{"players":[]}', False)
+    tools = _LockedTools(box, lock)
+    if with_session:
+        tools = _SessionTools(tools, _Session())
+        tools.last_db_wait_ms = 10
+    with ThreadPoolExecutor(max_workers=1) as worker, lock:
+        result = worker.submit(tools.run, "search_players", {"name": "메시"}).result(timeout=2)
+    assert result == box.run.return_value
+    if with_session:
+        assert tools.last_db_wait_ms is None

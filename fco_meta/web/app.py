@@ -1067,8 +1067,13 @@ class _LockedTools:
     def __init__(self, toolbox: Toolbox, lock: threading.Lock):
         self.toolbox, self.lock = toolbox, lock
 
+    def _db_lock(self):
+        return self.lock
+
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
-        with self.lock:
+        if name == "search_players":  # 데이터센터 HTTP 조회만 사용한다.
+            return self.toolbox.run(name, tool_input)
+        with self._db_lock():
             return self.toolbox.run(name, tool_input)
 
     def evidence(self, name: str, result: dict[str, Any]) -> str | None:
@@ -1085,7 +1090,7 @@ class _SessionTools(_LockedTools):
         self.last_db_wait_ms: float | None = None
 
     @contextmanager
-    def _timed_db_lock(self):
+    def _db_lock(self):
         started = time.perf_counter()
         with self.lock:
             self.last_db_wait_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -1095,8 +1100,7 @@ class _SessionTools(_LockedTools):
         self.last_db_wait_ms = None
         if name == "analyze_playstyle":
             return self._playstyle()
-        with self._timed_db_lock():
-            content, is_error = self.toolbox.run(name, tool_input)
+        content, is_error = super().run(name, tool_input)
         if name == "squad_candidates" or name in SQUAD_TOOLS:
             self.session.turn_lineup = None
         if name == "recommend_squad":
@@ -1150,7 +1154,7 @@ class _SessionTools(_LockedTools):
             log.warning("playstyle analysis failed: %s", e)
             return json.dumps({"error": "넥슨 경기 기록을 가져오지 못함 (잠시 후 다시)"}, ensure_ascii=False), True
         sp_ids = {int(p["spId"]) for _, d in details for i in d.get("matchInfo") or [] if i.get("ouid") == team.ouid for p in i.get("player") or []}
-        with self._timed_db_lock():
+        with self._db_lock():
             names = player_names(self.toolbox.conn, sorted(sp_ids))
         result = {"owner": team.mark + team.nickname, **summarize(team.ouid, details, names),
                   "note": "넥슨 기록은 약 2시간 전 경기까지. 답에 분석한 경기 수·종류·기간을 밝힐 것"}  # fmt: skip
