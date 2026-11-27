@@ -769,7 +769,7 @@ def create_app(
         if kid:
             restore_counts()
         trial = bool(kid) and kid.startswith("trial-")
-        if req.message.strip().lower() == "/unmlimit" and backend == "llm":
+        if req.message.strip().lower() == "/unlimit" and backend == "llm":
             session_id = req.session_id or uuid.uuid4().hex
             session = session_for(session_id)
             try:

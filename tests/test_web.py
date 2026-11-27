@@ -1544,19 +1544,19 @@ def test_a_question_waits_only_so_long_for_the_one_before_in_the_same_chat(db, t
     first.join(5)
 
 
-def test_unmlimit_toggles_only_the_requested_conversation(db, tmp_path, monkeypatch):
+def test_unlimit_toggles_only_the_requested_conversation(db, tmp_path, monkeypatch):
     import fco_meta.web.app as web_app
 
     asked = []
     monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder("deep", asked))
     monkeypatch.setattr(web_app, "_deepseek_ready", lambda: True)
     client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm"))
-    _, start = ask(client, "/unmlimit")
+    _, start = ask(client, "/unlimit")
     sid = start["session_id"]
     assert not asked
     ask(client, "같은 질문", sid)
     ask(client, "같은 질문")
-    ask(client, "/unmlimit", sid)
+    ask(client, "/unlimit", sid)
     ask(client, "다음 질문", sid)
     assert [options.get("unlimited", False) for _, _, options in asked] == [True, False, False]
 
