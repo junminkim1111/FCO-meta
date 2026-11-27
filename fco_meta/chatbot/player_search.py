@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 import httpx
 from selectolax.parser import HTMLParser
 
+from ..market.parser import parse_player_list, parse_player_preview
 from ..market.money import format_bp, parse_bp
 
 URL = "https://fconline.nexon.com/datacenter"
@@ -104,7 +105,7 @@ def _form(_day):
     return defaults, choices, labels
 
 
-def search_players(**args):
+def _search_html(args):
     unknown = args.keys() - PROPERTIES.keys()
     if unknown:
         raise ValueError(f"지원하지 않는 검색 인자: {sorted(unknown)}")
@@ -207,7 +208,11 @@ def search_players(**args):
 
     response = httpx.post(URL + "/PlayerList", data=form, timeout=15)
     response.raise_for_status()
-    tree = HTMLParser(response.content)
+    return response.text
+
+
+def search_players(**args):
+    tree = HTMLParser(_search_html(args))
     players = []
     for row in tree.css('div[id^="area_playerunit_"]'):
         season = row.css_first(".info_top .season img")
@@ -228,3 +233,17 @@ def search_players(**args):
     if not players and not tree.css_first(".tr.empty"):
         raise ValueError("데이터센터 검색 결과를 읽을 수 없습니다.")
     return {"players": players, "possibly_truncated": len(players) >= 200}
+
+def season_cards(name, season):
+    html = _search_html({"name": name, "seasons": [season]})
+    cards = parse_player_list(html)
+    if not cards and not HTMLParser(html).css_first(".tr.empty"):
+        raise ValueError("데이터센터 검색 결과를 읽을 수 없습니다.")
+    return cards
+
+
+def card_preview(spid):
+    response = httpx.post(URL + "/PlayerPreView", data={"spid": spid, "n1strong": 1,
+                          "n1Grow": 0, "n1TeamColor": 0}, timeout=15)
+    response.raise_for_status()
+    return parse_player_preview(response.text, spid, 1)

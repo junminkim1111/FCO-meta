@@ -12,12 +12,15 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from ..analytics import query_squads as aggregate_squads
 from ..analytics import (
@@ -50,6 +53,7 @@ from ..analytics.query import _card_details, stat_value
 from ..crawler import teamcolor_info
 from ..crawler.models import TeamColor
 from ..crawler.teamcolors import TeamColorCatalog, highest_stage_players, season_matches
+
 from . import player_search
 from ..market.money import format_bp, parse_bp
 from ..market.roles import ROLES, resolve_roles
@@ -539,12 +543,16 @@ def _brief_player_detail(result: dict[str, Any]) -> dict[str, Any]:
                 season_of[c.get("sp_id")] = c.get("season")
         for c in p.get("card_profiles") or []:
             season_of.setdefault(c.get("sp_id"), c.get("season"))
-        players.append({**p, "roles": [{**r, "cards": r.get("cards", [])[:MAX_DETAIL_CARDS]} for r in kept]})
+        if "roles" in p:
+            p = {**p, "roles": [{**r, "cards": r["cards"][:MAX_DETAIL_CARDS]} if "cards" in r else r for r in kept]}
+        players.append(p)
     prices: dict[str, dict[str, str]] = {}
     for row in result.get("prices", []):
-        card = season_of.get(row.get("sp_id")) or str(row.get("sp_id"))
+        card = row.get("season") or season_of.get(row.get("sp_id")) or str(row.get("sp_id"))
         prices.setdefault(card, {})[str(row.get("grade"))] = row.get("price")
-    out = {**result, "players": players}
+    out = dict(result)
+    if "players" in result:
+        out["players"] = players
     if "usage" in result:
         rows = sorted(result["usage"], key=lambda u: -u.get("rankers", 0))[:MAX_DETAIL_USAGE]
         # 행마다 같은 값(선수 한 명이면 이름, 모두 같은 기준 시각)은 반복하지 않는다
@@ -555,6 +563,70 @@ def _brief_player_detail(result: dict[str, Any]) -> dict[str, Any]:
         out["usage"] = rows
     if "prices" in result:
         out["prices"] = [{"season": season, "price_by_grade": by_grade} for season, by_grade in prices.items()]
+    return out
+
+
+def _live_season_card(name, season, wanted):
+    info = {"season": season}
+    try:
+        cards = [c for c in player_search.season_cards(name, season) if _name_hit(name, c.name)]
+        exact = [c for c in cards if _name_exact(name, c.name)]
+        full = [c for c in exact if "".join(c.name.split()) == "".join(name.split())]
+        cards = full or exact or cards
+        if len(cards) != 1:
+            info["note"] = ("데이터센터에서 해당 카드를 찾지 못함" if not cards else
+                            "선수 이름을 구체적으로 지정하세요: " + ", ".join(c.name for c in cards))
+            return info
+        card = cards[0]
+        info.update(player=card.name, season=card.season_code)
+        if not exact:
+            info["note"] = f"부분 이름 일치: {card.name}. 요청한 선수인지 확인하세요."
+        if "prices" in wanted:
+            info["prices"] = {f"{g}강": format_bp(v) for g, v in card.prices.items() if v is not None}
+        if "profile" in wanted:
+            info.update(position=card.main_position, ovr=card.ovr, salary=card.salary)
+        if wanted - {"prices"}:
+            d = player_search.card_preview(card.spid)
+            if "stats" in wanted:
+                info.update(stats_grade=d.grade, stats=d.stats, summary=d.summary, positions=d.positions)
+            if "traits" in wanted:
+                info.update(traits=d.traits, new_traits=[t for t in d.traits if t in NEW_TRAITS])
+            if "profile" in wanted:
+                info.update({k: getattr(d, k) for k in PROFILE_KEYS if hasattr(d, k)})
+                info.update(left_foot=d.left_foot, right_foot=d.right_foot)
+    except (httpx.HTTPError, ValueError) as exc:
+        info["note"] = f"데이터센터 조회 실패: {exc}"
+    return info
+
+
+def _detail_fields(result, wanted, season):
+    out = {k: result[k] for k in ("matched_names", "season_card", "name_check", "typo", "note") if k in result}
+    if "usage" in wanted:
+        out["usage"] = result.get("usage", [])
+    if "prices" in wanted and not season:
+        out["prices"] = result.get("prices", [])
+    players = []
+    for player in result.get("players", []):
+        part = {"name": player["name"]}
+        if "usage" in wanted and not season:
+            part.update({k: player[k] for k in ("scope", "note") if k in player})
+            part["roles"] = [{k: r[k] for k in ("role", "rank_in_role", "rankers", "usage_rate") if k in r}
+                             for r in player.get("roles", [])]
+        if "history" in wanted:
+            part["usage_history"] = player.get("usage_history")
+        if "seasons" in wanted or ("traits" in wanted and not season):
+            part["season_cards"] = player.get("season_cards", [])
+        if not season and wanted & {"profile", "stats"}:
+            keys = {"season", "stats_grade"}
+            if "profile" in wanted:
+                keys.update(PROFILE_KEYS)
+            if "stats" in wanted:
+                keys.update(("positions", "stats", "summary"))
+            part["card_profiles"] = [{k: v for k, v in c.items() if k in keys} for c in player.get("card_profiles", [])]
+        if len(part) > 1:
+            players.append(part)
+    if players:
+        out["players"] = players
     return out
 
 
@@ -579,6 +651,11 @@ def _name_exact(query: str, name: str | None) -> bool:
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     """Plain JSON Schema (LLM 제공자와 무관). 선택 항목은 required에서 뺀다."""
     return {"type": "object", "properties": properties, "required": required}
+
+
+DETAIL_FIELDS = ("usage", "stats", "traits", "profile", "prices", "seasons", "history")
+PROFILE_KEYS = ("position", "ovr", "salary", "height", "weight", "body_type", "skill_moves",
+                "foot", "reputation", "birth", "clubs", "nation")
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -769,6 +846,10 @@ TOOLS: list[dict[str, Any]] = [
                 "player": {"type": "string", "description": "선수 이름 (예: 라이스)"},
                 "team_color": {"type": "string", "description": "팀컬러로 범위 제한. 생략하면 상위 랭커 전체"},
                 "formation": {"type": "string", "description": "포메이션으로 범위 제한. 생략하면 전체 포메이션"},
+                "fields": {"type": "array", "items": {"type": "string", "enum": list(DETAIL_FIELDS)},
+                           "description": "필요한 항목만 선택. 생략·[]는 전체. stats=1강 능력치, usage=랭커 기용, traits=특성, "
+                                          "profile=OVR·급여·신체, prices=강화별 가격, seasons=수집 시즌 목록, history=기용 추이. "
+                                          "특정 카드의 능력치·가격은 season도 지정."},
                 "season": {"type": "string", "description": "시즌 약칭(예: GR, 26 TOTS). 주면 season_card에 그 카드의 급여·OVR·포지션·강화별 시세를 "
                            "준다 — 랭커가 쓰지 않은 카드여도 ('GR 돈나룸마 급여')"},
             },
@@ -1118,7 +1199,7 @@ class Toolbox:
             "get_team_color_info": self.get_team_color_info,
         }
 
-    def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+    def run(self, name: str, tool_input: dict[str, Any], *, detail_db_lock=nullcontext) -> tuple[str, bool]:
         """Execute a tool call → (JSON text, is_error)."""
         handler = self._handlers.get(name)
         if handler is None:
@@ -1127,7 +1208,7 @@ class Toolbox:
         known = player_search.PROPERTIES if name == "search_players" else inspect.signature(handler).parameters
         aliases = {"roles": "role"} if name in ("recommend_players", "query_squads", "resolve_terms") else {}
         if name == "get_player_detail":
-            aliases["player"] = "name"
+            aliases.update(player="name", field="fields")
         if name == "recommend_players":
             aliases.update(limit="top_n", sort_by="sort")
         aliases.update({k.removesuffix("_bp"): k for k in known if k.endswith("_bp")})
@@ -1142,7 +1223,11 @@ class Toolbox:
             for k, v in tool_input.items():  # 금액은 '20억'처럼 받아 도구가 바꾼다 (모델이 0을 하나 더 붙이던 실수: 20억 → 200억)
                 if k.endswith("_bp") and isinstance(v, str):
                     tool_input[k] = parse_bp(v.replace("천만", "000만").replace("천", "000"))
-            return json.dumps(handler(**tool_input), ensure_ascii=False), False
+            if name == "get_player_detail":
+                result = self._get_detail(detail_db_lock, **tool_input)
+            else:
+                result = handler(**tool_input)
+            return json.dumps(result, ensure_ascii=False), False
         except (ToolError, TypeError, ValueError) as exc:  # 잘못된 인자·조합 → 모델이 고쳐 다시 부른다
             return json.dumps({"error": str(exc)}, ensure_ascii=False), True
         except Exception as exc:  # 예상 못 한 오류(DB 등): 답 전체를 실패시키지 않고 도구 오류로 돌려준다
@@ -3305,14 +3390,25 @@ class Toolbox:
                 "prices": {f"{g}강": format_bp(v) for g, v in prices}, **({"note": "같은 이름의 다른 선수 카드도 있음"} if len(rows) > 1 else {})}
 
     def get_player_detail(self, name: str, team_color: str | None = None, formation: str | None = None,
-                          season: str | None = None, _typo_retry: bool = False) -> dict[str, Any]:
-        out = self._player_detail(name, team_color, formation, _typo_retry)
-        if season:  # 랭커가 쓰지 않은 카드의 급여 ("GR 돈나룸마 쓰고 싶은데 급여를 어디서")
-            # 이름이 여럿에 걸리면 그 시즌 카드가 있는 선수를 고른다 (없으면 첫 선수 기준으로 '못 찾음')
-            candidates = [p["name"] for p in out.get("players") or []] or [name]
-            cards = [self._season_card(n, season) for n in candidates]
-            out["season_card"] = next((c for c in cards if "player" in c), None) or (
-                cards[0] if len(candidates) == 1 else {"season": season, "note": f"{', '.join(candidates)} 중 {season} 카드를 찾지 못함"})
+                          season: str | None = None, fields: list[str] | None = None) -> dict[str, Any]:
+        return self._get_detail(nullcontext, name, team_color, formation, season, fields)
+
+    def _get_detail(self, db_lock, name, team_color=None, formation=None, season=None, fields=None):
+        if isinstance(fields, str):
+            fields = [fields]
+        if fields is not None and (not isinstance(fields, list) or any(f not in DETAIL_FIELDS for f in fields)):
+            raise ToolError("fields 허용값: " + ", ".join(DETAIL_FIELDS))
+        if not name.strip():
+            raise ToolError("선수 이름이 필요합니다.")
+        wanted = set(fields or DETAIL_FIELDS)
+        card_fields = wanted & {"stats", "profile", "traits", "prices"}
+        need_db = not season or bool(wanted - card_fields)
+        out = {}
+        if need_db:
+            with db_lock():
+                out = self._player_detail(name, team_color, formation, False, usage_season=season if fields and "usage" in wanted else None)
+        if season and card_fields:
+            out["season_card"] = _live_season_card(name, season, card_fields)
         names = out.get("matched_names") or []
         if names and "typo" not in out and not any(_name_exact(name, n) for n in names):
             out["name_check"] = (f"'{name}'과(와) 이름이 정확히 같은 선수가 없어 {', '.join(names)}(으)로 찾음 — 다른 선수일 수 있음. "
@@ -3321,13 +3417,16 @@ class Toolbox:
             out["name_check"] = (f"'{name}'이(가) 여러 선수에 걸림: {', '.join(names)}. 질문·대화로 누군지 정해지지 않으면 "
                                  f"답하지 말고 되묻는다 (랭커가 훨씬 많이 쓰는 선수가 하나면 그 선수로 답하고 첫 줄에 밝힌다)")
         out.setdefault("definitions", {}).update({
-            "season_card": "데이터센터의 카드 자체 정보. 급여·능력치·시세는 랭커 사용률이나 특정 팀·포메이션의 표본이 아님",
+            "season_card": "요청한 시즌을 넥슨 데이터센터에서 조회한 값. 능력치는 1강 기준, prices는 조회 당시 강화별 기준가.",
+            "prices": "최상위 prices는 DB에 수집된 시세. 지정 시즌의 현재 조회값은 season_card.prices.",
             "players_scope": "players 각 선수의 scope가 그 선수의 roles 통계 범위",
             "usage_scope": "usage 각 행의 team_color·formation·sample_size가 해당 행만의 범위. 서로 다른 행·도구의 표본을 합치지 않음",
         })
+        if fields:
+            return _detail_fields(out, wanted, season)
         return out
 
-    def _player_detail(self, name: str, team_color: str | None, formation: str | None, _typo_retry: bool) -> dict[str, Any]:
+    def _player_detail(self, name: str, team_color: str | None, formation: str | None, _typo_retry: bool, usage_season: str | None = None) -> dict[str, Any]:
         name = name.strip()
         if not name:
             raise ToolError("name이 필요합니다")
@@ -3341,6 +3440,13 @@ class Toolbox:
         if formation:
             filters += " AND u.formation = ?"
             args.append(formation)
+        if usage_season:
+            season_key = player_search._key(usage_season, "strSeason")
+            season_ids = [sid for sid, label, img in self.conn.execute("SELECT season_id, class_name, season_img FROM meta_season")
+                          if season_key in {player_search._key(v, "strSeason") for v in
+                                            ((label or "").split(" (")[0], Path(img or "").stem, str(sid))}]
+            filters += f" AND u.season_id IN ({','.join('?' for _ in season_ids)})"
+            args.extend(season_ids)
         rows = self.conn.execute(
             # 팀컬러마다 최신 집계만. 최신 시각은 한 번만 구한다 (행마다 하위 쿼리면 10,000명 규모에서 2분 넘게 걸림)
             "WITH latest AS (SELECT team_color_id, MAX(data_as_of) AS as_of FROM usage_stats GROUP BY team_color_id)"
@@ -3375,7 +3481,7 @@ class Toolbox:
             players = [p for p in players if exact(p["name"])]
         if not rows and not players:
             if (fixed := self._typo_name(name)) and not _typo_retry:
-                out = self._player_detail(fixed, team_color, formation, True)
+                out = self._player_detail(fixed, team_color, formation, True, usage_season)
                 out["typo"] = f"'{name}'을 찾지 못해 비슷한 이름 '{fixed}'로 찾음 (답 첫 줄에 '{fixed}' 기준이라고 밝힐 것)"
                 return out
             return {"name": name, "usage": [], "note": "수집된 랭커 스쿼드에서 이 이름의 선수를 찾지 못함"}
@@ -3396,8 +3502,9 @@ class Toolbox:
                 "data_as_of": r["data_as_of"],
             })  # fmt: skip
         sp_ids = sorted({r["sp_id"] for r in rows})
+        season_names = {r["sp_id"]: r["class_name"] for r in rows}
         prices = [
-            {"sp_id": p["spid"], "grade": p["grade"], "price_bp": p["price"], "price": format_bp(p["price"])}
+            {"season": season_names.get(p["spid"]), "sp_id": p["spid"], "grade": p["grade"], "price_bp": p["price"], "price": format_bp(p["price"])}
             for p in self.conn.execute(
                 "SELECT p.spid, p.grade, p.price FROM card_price p"
                 " JOIN (SELECT spid, grade, MAX(fetched_at) AS fetched_at FROM card_price"

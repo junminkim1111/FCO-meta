@@ -1093,13 +1093,32 @@ def test_player_detail_forgives_a_one_letter_typo(toolbox):  # noqa: F811
     assert r["usage"] == [] and "typo" not in r
 
 
-def test_player_detail_season_card_even_if_rankers_never_used_it(toolbox):  # noqa: F811
-    toolbox.conn.execute("INSERT INTO card (spid, pid, season_id, season_code, name, main_position, ovr, salary, updated_at)"
-                         " VALUES (210000009, 9, 210, 'GR', '볼란치R', 'CDM', 90, 14, 'x')")
-    toolbox.conn.commit()
+def test_player_detail_season_card_even_if_rankers_never_used_it(toolbox, monkeypatch):
+    from fco_meta.chatbot import player_search
+    from fco_meta.chatbot.tools import for_model
+    from fco_meta.market.models import Card, CardDetail
+
+    card = Card(210000009, "볼란치R", "GR", "CDM", 90, 14, None, None, {11: 12345})
+    detail = CardDetail(card.spid, 1, {"CDM": 90}, None, None, None, None, None, 5, 4, None,
+                        traits=["스피드스터"], stats={"가속력": 99})
+    monkeypatch.setattr(player_search, "season_cards", lambda n, s: [card] if s.lower() == "gr" else [])
+    monkeypatch.setattr(player_search, "card_preview", lambda spid: detail)
     r = run(toolbox, "get_player_detail", {"name": "볼란치R", "season": "gr"})
     assert (r["season_card"]["season"], r["season_card"]["salary"], r["season_card"]["ovr"]) == ("GR", 14, 90)
     assert "찾지 못함" in run(toolbox, "get_player_detail", {"name": "볼란치R", "season": "TOTY"})["season_card"]["note"]
+    assert r["season_card"]["new_traits"] == ["스피드스터"]
+    assert run(toolbox, "get_player_detail", {"name": "볼란치R", "season": "gr", "fields": []}) == r
+    def selected(fields):
+        return for_model("get_player_detail", run(toolbox, "get_player_detail",
+                         {"name": "볼란치R", "season": "gr", "fields": fields}))
+    stats = selected(["stats"])
+    assert set(stats) == {"season_card"} and stats["season_card"]["stats"] == {"가속력": 99}
+    assert "prices" not in stats["season_card"] and "traits" not in stats["season_card"]
+    monkeypatch.setattr(player_search, "card_preview", lambda _: pytest.fail("unexpected preview"))
+    assert selected(["prices"])["season_card"]["prices"]["11강"] == "1만 2,345"
+    monkeypatch.setattr(player_search, "season_cards", lambda *_: pytest.fail("unexpected live search"))
+    assert "season_card" not in selected(["usage"])
+
 
 
 def test_recommended_cards_show_their_new_traits(toolbox):  # noqa: F811
@@ -1292,7 +1311,8 @@ def test_diagnose_team_lists_swaps_that_free_salary(toolbox):  # noqa: F811
 
 
 
-def test_player_detail_keeps_scope_definitions_in_model_view(toolbox):
+def test_player_detail_keeps_scope_definitions_in_model_view(toolbox, monkeypatch):
+    monkeypatch.setattr("fco_meta.chatbot.player_search.season_cards", lambda *_: [])
     from fco_meta.chatbot.tools import for_model
 
     result = run(toolbox, "get_player_detail", {"name": "볼란치R", "team_color": "아스널"})

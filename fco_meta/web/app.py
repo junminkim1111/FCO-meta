@@ -1080,6 +1080,8 @@ class _LockedTools:
         return self.lock
 
     def run(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        if name == "get_player_detail":
+            return self.toolbox.run(name, tool_input, detail_db_lock=self._db_lock)
         if name == "search_players":  # 데이터센터 HTTP 조회만 사용한다.
             return self.toolbox.run(name, tool_input)
         with self._db_lock():
