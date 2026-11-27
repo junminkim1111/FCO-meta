@@ -769,7 +769,16 @@ def create_app(
         if kid:
             restore_counts()
         trial = bool(kid) and kid.startswith("trial-")
-        if req.message.strip().lower() == "/unlimit" and backend == "llm":
+        if req.message.strip().lower() == "/unlimit":  # 관리자만: 다른 사람에게는 없는 명령어 (모델에도 보내지 않는다)
+            is_admin = kid == "admin"  # 베타 키 자리에 관리자 비밀번호 (틀린 키는 beta가 센다)
+            if not is_admin and (given := request.headers.get("x-admin-key")):  # /admin으로 기억한 비밀번호 (틀리면 AdminGuard가 세고 막는다)
+                try:
+                    admin.check(who, given)
+                    is_admin = True
+                except HTTPException:
+                    pass
+            if backend != "llm" or not is_admin:
+                raise HTTPException(status_code=404, detail="invalid command.")
             session_id = req.session_id or uuid.uuid4().hex
             session = session_for(session_id)
             try:

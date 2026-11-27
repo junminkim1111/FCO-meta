@@ -965,12 +965,30 @@ async function pickModel() {
   model = picked.key === DEFAULT_MODEL ? null : picked; // 기본과 같으면 기본으로 (첫 질문 답 캐시도 쓴다)
   note(modelText(picked));
 }
+// /unlimit: 이 대화(세션)의 제한 해제를 서버가 기억해야 해서 서버에 보내지만, 모델을 거치지 않으니 질문처럼 그리지 않고 안내 한 줄만
+async function unlimit() {
+  try {
+    let admin = "";
+    try { admin = localStorage.getItem("fclm-admin") || ""; } catch {} // /admin으로 이 기기에 기억한 관리자 비밀번호
+    const res = await fetch("/api/chat", { method: "POST", headers: { ...headers(), ...(admin && { "X-Admin-Key": admin }) },
+                                           body: JSON.stringify({ message: "/unlimit", session_id: sessionId }) });
+    if (res.status === 404) return invalidCommand(); // 관리자가 아니면 없는 명령어
+    let text = "";
+    for (const line of (await res.text()).split("\n")) {
+      if (!line) continue;
+      const ev = JSON.parse(line);
+      if (ev.type === "start") sessionId = ev.session_id ?? sessionId;
+      if (ev.type === "delta") text += ev.text;
+    }
+    note(res.ok && text ? `/unlimit: ${text}` : "/unlimit: 적용하지 못했습니다.");
+  } catch { note("/unlimit: 적용하지 못했습니다."); }
+}
 // "/"로 시작하면 모델에 보내지 않는다: 아는 명령어면 실행, 아니면 invalid command.
 function command(text) {
   const [name, ...flags] = text.split(/\s+/);
   const cmd = name.toLowerCase();
   const only = (allowed) => new Set(flags).size === flags.length && flags.every((f) => allowed.includes(f));
-  if (cmd === "/unlimit" && !flags.length) return send(cmd);
+  if (cmd === "/unlimit" && !flags.length) return unlimit();
   if (cmd === "/admin" && !flags.length) return adminPrompt();
   if (cmd === "/trace" && !flags.length) {
     traceOn = !traceOn; // 기본으로 켬. 한 번 더 치면 끈다 (새로고침하면 다시 켬)
@@ -983,6 +1001,9 @@ function command(text) {
     note("/help: 새 탭이 막혀 열지 못했습니다. ").append(el("a", { href: "/guide", target: "_blank", rel: "noopener", text: "가이드 열기" }));
     return;
   }
+  invalidCommand();
+}
+function invalidCommand() {
   $("log").append(el("div", { class: "msg bot note" }, el("em", { text: "invalid command." })));
   $("log").scrollTop = $("log").scrollHeight;
 }

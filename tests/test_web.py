@@ -1550,7 +1550,12 @@ def test_unlimit_toggles_only_the_requested_conversation(db, tmp_path, monkeypat
     asked = []
     monkeypatch.setattr(web_app, "_deepseek_chat", lambda tools, reasoning: Recorder("deep", asked))
     monkeypatch.setattr(web_app, "_deepseek_ready", lambda: True)
-    client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm"))
+    client = TestClient(create_app(tmp_path / "db.sqlite", backend="llm", admin_key="secret"))
+    res = client.post("/api/chat", json={"message": "/unlimit"})  # 관리자가 아니면 없는 명령어, 모델에도 가지 않는다
+    assert res.status_code == 404 and res.json()["detail"] == "invalid command." and not asked
+    res = client.post("/api/chat", json={"message": "/unlimit"}, headers={"X-Admin-Key": "wrong"})
+    assert res.status_code == 404 and not asked  # 틀린 비밀번호도 없는 명령어 (AdminGuard가 틀린 횟수를 센다)
+    client.headers["X-Admin-Key"] = "secret"  # /admin으로 기억한 관리자 비밀번호 (베타 키 자리에 넣어도 된다)
     _, start = ask(client, "/unlimit")
     sid = start["session_id"]
     assert not asked
